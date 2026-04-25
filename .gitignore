@@ -1,0 +1,40 @@
+# ==========================================
+# 1. ESCLUSIONI GENERALI (Ignora tutto)
+# ==========================================
+*
+
+# ==========================================
+# 2. ECCEZIONI (Cosa VUOI caricare)
+# ==========================================
+!my_ros2_ws/
+!PX4-Autopilot/
+!.gitignore
+!docker/
+!README.md
+!*.sh
+!*.md
+
+# ==========================================
+# 3. FILTRI DI SICUREZZA (Cosa NON caricare mai)
+# ==========================================
+# Ignora tutte le cartelle build, install e log ovunque siano
+**/build/
+**/install/
+**/log/
+**/.catkin/
+
+# Ignora file pesanti o temporanei di PX4
+PX4-Autopilot/platforms/nuttx/NuttX/nuttx/
+PX4-Autopilot/build_local/
+**/*.pyc
+**/*.so
+**/*.a
+**/*.o
+**/*.bin
+**/*.elf
+
+# Ignora cartelle nascoste di sistema
+.vscode/
+.idea/
+.DS_Store
+
