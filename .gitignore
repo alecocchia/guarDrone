@@ -7,9 +7,12 @@
 # 2. ECCEZIONI (Cosa VUOI caricare)
 # ==========================================
 !my_ros2_ws/
+!my_ros2_ws/**
 !PX4-Autopilot/
-!.gitignore
+!PX4-Autopilot/**
 !docker/
+!docker/**
+!.gitignore
 !README.md
 !*.sh
 !*.md

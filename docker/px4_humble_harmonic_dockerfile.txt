@@ -1,0 +1,259 @@
+FROM px4io/px4-dev-base-jammy:latest
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8
+
+WORKDIR /root
+
+# Update and install tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gedit \
+    git \
+    bash-completion \
+    sudo \
+    locales \
+    software-properties-common \
+    curl \
+    python3-pip \
+    wget \
+    htop \
+    iputils-ping \
+    net-tools \
+    iproute2 \
+    tree \
+    unzip \
+    vim \
+    nano \
+    && locale-gen en_US en_US.UTF-8 \
+    && update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 \
+    && add-apt-repository -y universe \
+    && pip3 install symforce
+
+# ROS2 Humble
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+      -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+        http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+        > /etc/apt/sources.list.d/ros2.list \
+    && apt-get update \
+    && apt-get install -y ros-humble-desktop ros-dev-tools \
+    python3-rosdep \
+    python3-vcstool \
+    python3-colcon-common-extensions \
+    && echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc \
+    && python3 -m pip install --user -U empy==3.3.4 pyros-genmsg setuptools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Gazebo Harmonic
+RUN apt-get update && apt-get install -y lsb-release gnupg \
+ && curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
+      -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] https://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
+      > /etc/apt/sources.list.d/gazebo-stable.list \
+ && apt-get update \
+ && apt-get install -y \
+      gz-harmonic \
+      libgz-sim8-dev \
+      libgz-transport13-dev \
+      libgz-sensors8-dev \
+      libgz-plugin2-dev \
+      libgz-utils2-dev \
+      libgz-msgs10-dev \
+      protobuf-compiler \
+      libprotobuf-dev \
+      libopencv-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# ROS–Gazebo bridge (ros_gz)
+RUN apt-get update && apt-get install -y \
+    ros-humble-ros-gzharmonic \
+    ros-humble-controller-manager \
+    ros-humble-ros2-control \
+    ros-humble-ros2-controllers \
+    ros-humble-joint-state-publisher-gui \
+    ros-humble-xacro \
+    ros-humble-plotjuggler-ros \
+    ros-humble-mavros \
+    ros-humble-mavros-extras \
+    ros-humble-mavros-msgs \
+    ros-humble-octomap \
+    ros-humble-octomap-msgs \
+    ros-humble-gazebo-msgs* \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN wget https://raw.githubusercontent.com/mavlink/mavros/master/mavros/scripts/install_geographiclib_datasets.sh \
+    && sudo bash ./install_geographiclib_datasets.sh   
+
+RUN apt update && apt-get install -y --no-install-recommends \     
+    libcanberra-gtk-module libcanberra-gtk3-module
+
+# Micro-XRCE-DDS-Agent
+
+RUN git clone https://github.com/eProsima/Micro-XRCE-DDS-Agent.git \
+    && cd Micro-XRCE-DDS-Agent \
+    && mkdir build \
+	&& cd build \
+	&& cmake .. \
+	&& make \
+	&& sudo make install \
+	&& sudo ldconfig /usr/local/lib/
+
+# ROS2 px4 workspace
+RUN mkdir -p /root/px4_ws/src \
+    && cd ~/px4_ws/src \
+    && git clone --single-branch -b release/1.16 https://github.com/PX4/px4_msgs px4_msgs \
+    && git clone --single-branch -b release/1.16 https://github.com/PX4/px4_ros_com.git \
+    && cd .. \
+    && . /opt/ros/humble/setup.sh \
+    && colcon build --parallel-workers $(nproc) --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+    
+RUN echo "source /root/px4_ws/install/local_setup.bash" >> /root/.bashrc
+
+# Additional packages
+RUN apt update && apt install -y --no-install-recommends \    
+    aptitude \
+    tmux \
+    tmuxp 
+
+COPY tmux.conf .tmux.conf
+
+# PX4-Autopilot to fix git submodule update
+
+RUN  git config --global --add safe.directory '*'
+USER root
+
+ 
+    
+RUN apt update && apt-get install -y --no-install-recommends \ 
+    ros-humble-octomap-rviz-plugins  \
+    ros-humble-rtabmap-ros \
+    ros-humble-librealsense2* \
+    ros-humble-realsense2-* \  
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt update && apt-get install -y --no-install-recommends \ 
+    ros-humble-rmw-cyclonedds-cpp \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libccd-dev \
+    libboost-thread-dev \
+    libboost-system-dev \
+    libboost-filesystem-dev \
+    libboost-program-options-dev \
+    libeigen3-dev \
+    libompl-dev \
+    && rm -rf /var/lib/apt/lists/*
+    
+RUN apt-get update && apt-get install ros-humble-sophus*
+
+RUN git clone --single-branch -b fcl-0.5 https://github.com/flexible-collision-library/fcl.git \
+    && cd fcl \
+    && mkdir build \
+    && cd build \
+    && cmake .. \
+    && make -j$(nproc) \
+    && make install
+
+RUN  apt-get update && apt-get install -y --no-install-recommends \  
+     ros-humble-navigation2 \
+     ros-humble-nav2-bringup \
+     ros-humble-tf-transformations \ 
+     ros-humble-robot-localization \
+     python-is-python3 \
+     && rm -rf /var/lib/apt/lists/*
+
+# Install ARM toolchain for PX4 hardware compilation
+RUN wget https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu-rm/10.3-2021.10/gcc-arm-none-eabi-10.3-2021.10-x86_64-linux.tar.bz2 \
+    && tar -xjf gcc-arm-none-eabi-10.3-2021.10-x86_64-linux.tar.bz2 -C /opt \
+    && rm gcc-arm-none-eabi-10.3-2021.10-x86_64-linux.tar.bz2
+
+ENV PATH="/opt/gcc-arm-none-eabi-10.3-2021.10/bin:${PATH}"
+
+# ros2_unbag
+RUN sudo apt update \
+    && sudo apt install -y libxcb-cursor0 libxcb-shape0 libxcb-icccm4 libxcb-keysyms1 libxkbcommon-x11-0 \
+    && pip install ros2-unbag
+
+# Install ACADOS dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    liblapack-dev \
+    libblas-dev \
+    libopenblas-dev \
+    gfortran \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install ACADOS workspace and dependencies
+RUN mkdir -p /root/px4_ws/src
+
+# GitHub token for private repositories
+ARG GITHUB_TOKEN
+
+# === ACADOS Installation === MIOOOOOOOOOOOOOOOOOOOOOOOOOOO
+USER root
+
+# Set working directory
+WORKDIR /opt
+
+# Clone acados with submodules
+RUN git clone --recursive https://github.com/acados/acados.git
+
+# Build and install
+WORKDIR /opt/acados
+RUN mkdir -p build && cd build && \
+    cmake -DCMAKE_INSTALL_PREFIX=/opt/acados -DACADOS_WITH_QPOASES=ON .. && \
+    make -j$(nproc) && make install
+
+# Set environment variables
+ENV ACADOS_SOURCE_DIR="/opt/acados"
+ENV ACADOS_INSTALL_DIR="/opt/acados"
+
+# INIZIO MODIFICHE
+# Abilita OpenMP (minimo indispensabile)
+RUN apt-get update && apt-get install -y libomp-dev
+
+# Riconfigura e reinstalla acados con OpenMP ON, mantenendo la stessa install dir
+RUN cd /opt/acados && \
+    mkdir -p build && cd build && \
+    cmake .. \
+      -DACADOS_WITH_OPENMP=ON \
+      -DBUILD_SHARED_LIBS=ON \
+      -DACADOS_INSTALL_DIR=/opt/acados \
+      -DBLASFEO_TARGET=GENERIC \
+      -DHPIPM_TARGET=GENERIC && \
+    make -j"$(nproc)" && make install
+
+# (opzionale) Limita/assegna i thread OMP
+ENV OMP_NUM_THREADS=4
+
+# FINE MODIFICHE
+# Optional: Install Python interface (acados_template)
+RUN pip3 install --upgrade pip setuptools wheel \
+    && pip3 install /opt/acados/interfaces/acados_template
+
+# Scarica t_renderer, rinominalo, rendilo eseguibile e spostalo in /opt/acados/bin
+RUN mkdir -p /opt/acados/bin && \
+    curl -L https://github.com/acados/tera_renderer/releases/download/v0.2.0/t_renderer-v0.2.0-linux-amd64 \
+    -o /opt/acados/bin/t_renderer && \
+    chmod +x /opt/acados/bin/t_renderer
+    
+# FINE MIOOOOOOOOOOOOOOOOOOOOO
+
+# Build argument to force cache invalidation when repository updates
+#ARG MPC_UAV_CACHE_BUST=1
+
+# Update repository to latest commit
+#RUN cd /root/px4_ws/src/acados/examples/acados_matlab_octave/mpc_ndt2_interaction \
+#    && echo "Checking for updates..." \
+#    && git fetch origin 2025_fix \
+#    && git reset --hard origin/2025_fix \
+#    && echo "Repository updated to latest commit: $(git rev-parse HEAD)"
+
+# Add acados library paths to bashrc
+RUN echo "export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH:/opt/acados/lib" >> /root/.bashrc

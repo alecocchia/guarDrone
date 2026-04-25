@@ -1,0 +1,45 @@
+<?xml version="1.0" ?>
+<sdf version="1.7">
+  <model name="peg">
+    <static>false</static>
+    <link name="peg_link">
+      <gravity>false</gravity>
+      <inertial>
+        <mass>0.1</mass> <inertia>
+          <ixx>0.001</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>0.001</iyy><iyz>0</iyz>
+          <izz>0.0001</izz>
+        </inertia>
+      </inertial>
+
+      <collision name="peg_collision">
+        <geometry>
+          <cylinder>
+            <radius>0.02</radius> <length>1.0</length> </cylinder>
+        </geometry>
+      </collision>
+
+      <visual name="peg_visual">
+        <geometry>
+          <cylinder>
+            <radius>0.02</radius>
+            <length>1.0</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.2 0.8 0.2 1</ambient> <diffuse>0.2 0.2 0.8 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+          <emissive>0 0 0 0</emissive>
+        </material>
+      </visual>
+
+      <pose>2 2 0.5 0 0 0</pose>
+    </link>
+
+    <plugin
+      filename="libpeg_pose_gz_plugin.so"
+      name="gz_env_pkg::SetPegPosePlugin">
+    </plugin>
+    
+  </model>
+</sdf>

@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version="1.9">
+  <world name="peg_hole">
+    <physics type="ode">
+      <max_step_size>0.002</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>500</real_time_update_rate>
+    </physics>
+    <gravity>0 0 -9.8</gravity>
+    <scene>
+      <grid>false</grid>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.7 0.7 1</background>
+      <shadows>true</shadows>
+    </scene>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+          <material><ambient>0.8 0.8 0.8 1</ambient><diffuse>0.8 0.8 0.8 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <light name="sun" type="directional">
+      <pose>0 0 10 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <direction>0.5 0.2 -0.9</direction>
+    </light>
+
+    <!-- MURO CON BUCO A X=5, Z=5 -->
+    <!-- Altezza centro buco: 5.0m, Spessore muro: 0.2m, Gap: 0.4m -->
+    
+    <!-- Parte Bassa (fino a Z=4.8) -->
+    <model name="wall_bottom">
+      <static>true</static>
+      <pose>5 0 2.4 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.2 10 4.8</size></box></geometry></collision>
+        <visual name="vis"><geometry><box><size>0.2 10 4.8</size></box></geometry>
+          <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.7 0.7 0.7 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Parte Alta (da Z=5.2 in su) -->
+    <model name="wall_top">
+      <static>true</static>
+      <pose>5 0 10.1 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.2 10 9.8</size></box></geometry></collision>
+        <visual name="vis"><geometry><box><size>0.2 10 9.8</size></box></geometry>
+          <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.7 0.7 0.7 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Parte Sinistra -->
+    <model name="wall_left">
+      <static>true</static>
+      <pose>5 -2.7 5.0 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.2 4.6 0.4</size></box></geometry></collision>
+        <visual name="vis"><geometry><box><size>0.2 4.6 0.4</size></box></geometry>
+          <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.7 0.7 0.7 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Parte Destra -->
+    <model name="wall_right">
+      <static>true</static>
+      <pose>5 2.7 5.0 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.2 4.6 0.4</size></box></geometry></collision>
+        <visual name="vis"><geometry><box><size>0.2 4.6 0.4</size></box></geometry>
+          <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.7 0.7 0.7 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>
