@@ -472,16 +472,10 @@ int GPS::pollOrRead(uint8_t *buf, size_t buf_length, int timeout)
 	const int max_timeout = 50;
 	int timeout_adjusted = math::min(max_timeout, timeout);
 
+	handleInjectDataTopic();
+
 	if (_interface == GPSHelper::Interface::UART) {
-
-		const ssize_t read_at_least = math::min(character_count, buf_length);
-
-		// handle injection data before read if caught up
-		if (_uart.bytesAvailable() < read_at_least) {
-			handleInjectDataTopic();
-		}
-
-		ret = _uart.readAtLeast(buf, buf_length, read_at_least, timeout_adjusted);
+		ret = _uart.readAtLeast(buf, buf_length, math::min(character_count, buf_length), timeout_adjusted);
 
 		if (ret > 0) {
 			_num_bytes_read += ret;
@@ -491,8 +485,6 @@ int GPS::pollOrRead(uint8_t *buf, size_t buf_length, int timeout)
 #if defined(__PX4_LINUX)
 
 	} else if ((_interface == GPSHelper::Interface::SPI) && (_spi_fd >= 0)) {
-
-		handleInjectDataTopic();
 
 		//Poll only for the SPI data. In the same thread we also need to handle orb messages,
 		//so ideally we would poll on both, the SPI fd and orb subscription. Unfortunately the
@@ -601,17 +593,7 @@ void GPS::handleInjectDataTopic()
 			}
 		}
 
-		auto &gps_inject_data_sub = _orb_inject_data_sub[_selected_rtcm_instance];
-
-		const unsigned last_generation = gps_inject_data_sub.get_last_generation();
-
-		updated = gps_inject_data_sub.update(&msg);
-
-		if (updated) {
-			if (gps_inject_data_sub.get_last_generation() != last_generation + 1) {
-				PX4_WARN("gps_inject_data lost, generation %u -> %u", last_generation, gps_inject_data_sub.get_last_generation());
-			}
-		}
+		updated = _orb_inject_data_sub[_selected_rtcm_instance].update(&msg);
 
 	} while (updated && num_injections < max_num_injections);
 }

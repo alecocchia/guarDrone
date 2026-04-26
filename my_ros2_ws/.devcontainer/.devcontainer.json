@@ -1,0 +1,13 @@
+{
+    "name": "PX4 Development",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-vscode.cpptools",
+                "redhat.vscode-xml",
+                "ms-iot.vscode-ros"
+            ]
+        }
+    }
+}

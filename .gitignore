@@ -1,43 +1,24 @@
-# ==========================================
-# 1. ESCLUSIONI GENERALI (Ignora tutto)
-# ==========================================
+# 1. Ignora tutto (file e cartelle)
 *
 
-# ==========================================
-# 2. ECCEZIONI (Cosa VUOI caricare)
-# ==========================================
-!my_ros2_ws/
+# 2. Permetti a Git di ENTRARE nelle sottocartelle (altrimenti non vedrà mai cosa c'è dentro)
+!*/
+
+# 3. Specifica cosa NON ignorare (Whitelist)
 !my_ros2_ws/**
-!PX4-Autopilot/
-!PX4-Autopilot/**
-!docker/
 !docker/**
 !.gitignore
 !README.md
 !*.sh
 !*.md
 
-# ==========================================
-# 3. FILTRI DI SICUREZZA (Cosa NON caricare mai)
-# ==========================================
-# Ignora tutte le cartelle build, install e log ovunque siano
+# 4. Filtri di sicurezza (Ignora le build dentro le cartelle autorizzate)
 **/build/
 **/install/
 **/log/
 **/.catkin/
-
-# Ignora file pesanti o temporanei di PX4
-PX4-Autopilot/platforms/nuttx/NuttX/nuttx/
-PX4-Autopilot/build_local/
+**/build_local/
 **/*.pyc
-**/*.so
-**/*.a
-**/*.o
-**/*.bin
-**/*.elf
-
-# Ignora cartelle nascoste di sistema
 .vscode/
-.idea/
 .DS_Store
 

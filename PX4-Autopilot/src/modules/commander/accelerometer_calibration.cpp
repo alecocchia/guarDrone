@@ -366,24 +366,17 @@ int do_accel_calibration(orb_advert_t *mavlink_log_pub)
 				const Matrix3f accel_T = mat_A.I() * CONSTANTS_ONE_G;
 
 				// update calibration
-				const Dcmf &R = worker_data.calibration[i].rotation();
-
-				const Vector3f sensor_frame_offsets{R.transpose() *offset};
-				const Matrix3f sensor_frame_scale{R.transpose() *accel_T * R};
-
-				worker_data.calibration[i].set_offset(sensor_frame_offsets);
-				worker_data.calibration[i].set_scale(sensor_frame_scale.diag());
+				worker_data.calibration[i].set_offset(offset);
+				worker_data.calibration[i].set_scale(accel_T.diag());
 
 #if defined(DEBUD_BUILD)
 				PX4_INFO("accel %d: offset", i);
-				sensor_frame_offsets.print();
+				offset.print();
 
 				PX4_INFO("accel %d: mat_A", i);
 				mat_A.print();
 				PX4_INFO("accel %d: accel_T", i);
 				accel_T.print();
-				PX4_INFO("accel %d: scale matrix", i);
-				sensor_frame_scale.print();
 #endif // DEBUD_BUILD
 				worker_data.calibration[i].PrintStatus();
 

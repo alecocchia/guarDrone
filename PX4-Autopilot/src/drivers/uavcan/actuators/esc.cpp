@@ -84,7 +84,11 @@ UavcanEscController::update_outputs(bool stop_motors, uint16_t outputs[MAX_ACTUA
 
 	_prev_cmd_pub = timestamp;
 
-	uavcan::equipment::esc::RawCommand msg = {};
+	/*
+	 * Fill the command message
+	 * If unarmed, we publish an empty message anyway
+	 */
+	uavcan::equipment::esc::RawCommand msg;
 
 	for (unsigned i = 0; i < num_outputs; i++) {
 		if (stop_motors || outputs[i] == DISARMED_OUTPUT_VALUE) {

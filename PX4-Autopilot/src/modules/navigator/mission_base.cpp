@@ -553,9 +553,7 @@ void MissionBase::setEndOfMissionItems()
 		_mission_item.nav_cmd = NAV_CMD_IDLE;
 
 	} else {
-		if (pos_sp_triplet->current.valid &&
-		    (pos_sp_triplet->current.type == position_setpoint_s::SETPOINT_TYPE_LOITER ||
-		     pos_sp_triplet->current.type == position_setpoint_s::SETPOINT_TYPE_POSITION)) {
+		if (pos_sp_triplet->current.valid && pos_sp_triplet->current.type == position_setpoint_s::SETPOINT_TYPE_LOITER) {
 			setLoiterItemFromCurrentPositionSetpoint(&_mission_item);
 
 		} else {

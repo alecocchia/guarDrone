@@ -69,11 +69,6 @@ bool Serial::close()
 	return _impl.close();
 }
 
-ssize_t Serial::bytesAvailable()
-{
-	return _impl.bytesAvailable();
-}
-
 ssize_t Serial::read(uint8_t *buffer, size_t buffer_size)
 {
 	return _impl.read(buffer, buffer_size);

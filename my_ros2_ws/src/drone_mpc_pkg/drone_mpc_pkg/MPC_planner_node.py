@@ -559,9 +559,13 @@ class MpcPlannerNode(Node):
         # --- Momentum Observer (Fabio Ruggiero style) ---
         self.use_momentum_observer = self.get_parameter('use_momentum_observer').value
         if self.use_momentum_observer and self.u_prev is not None and len(self.u_prev) > 0:
+            # Se disarmato, la forza/coppia prodotta è zero. 
+            # Usiamo self.is_armed (aggiornato da VehicleControlMode) per la coerenza online.
+            u_actual = self.u_prev[0] if self.is_armed else np.zeros(4)
+
             # 1. Osservatore Lineare (World Frame)
             # thrust_body = [0, 0, Thrust]
-            thrust_body = np.array([0, 0, self.u_prev[0][0]])
+            thrust_body = np.array([0, 0, u_actual[0]])
             # Ruotiamo la spinta nel frame mondo usando il quaternione attuale [w, x, y, z]
             q = self.current_quat
             Rb = Rotation.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
@@ -573,7 +577,7 @@ class MpcPlannerNode(Node):
             
             # 2. Osservatore Angolare (Body Frame)
             # Dinamica del momento angolare: L_dot = tau_cmd - w x (J w) + tau_ext
-            tau_cmd = self.u_prev[0][1:4]
+            tau_cmd = u_actual[1:4]
             w = self.current_ang_vel
             coriolis_tau = np.cross(w, self.J_matrix @ w)
             self.L_momentum += (tau_cmd - coriolis_tau + self.tau_ext_est) * self.ts

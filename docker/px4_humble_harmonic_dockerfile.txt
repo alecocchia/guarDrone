@@ -123,8 +123,6 @@ COPY tmux.conf .tmux.conf
 RUN  git config --global --add safe.directory '*'
 USER root
 
- 
-    
 RUN apt update && apt-get install -y --no-install-recommends \ 
     ros-humble-octomap-rviz-plugins  \
     ros-humble-rtabmap-ros \
@@ -187,13 +185,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libblas-dev \
     libopenblas-dev \
     gfortran \
+    libomp-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install ACADOS workspace and dependencies
-RUN mkdir -p /root/px4_ws/src
-
-# GitHub token for private repositories
-ARG GITHUB_TOKEN
+# === NUOVE CLONAZIONI (Come da ispirazione) ===
+WORKDIR /root
+# Clone uav_motion_stack (branch paper_stable)
+RUN git clone --recursive https://github.com/Prisma-Drone-Team/uav_motion_stack.git -b paper_stable
+# Clone guarDrone workspace
+RUN git clone --recursive https://github.com/alecocchia/guarDrone
 
 # === ACADOS Installation === MIOOOOOOOOOOOOOOOOOOOOOOOOOOO
 USER root
@@ -204,35 +204,27 @@ WORKDIR /opt
 # Clone acados with submodules
 RUN git clone --recursive https://github.com/acados/acados.git
 
-# Build and install
+# Build and install (Ottimizzato: una sola build con QPOASES e OpenMP)
 WORKDIR /opt/acados
 RUN mkdir -p build && cd build && \
-    cmake -DCMAKE_INSTALL_PREFIX=/opt/acados -DACADOS_WITH_QPOASES=ON .. && \
-    make -j$(nproc) && make install
-
-# Set environment variables
-ENV ACADOS_SOURCE_DIR="/opt/acados"
-ENV ACADOS_INSTALL_DIR="/opt/acados"
-
-# INIZIO MODIFICHE
-# Abilita OpenMP (minimo indispensabile)
-RUN apt-get update && apt-get install -y libomp-dev
-
-# Riconfigura e reinstalla acados con OpenMP ON, mantenendo la stessa install dir
-RUN cd /opt/acados && \
-    mkdir -p build && cd build && \
     cmake .. \
+      -DCMAKE_INSTALL_PREFIX=/opt/acados \
+      -DACADOS_WITH_QPOASES=ON \
       -DACADOS_WITH_OPENMP=ON \
       -DBUILD_SHARED_LIBS=ON \
       -DACADOS_INSTALL_DIR=/opt/acados \
       -DBLASFEO_TARGET=GENERIC \
       -DHPIPM_TARGET=GENERIC && \
-    make -j"$(nproc)" && make install
+    make -j$(nproc) && make install
+
+# Set environment variables
+ENV ACADOS_SOURCE_DIR="/opt/acados"
+ENV ACADOS_INSTALL_DIR="/opt/acados"
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/acados/lib
 
 # (opzionale) Limita/assegna i thread OMP
 ENV OMP_NUM_THREADS=4
 
-# FINE MODIFICHE
 # Optional: Install Python interface (acados_template)
 RUN pip3 install --upgrade pip setuptools wheel \
     && pip3 install /opt/acados/interfaces/acados_template
@@ -245,15 +237,20 @@ RUN mkdir -p /opt/acados/bin && \
     
 # FINE MIOOOOOOOOOOOOOOOOOOOOO
 
-# Build argument to force cache invalidation when repository updates
-#ARG MPC_UAV_CACHE_BUST=1
-
-# Update repository to latest commit
-#RUN cd /root/px4_ws/src/acados/examples/acados_matlab_octave/mpc_ndt2_interaction \
-#    && echo "Checking for updates..." \
-#    && git fetch origin 2025_fix \
-#    && git reset --hard origin/2025_fix \
-#    && echo "Repository updated to latest commit: $(git rev-parse HEAD)"
+# Variabili Gazebo Harmonic (Plug & Play per mondi e modelli in /root)
+ENV GZ_SIM_RESOURCE_PATH=$GZ_SIM_RESOURCE_PATH:/root/PX4-Autopilot/Tools/simulation/gz/models:/root/PX4-Autopilot/Tools/simulation/gz/worlds:/root/guarDrone/models:/root/guarDrone/worlds
 
 # Add acados library paths to bashrc
 RUN echo "export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH:/opt/acados/lib" >> /root/.bashrc
+
+# Entrypoint automatico per caricare ROS e workspace ad ogni avvio
+RUN echo '#!/bin/bash\n\
+set -e\n\
+source /opt/ros/humble/setup.bash\n\
+[ -f /root/px4_ws/install/setup.bash ] && source /root/px4_ws/install/setup.bash\n\
+[ -f /root/guarDrone/install/setup.bash ] && source /root/guarDrone/install/setup.bash\n\
+exec "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]
+
