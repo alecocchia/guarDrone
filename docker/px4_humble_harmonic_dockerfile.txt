@@ -187,13 +187,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gfortran \
     libomp-dev \
     && rm -rf /var/lib/apt/lists/*
-
-# === NUOVE CLONAZIONI (Come da ispirazione) ===
+ 
 WORKDIR /root
 # Clone uav_motion_stack (branch paper_stable)
 RUN git clone --recursive https://github.com/Prisma-Drone-Team/uav_motion_stack.git -b paper_stable
-# Clone guarDrone workspace
-RUN git clone --recursive https://github.com/alecocchia/guarDrone
+
 
 # === ACADOS Installation === MIOOOOOOOOOOOOOOOOOOOOOOOOOOO
 USER root
