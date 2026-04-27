@@ -89,7 +89,6 @@ RUN apt update && apt-get install -y --no-install-recommends \
     libcanberra-gtk-module libcanberra-gtk3-module
 
 # Micro-XRCE-DDS-Agent
-
 RUN git clone https://github.com/eProsima/Micro-XRCE-DDS-Agent.git \
     && cd Micro-XRCE-DDS-Agent \
     && mkdir build \
@@ -110,6 +109,18 @@ RUN mkdir -p /root/px4_ws/src \
     
 RUN echo "source /root/px4_ws/install/local_setup.bash" >> /root/.bashrc
 
+# ==========================================
+# PX4-Autopilot (CLONAZIONE E PATCH AUTOMATICA)
+# ==========================================
+WORKDIR /root
+RUN git clone --single-branch -b release/1.16 --recursive https://github.com/PX4/PX4-Autopilot.git
+
+# Aggiunge UXRCE_DDS_SYNCT=0 all'airframe x500 per la simulazione Gazebo (use_sim_time)
+RUN echo "" >> /root/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/4001_gz_x500 \
+    && echo "# Disabilita sync tempo DDS per usare use_sim_time ROS2" >> /root/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/4001_gz_x500 \
+    && echo "param set-default UXRCE_DDS_SYNCT 0" >> /root/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/4001_gz_x500
+# ==========================================
+
 # Additional packages
 RUN apt update && apt install -y --no-install-recommends \    
     aptitude \
@@ -117,8 +128,6 @@ RUN apt update && apt install -y --no-install-recommends \
     tmuxp 
 
 COPY tmux.conf .tmux.conf
-
-# PX4-Autopilot to fix git submodule update
 
 RUN  git config --global --add safe.directory '*'
 USER root
@@ -180,7 +189,6 @@ RUN sudo apt update \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
-    git \
     liblapack-dev \
     libblas-dev \
     libopenblas-dev \
@@ -192,17 +200,11 @@ WORKDIR /root
 # Clone uav_motion_stack (branch paper_stable)
 RUN git clone --recursive https://github.com/Prisma-Drone-Team/uav_motion_stack.git -b paper_stable
 
-
-# === ACADOS Installation === MIOOOOOOOOOOOOOOOOOOOOOOOOOOO
+# === ACADOS Installation === 
 USER root
-
-# Set working directory
 WORKDIR /opt
-
-# Clone acados with submodules
 RUN git clone --recursive https://github.com/acados/acados.git
 
-# Build and install (Ottimizzato: una sola build con QPOASES e OpenMP)
 WORKDIR /opt/acados
 RUN mkdir -p build && cd build && \
     cmake .. \
@@ -215,40 +217,29 @@ RUN mkdir -p build && cd build && \
       -DHPIPM_TARGET=GENERIC && \
     make -j$(nproc) && make install
 
-# Set environment variables
 ENV ACADOS_SOURCE_DIR="/opt/acados"
 ENV ACADOS_INSTALL_DIR="/opt/acados"
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/acados/lib
-
-# (opzionale) Limita/assegna i thread OMP
 ENV OMP_NUM_THREADS=4
 
-# Optional: Install Python interface (acados_template)
 RUN pip3 install --upgrade pip setuptools wheel \
     && pip3 install /opt/acados/interfaces/acados_template
 
-# Scarica t_renderer, rinominalo, rendilo eseguibile e spostalo in /opt/acados/bin
 RUN mkdir -p /opt/acados/bin && \
     curl -L https://github.com/acados/tera_renderer/releases/download/v0.2.0/t_renderer-v0.2.0-linux-amd64 \
     -o /opt/acados/bin/t_renderer && \
     chmod +x /opt/acados/bin/t_renderer
-    
-# FINE MIOOOOOOOOOOOOOOOOOOOOO
-
-# Variabili Gazebo Harmonic (Plug & Play per mondi e modelli in /root)
-ENV GZ_SIM_RESOURCE_PATH=$GZ_SIM_RESOURCE_PATH:/root/PX4-Autopilot/Tools/simulation/gz/models:/root/PX4-Autopilot/Tools/simulation/gz/worlds:/root/guarDrone/models:/root/guarDrone/worlds
 
 # Add acados library paths to bashrc
 RUN echo "export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH:/opt/acados/lib" >> /root/.bashrc
 
-# Entrypoint automatico per caricare ROS e workspace ad ogni avvio
+# Entrypoint automatico
 RUN echo '#!/bin/bash\n\
 set -e\n\
 source /opt/ros/humble/setup.bash\n\
 [ -f /root/px4_ws/install/setup.bash ] && source /root/px4_ws/install/setup.bash\n\
-[ -f /root/guarDrone/install/setup.bash ] && source /root/guarDrone/install/setup.bash\n\
+[ -f /root/guarDrone/my_ros2_ws/install/setup.bash ] && source /root/guarDrone/my_ros2_ws/install/setup.bash\n\
 exec "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]
-
