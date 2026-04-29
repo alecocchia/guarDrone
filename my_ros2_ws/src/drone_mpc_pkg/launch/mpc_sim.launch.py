@@ -302,11 +302,11 @@ def generate_launch_description():
         DeclareLaunchArgument('drone_yaw', default_value='1.5708'),
         DeclareLaunchArgument('peg_x', default_value='2.0'),
         DeclareLaunchArgument('peg_y', default_value='0.0'),
-        DeclareLaunchArgument('peg_z', default_value='0.0'),
+        DeclareLaunchArgument('peg_z', default_value='0.2'),
         DeclareLaunchArgument('cf', default_value='8.0e-4'),
         DeclareLaunchArgument('ct', default_value='1.0e-5'),
-        DeclareLaunchArgument('world', default_value='peg_hole.sdf', description='Nome del mondo SDF da caricare'),
-        DeclareLaunchArgument('use_momentum_observer', default_value='true'),
+        DeclareLaunchArgument('world', default_value='default.sdf', description='Nome del mondo SDF da caricare'),
+        DeclareLaunchArgument('use_momentum_observer', default_value='false'),
     ]
 
     peg_x = LaunchConfiguration('peg_x')

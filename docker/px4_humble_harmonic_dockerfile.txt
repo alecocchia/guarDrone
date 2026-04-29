@@ -11,7 +11,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gedit \
     git \
     bash-completion \
-    sudo \
     locales \
     software-properties-common \
     curl \
@@ -28,7 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && locale-gen en_US en_US.UTF-8 \
     && update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 \
     && add-apt-repository -y universe \
-    && pip3 install symforce
+    && pip3 install symforce \
+    && rm -rf /var/lib/apt/lists/*
 
 # ROS2 Humble
 RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
@@ -52,7 +52,7 @@ RUN apt-get update && apt-get install -y lsb-release gnupg \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] https://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
       > /etc/apt/sources.list.d/gazebo-stable.list \
  && apt-get update \
- && apt-get install -y \
+ && apt-get install -y --no-install-recommends \
       gz-harmonic \
       libgz-sim8-dev \
       libgz-transport13-dev \
@@ -66,7 +66,7 @@ RUN apt-get update && apt-get install -y lsb-release gnupg \
  && rm -rf /var/lib/apt/lists/*
 
 # ROS–Gazebo bridge (ros_gz)
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-ros-gzharmonic \
     ros-humble-controller-manager \
     ros-humble-ros2-control \
@@ -83,10 +83,11 @@ RUN apt-get update && apt-get install -y \
  && rm -rf /var/lib/apt/lists/*
 
 RUN wget https://raw.githubusercontent.com/mavlink/mavros/master/mavros/scripts/install_geographiclib_datasets.sh \
-    && sudo bash ./install_geographiclib_datasets.sh   
+    && bash ./install_geographiclib_datasets.sh   
 
-RUN apt update && apt-get install -y --no-install-recommends \     
-    libcanberra-gtk-module libcanberra-gtk3-module
+RUN apt-get update && apt-get install -y --no-install-recommends \     
+    libcanberra-gtk-module libcanberra-gtk3-module \
+    && rm -rf /var/lib/apt/lists/*
 
 # Micro-XRCE-DDS-Agent
 RUN git clone https://github.com/eProsima/Micro-XRCE-DDS-Agent.git \
@@ -95,8 +96,8 @@ RUN git clone https://github.com/eProsima/Micro-XRCE-DDS-Agent.git \
 	&& cd build \
 	&& cmake .. \
 	&& make \
-	&& sudo make install \
-	&& sudo ldconfig /usr/local/lib/
+	&& make install \
+	&& ldconfig /usr/local/lib/
 
 # ROS2 px4 workspace
 RUN mkdir -p /root/px4_ws/src \
@@ -122,24 +123,23 @@ RUN echo "" >> /root/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/40
 # ==========================================
 
 # Additional packages
-RUN apt update && apt install -y --no-install-recommends \    
+RUN apt-get update && apt-get install -y --no-install-recommends \    
     aptitude \
     tmux \
-    tmuxp 
-
-COPY tmux.conf .tmux.conf
+    tmuxp \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN  git config --global --add safe.directory '*'
 USER root
 
-RUN apt update && apt-get install -y --no-install-recommends \ 
+RUN apt-get update && apt-get install -y --no-install-recommends \ 
     ros-humble-octomap-rviz-plugins  \
     ros-humble-rtabmap-ros \
     ros-humble-librealsense2* \
     ros-humble-realsense2-* \  
     && rm -rf /var/lib/apt/lists/*
 
-RUN apt update && apt-get install -y --no-install-recommends \ 
+RUN apt-get update && apt-get install -y --no-install-recommends \ 
     ros-humble-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
@@ -153,9 +153,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libboost-program-options-dev \
     libeigen3-dev \
     libompl-dev \
+    ros-humble-sophus* \
     && rm -rf /var/lib/apt/lists/*
-    
-RUN apt-get update && apt-get install ros-humble-sophus*
 
 RUN git clone --single-branch -b fcl-0.5 https://github.com/flexible-collision-library/fcl.git \
     && cd fcl \
@@ -180,10 +179,11 @@ RUN wget https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu-rm/
 
 ENV PATH="/opt/gcc-arm-none-eabi-10.3-2021.10/bin:${PATH}"
 
-# ros2_unbag
-RUN sudo apt update \
-    && sudo apt install -y libxcb-cursor0 libxcb-shape0 libxcb-icccm4 libxcb-keysyms1 libxkbcommon-x11-0 \
-    && pip install ros2-unbag
+# ros2_unbag (Corretto per funzionare senza sudo)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libxcb-cursor0 libxcb-shape0 libxcb-icccm4 libxcb-keysyms1 libxkbcommon-x11-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --break-system-packages ros2-unbag
 
 # Install ACADOS dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -222,23 +222,25 @@ ENV ACADOS_INSTALL_DIR="/opt/acados"
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/acados/lib
 ENV OMP_NUM_THREADS=4
 
-RUN pip3 install --upgrade pip setuptools wheel \
-    && pip3 install /opt/acados/interfaces/acados_template
+RUN pip3 install --upgrade --break-system-packages pip setuptools wheel \
+    && pip3 install --break-system-packages /opt/acados/interfaces/acados_template
 
 RUN mkdir -p /opt/acados/bin && \
     curl -L https://github.com/acados/tera_renderer/releases/download/v0.2.0/t_renderer-v0.2.0-linux-amd64 \
     -o /opt/acados/bin/t_renderer && \
     chmod +x /opt/acados/bin/t_renderer
-
+    
 # Add acados library paths to bashrc
 RUN echo "export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH:/opt/acados/lib" >> /root/.bashrc
 
-# Entrypoint automatico
+# Entrypoint automatico (con link a tmux.conf)
 RUN echo '#!/bin/bash\n\
 set -e\n\
 source /opt/ros/humble/setup.bash\n\
 [ -f /root/px4_ws/install/setup.bash ] && source /root/px4_ws/install/setup.bash\n\
 [ -f /root/guarDrone/my_ros2_ws/install/setup.bash ] && source /root/guarDrone/my_ros2_ws/install/setup.bash\n\
+# Crea il symlink per tmux se il file esiste nel volume montato\n\
+[ -f /root/guarDrone/my_ros2_ws/SimulationScripts/tmux.conf ] && ln -sf /root/guarDrone/my_ros2_ws/SimulationScripts/tmux.conf /root/.tmux.conf\n\
 exec "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

@@ -10,16 +10,16 @@ class HumanGoalNode(Node):
     """
     Nodo ibrido per teleoperazione telecamera.
     Legge comandi discreti da 'human_goal_vec' o integrati da '/joy'.
-    Pubblica un array [r, pan, tilt] su 'human_goal'.
+    Pubblica un array [Xc, Yc, Zc, Pan_mutuo] su '/pov_target'.
     """
     def __init__(self):
         super().__init__('human_goal_node')
 
         self.declare_parameter('cmd_topic', 'human_goal_vec')
-        self.declare_parameter('goal_topic', 'human_goal')
+        self.declare_parameter('goal_topic', '/pov_target')
 
         cmd_topic = str(self.get_parameter('cmd_topic').value) or 'human_goal_vec'
-        out_topic = str(self.get_parameter('goal_topic').value) or 'human_goal'
+        out_topic = str(self.get_parameter('goal_topic').value) or '/pov_target'
 
         qos_in = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, history=QoSHistoryPolicy.KEEP_LAST)
         qos_out = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, history=QoSHistoryPolicy.KEEP_LAST)
@@ -33,38 +33,40 @@ class HumanGoalNode(Node):
         self.key_ref_sub = self.create_subscription(Float64MultiArray, '/online_ref', self.keyboard_ref_cb, qos_in)
         self.joy_sub = self.create_subscription(Joy, '/joy', self.joy_cb, qos_sensor)
 
-        # FIX 1: Inizializzato con coordinate sferiche di base
-        self.current_spherical_ref = [2.0, 0.0, 0.0]  
+        # FIX 1: Inizializzato con coordinate PoV: [Xc, Yc, Zc, Pan_mutuo]
+        self.current_pov_ref = [2.0, 0.0, 0.0, 0.0]  
         self.joy_active = False
         self.axes = [0.0] * 8
+        self.buttons = [0] * 15
+        self.task_phase_active = False
+        self.last_button_state = 0
 
         # Parametri Joystick
         self.dt = 0.02   # 50 Hz
         self.v_pan_max = 0.5   
-        self.v_tilt_max = 0.5  
-        self.v_r_max = 1.0     
+        self.v_zc_max = 0.5  
+        self.v_xc_max = 1.0     
         
         self.timer = self.create_timer(self.dt, self.control_loop)
         self.get_logger().info(f"Human Goal Node attivo. In attesa di comandi joypad...")
 
     def keyboard_ref_cb(self, msg: Float64MultiArray):
-        if not self.joy_active and len(msg.data) >= 3:
-            self.current_spherical_ref = [msg.data[0], msg.data[1], msg.data[2]]
+        if not self.joy_active and len(msg.data) >= 4:
+            self.current_pov_ref = [msg.data[0], msg.data[1], msg.data[2], msg.data[3]]
 
     def joy_cb(self, msg: Joy):
         self.axes = msg.axes
+        self.buttons = msg.buttons
         
-        # Ignoriamo i cosi posteriori (L2/R2) che hanno valore di riposo 1.0 (bho la prima volta era così, la seconda no)
-        # Controlliamo solo gli assi che ci interessano (0, 1 e 3)
-        #if len(self.axes) >= 5:
+        # Ignoriamo i cosi posteriori (L2/R2) che hanno valore di riposo 1.0
         active_axes = [self.axes[0], self.axes[1], self.axes[3]]
-        self.joy_active = any(abs(a) > 0.05 for a in active_axes)
+        self.joy_active = any(abs(a) > 0.05 for a in active_axes) or (self.buttons[0] == 1)
 
     def cmd_cb(self, msg: Float64MultiArray):
-        if len(msg.data) < 3:
+        if len(msg.data) < 4:
             return
         
-        self.current_spherical_ref = [float(msg.data[0]), float(msg.data[1]), float(msg.data[2])]
+        self.current_pov_ref = [float(msg.data[0]), float(msg.data[1]), float(msg.data[2]), float(msg.data[3])]
         self.joy_active = False
          
         self.publish_goal()
@@ -73,34 +75,50 @@ class HumanGoalNode(Node):
         if not self.joy_active:
             return
 
-        pan_cmd  = self.axes[0]
-        tilt_cmd = self.axes[1]
-        r_cmd    = self.axes[3]
+        # Toggle Task Phase with button 0 (es. 'A' o 'Cross')
+        if len(self.buttons) > 0:
+            if self.buttons[0] == 1 and self.last_button_state == 0:
+                self.task_phase_active = not self.task_phase_active
+                if self.task_phase_active:
+                    self.get_logger().info("Task Phase ACTIVE: Framing destro")
+                    self.current_pov_ref[1] = -0.6 # Yc offset a destra
+                    self.current_pov_ref[0] = 1.0  # Xc più vicino
+                else:
+                    self.get_logger().info("Task Phase INACTIVE: Framing centrato")
+                    self.current_pov_ref[1] = 0.0
+                    self.current_pov_ref[0] = 2.0
+            self.last_button_state = self.buttons[0]
 
-        self.current_spherical_ref[1] += pan_cmd * self.v_pan_max * self.dt
-        self.current_spherical_ref[2] += tilt_cmd * self.v_tilt_max * self.dt
-        self.current_spherical_ref[0] += r_cmd * self.v_r_max * self.dt
+        pan_cmd  = self.axes[0]  # Destra/Sinistra per orbitare
+        zc_cmd   = self.axes[1]  # Su/Giù per alzare/abbassare inquadratura (Zc)
+        xc_cmd   = self.axes[3]  # Avanti/Indietro per zoom (Xc)
+
+        self.current_pov_ref[3] += pan_cmd * self.v_pan_max * self.dt  # Pan_mutuo
+        self.current_pov_ref[2] += zc_cmd * self.v_zc_max * self.dt    # Zc
+        self.current_pov_ref[0] += xc_cmd * self.v_xc_max * self.dt    # Xc
 
         # Limiti
-        # 1. Limiti sul Raggio (Zoom)
-        r_min = 0.5  # Non avvicinarsi a meno di 50 cm
-        r_max = 8.0  # Non allontanarsi a più di 8 metri
-        self.current_spherical_ref[0] = max(r_min, min(r_max, self.current_spherical_ref[0]))
-        #2. Limiti sul Tilt (Altezza)
-        max_tilt = 30.0 * math.pi / 180.0
-        self.current_spherical_ref[2] = max(-max_tilt, min(max_tilt, self.current_spherical_ref[2]))
-        # Wrap-Around del pan orbitare a 360° infinitamente
-        # Mantiene il valore sempre pulito nel range [-pi, +pi] senza bloccare il volo
-        self.current_spherical_ref[1] = (self.current_spherical_ref[1] + math.pi) % (2 * math.pi) - math.pi
+        # 1. Limiti sulla Profondità (Xc)
+        xc_min = 0.5  
+        xc_max = 8.0  
+        self.current_pov_ref[0] = max(xc_min, min(xc_max, self.current_pov_ref[0]))
+        
+        # 2. Limiti sull'inquadratura verticale (Zc)
+        max_zc = 2.0
+        self.current_pov_ref[2] = max(-max_zc, min(max_zc, self.current_pov_ref[2]))
+        
+        # Wrap-Around del pan_mutuo
+        self.current_pov_ref[3] = (self.current_pov_ref[3] + math.pi) % (2 * math.pi) - math.pi
         self.publish_goal()
 
     def publish_goal(self):
         msg = Float64MultiArray()
-        # Invia r, pan, tilt
+        # Invia Xc, Yc, Zc, Pan_mutuo
         msg.data = [
-            float(self.current_spherical_ref[0]),
-            float(self.current_spherical_ref[1]),
-            float(self.current_spherical_ref[2])
+            float(self.current_pov_ref[0]),
+            float(self.current_pov_ref[1]),
+            float(self.current_pov_ref[2]),
+            float(self.current_pov_ref[3])
         ]
         self.goal_pub.publish(msg)
 

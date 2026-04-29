@@ -21,7 +21,7 @@ def generate_launch_description():
     # Argument to choose the world from the command line
     declare_world_arg = DeclareLaunchArgument(
         'world',
-        default_value='peg_hole.sdf',
+        default_value='default',
         description='Name of the SDF world file to load'
     )
 

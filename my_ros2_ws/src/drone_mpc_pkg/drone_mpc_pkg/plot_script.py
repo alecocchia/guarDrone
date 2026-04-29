@@ -83,26 +83,27 @@ def main():
                   "Omega X [rad/s]", "Omega Y [rad/s]", "Omega Z [rad/s]"], 
            "Drone Velocities vs MPC Reference", ncols=3, use_tex=args.tex, block=block)
 
-    # --- FIGURE 4: External Spherical Tracking ---
+    # --- FIGURE 4: PoV Orbiting & Orientation ---
     fig4_data = [
-        {'sim': data['radius_real'], 'ref': data['online_ref'][:, 0]},
         {'sim': data['pan_real'],    'ref': data['online_ref'][:, 1]},
-        {'sim': data['tilt_real'],   'ref': data['online_ref'][:, 2]}
+        {'sim': data['rpy'][:, 2],   'ref': data['pref_rpy'][:, 2]},
+        {'sim': data['radius_real'], 'ref': data['online_ref'][:, 0]}
     ]
-    myPlot(t, fig4_data, ["Radius [m]", "Pan [rad]", "Tilt [rad]"], 
-           "External Spherical References Tracking", ncols=3, use_tex=args.tex, block=block)
+    myPlot(t, fig4_data, ["Pan Mutuo (Orbit) [rad]", "Absolute Yaw [rad]", "Mutual Distance (Xc) [m]"], 
+           "PoV Orbiting and Orientation Tracking", ncols=3, use_tex=args.tex, block=block)
 
-    # --- FIGURE 5: Visual Servoing ---
+    # --- FIGURE 5: Visual Servoing (Camera Frame) ---
     fig5_data = [
-        {'sim': data['Yc'], 'ref': data['online_visual_ref'][:, 0]},
-        {'sim': data['Zc'], 'ref': data['online_visual_ref'][:, 1]}
+        {'sim': data['Xc'], 'ref': data['online_visual_ref'][:, 0]},
+        {'sim': data['Yc'], 'ref': data['online_visual_ref'][:, 1]},
+        {'sim': data['Zc'], 'ref': data['online_visual_ref'][:, 2]}
     ]
-    myPlot(t, fig5_data, ["Y_camera [m]", "Z_camera [m]"], 
-           "Visual Servoing (Target in Camera Frame)", ncols=2, use_tex=args.tex, block=block)
+    myPlot(t, fig5_data, ["Xc (Depth/Zoom) [m]", "Yc (Horizontal Offset) [m]", "Zc (Vertical Offset) [m]"], 
+           "Visual Servoing: Target Position in Camera Frame", ncols=3, use_tex=args.tex, block=block)
 
     # --- FIGURE 6: Primary Tracking Errors (Position, Visual, Orientation) ---
     err_pos = np.linalg.norm(data['pos'][:, :2] - data['pref_pos'][:, :2], axis=1)
-    err_vis = np.linalg.norm(np.column_stack((data['Yc'], data['Zc'])) - data['online_visual_ref'], axis=1)
+    err_vis = np.linalg.norm(np.column_stack((data['Xc'], data['Yc'], data['Zc'])) - data['online_visual_ref'], axis=1)
     err_rp = np.linalg.norm(data['q'][:, 1:3], axis=1) # qx, qy
     
     fig6_data = [

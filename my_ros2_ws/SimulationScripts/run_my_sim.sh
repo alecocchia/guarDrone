@@ -15,11 +15,11 @@ DRONE_X=${DRONE_X:-0.0}
 DRONE_Y=${DRONE_Y:-0.0}
 DRONE_Z=${DRONE_Z:-0.0}
 DRONE_YAW=${DRONE_YAW:-0.0}
-WORLD_NAME=${WORLD_NAME:-"peg_hole"} # Default a "default"
+WORLD_NAME=${WORLD_NAME:-"default"} # Default a "default"
 MODEL_NAME=${MODEL_NAME:-"x500_depth"} # Default a "x500_depth"
 
 # 1. Crea la sessione in background e nomina la finestra 'dashboard'
-tmux -f /root/my_ros2_ws/SimulationScripts/tmux.conf new-session -d -s $SESSION_NAME -n 'dashboard'
+tmux -f /root/guarDrone/my_ros2_ws/SimulationScripts/tmux.conf new-session -d -s $SESSION_NAME -n 'dashboard'
 
 # 2. CONFIGURAZIONE MODERNA (Nessun errore di 'mouse-select-pane')
 # Abilita il mouse per selezionare i riquadri e ridimensionarli
@@ -41,12 +41,13 @@ tmux send-keys -t $SESSION_NAME:0.0 "MicroXRCEAgent udp4 -p 8888" C-m
 
 # --- Riquadro 1: PX4 SITL / Gazebo ---
 tmux select-pane -T '1: PX4 SITL' -t $SESSION_NAME:0.1
-tmux send-keys -t $SESSION_NAME:0.1 "cd /root/PX4-Autopilot" C-m
+tmux send-keys -t $SESSION_NAME:0.1 "cd /root/guarDrone/PX4-Autopilot" C-m
+tmux send-keys -t $SESSION_NAME:0.1 "source /opt/ros/humble/setup.bash && [ -f /root/guarDrone/my_ros2_ws/install/setup.bash ] && source /root/guarDrone/my_ros2_ws/install/setup.bash" C-m
 tmux send-keys -t $SESSION_NAME:0.1 "PX4_GZ_WORLD=${WORLD_NAME} PX4_GZ_MODEL_POSE='${DRONE_X},${DRONE_Y},${DRONE_Z},0,0,${DRONE_YAW}' ${HEADLESS_PREFIX}make px4_sitl gz_${MODEL_NAME}" C-m
 
 # --- Riquadro 2: ROS 2 Launch ---
 tmux select-pane -T '2: ROS 2 MPC' -t $SESSION_NAME:0.2
-tmux send-keys -t $SESSION_NAME:0.2 "cd /root/my_ros2_ws" C-m
+tmux send-keys -t $SESSION_NAME:0.2 "cd /root/guarDrone/my_ros2_ws" C-m
 tmux send-keys -t $SESSION_NAME:0.2 "colcon build" C-m
 tmux send-keys -t $SESSION_NAME:0.2 "source /opt/ros/humble/setup.bash" C-m
 tmux send-keys -t $SESSION_NAME:0.2 "source install/setup.bash" C-m
@@ -54,7 +55,7 @@ tmux send-keys -t $SESSION_NAME:0.2 "ros2 launch drone_mpc_pkg mpc_sim.launch.py
 
 # --- Riquadro 3: Terminale Vuoto (Pronto per ROS 2) ---
 tmux select-pane -T '3: Manual Control' -t $SESSION_NAME:0.3
-tmux send-keys -t $SESSION_NAME:0.3 "cd /root/my_ros2_ws" C-m
+tmux send-keys -t $SESSION_NAME:0.3 "cd /root/guarDrone/my_ros2_ws" C-m
 tmux send-keys -t $SESSION_NAME:0.3 "source /opt/ros/humble/setup.bash" C-m
 tmux send-keys -t $SESSION_NAME:0.3 "source install/setup.bash" C-m
 tmux send-keys -t $SESSION_NAME:0.3 "clear" C-m

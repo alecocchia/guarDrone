@@ -10,9 +10,9 @@ from scipy.spatial.transform import Rotation
 #################  AGGIUSTARE: ricavare snap, jerk, acc in qualche modo perché da y_expr non si può tramite get(...)
 ##############  Estendere lo stato con tutti gli stati
 
-def build_yref_online(y_idx, pos_ref, visual_ref, u_ref=np.zeros(4)):
+def build_yref_online(y_idx, pan_ref, visual_ref, u_ref=np.zeros(4)):
     yref = np.zeros(y_idx["u"].stop) 
-    yref[y_idx["pos"]]     = pos_ref[0:2]          # Posizione Cartesiana X, Y
+    yref[y_idx["pan"]]     = pan_ref                # Pan Mutuo
     yref[y_idx["vel"]]     = np.array([0,0,0])
     #yref[y_idx["quat"]]    = xy_pos_ref[3:7]          # Quaternione puro w, x, y, z
     yref[y_idx["rp"]]      = np.array([0,0])        # X_c, Y_c (posizione dell'oggetto rispetto alla camera, nella terna camera)
@@ -25,8 +25,8 @@ def build_yref_online(y_idx, pos_ref, visual_ref, u_ref=np.zeros(4)):
     yref[y_idx["u"]]       = u_ref
     return yref
 
-def build_yref_terminal(y_idx, pos_ref, visual_ref, ny_e, u_ref=np.zeros(4)):
-    y = build_yref_online(y_idx, pos_ref, visual_ref, u_ref)
+def build_yref_terminal(y_idx, pan_ref, visual_ref, ny_e, u_ref=np.zeros(4)):
+    y = build_yref_online(y_idx, pan_ref, visual_ref, u_ref)
     return y[:ny_e]  
 
 
@@ -65,7 +65,7 @@ def set_initial_state(ocp_solver, xk):
 
 def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts, W, W_e, 
                   u_min, u_max,
-                  pos_ref = np.zeros(3), visual_ref = np.zeros(2),
+                  pan_ref = 0.0, visual_ref = np.zeros(3),
                   cam_rpy = np.zeros(3), fov_h = 80.0, fov_v = 60.0):
     
     nx = model.x.rows()
@@ -93,12 +93,15 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     # Quaternione di stato - Orientamento Puro
     q_expr = model.x[6:10]
     
-    # Derivata per Euler rates (necessario per il costo sulle velocità angolari)
-    #rpy_expr = quat_to_RPY(q_expr)
-    #rp_expr = rpy_expr[0:2]
+    # Derivata per Euler rates e Yaw
+    qw = q_expr[0]
+    qx = q_expr[1]
+    qy = q_expr[2]
+    qz = q_expr[3]
+    # yaw_expr = ca.atan2(2*(qw*qz + qx*qy), 1 - 2*(qy**2 + qz**2)) # Non usato
+    
     rp_expr = q_expr[1:3]
     w_expr = model.x[10:13]
-    #dot_rpy = angularVel_to_EulerRates(rpy_expr[0],rpy_expr[1],rpy_expr[2],w_expr)
     dot_rpy=w_expr
 
     # Rotazione attuale del drone rispetto al world
@@ -106,9 +109,11 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
 
     # --- Parte visuale --> Sistema camera ---  
     d_cam = ca.DM(camera_offset[0:3]).reshape((3,1))
+
+    # posizione camera = posizione drone nel mondo + posa camera-body ruotata nel mondo
     p_cam = p_expr + R_expr @ d_cam   # Posizione della camera nel mondo
 
-    # Orientamento della camera rispetto al corpo (FLU)
+    # Orientamento della camera rispetto al body del drone (FLU)
     R_cam_body = RPY_to_R(cam_rpy[0], cam_rpy[1], cam_rpy[2])
 
     fov_h_rad = fov_h * ca.pi / 180.0
@@ -121,12 +126,15 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     p_rel_world = p_obj_expr - p_cam
 
     # Posa relativa dell'oggetto rispetto alla camera, nella terna camera
-    # P_c = R_cam_body.T @ R_body_world.T @ p_rel_world
+    # Mondo -> body_drone -> camera
     P_c = R_cam_body.T @ R_expr.T @ p_rel_world    
 
     X_c = P_c[0]
     Y_c = P_c[1]
     Z_c = P_c[2]
+
+    # Pan mutuo: angolo del vettore (P_cam - P_obj) nel piano XY globale
+    pan_expr = ca.atan2(p_cam[1] - p_obj_expr[1], p_cam[0] - p_obj_expr[0])
 
     # state dynamics vector
     xdot = model.f_expl_expr  
@@ -190,7 +198,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     
     model.con_h_expr = visual_constr_expr
     
-    X_min = 1 # Il peg deve stare almeno a X_min DAVANTI alla telecamera (distanza di sicurezza)
+    X_min = 1.5 # Il peg deve stare almeno a X_min DAVANTI alla telecamera (distanza di sicurezza)
     ocp.constraints.lh = np.array([-1000,  0.0, -1000,  0.0, X_min])
     ocp.constraints.uh = np.array([ 0.0,  1000,  0.0,  1000, 100])
 
@@ -203,9 +211,9 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     # Riduciamo drasticamente i pesi dei soft constraints visuali
     # in modo che il drone non impazzisca se il peg esce temporaneamente dal FOV
     # Aumentiamo le penalità per rendere i vincoli più rigidi ed evitare collisioni
-    penalty_L1 = 1e-2 
-    penalty_L2 = 1e-1   
-    weights_costs = np.array([1, 1, 1, 1, 1000])
+    penalty_L1 = 1e-2
+    penalty_L2 = 1e-1  
+    weights_costs = np.array([1, 1, 1, 1, 100])
 
     ocp.cost.Zl = penalty_L2 * weights_costs
     ocp.cost.Zu = penalty_L2 * weights_costs
@@ -219,9 +227,10 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     '''
     # Cost function quantities (expressed with respect to state and control)
     y_expr = ca.vertcat(
-        p_cam[0:2],                     # Posizione attuale della camera (X,Y)
+        pan_expr,                       # Pan Mutuo
+        X_c,                            # Posizione X dell'oggetto rispetto alla camera
         Y_c,                            # Posizione Y dell'oggetto rispetto alla camera
-        Z_c,
+        Z_c,                            # Posizione Z dell'oggetto rispetto alla camera
         v_expr,                         # velocity
         rp_expr,                         # Roll e pitch (non è vero, ora sono qx,qy)
         dot_rpy,                        # Euler rates (non è vero, ora sono velocità angolari)
@@ -234,7 +243,8 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     
     # Terminal cost exrpession
     y_expr_e = ca.vertcat(
-        p_cam[0:2],                     # Posizione attuale (X,Y)
+        pan_expr,                       # Pan Mutuo
+        X_c,
         Y_c,
         Z_c,
         v_expr,                         # velocity
@@ -274,9 +284,9 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     u_ref=np.array(u_hovering.full().flatten())
 
 
-    # Indexes (Aggiornati per le nuove dimensioni: pos=3, quat=4)
-    pos_ind = slice(0,2) # x e y della camera
-    visual_ind = slice(pos_ind.stop,pos_ind.stop+2)
+    # Indexes (Aggiornati per le nuove dimensioni)
+    pan_ind = slice(0,1) # pan
+    visual_ind = slice(pan_ind.stop,pan_ind.stop+3) # X_c, Y_c, Z_c
     vel_ind = slice(visual_ind.stop,visual_ind.stop+3)
     rp_ind = slice(vel_ind.stop, vel_ind.stop+2)
     #quat_ind = slice(vel_ind.stop, vel_ind.stop+4)
@@ -288,7 +298,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     u_ind = slice(snap_ind.stop,snap_ind.stop+4)
 
     y_idx = {
-        "pos": pos_ind,
+        "pan": pan_ind,
         "visual": visual_ind,
         "vel": vel_ind,
         "rp": rp_ind,
@@ -306,7 +316,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     yref_e = np.zeros(y_expr_e.numel())
 
     # ASSIGN REFERENCES
-    yref[pos_ind]= pos_ref[0:2]         # Target assoluto X, Y
+    yref[pan_ind]= pan_ref              # Target Pan
     yref[visual_ind]=visual_ref
     yref[vel_ind]=v_ref
     yref[rp_ind]= rp_ref

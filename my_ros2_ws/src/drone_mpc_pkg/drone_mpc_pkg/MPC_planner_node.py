@@ -95,7 +95,7 @@ class MpcPlannerNode(Node):
         # === Tempo/Orizzonte ===
         self.Tf = 25.0
         num_campioni = 20
-        self.ts = 0.02  # 50 Hz
+        self.ts = 0.01  # 100 Hz
         self.Tp = num_campioni*self.ts
         self.ts_peg = 0.005
         self.N_horiz = int(self.Tf / self.ts)
@@ -106,7 +106,6 @@ class MpcPlannerNode(Node):
         # === Stato MPC / loop ===
         self.acados_solver_ready = False
         self.path_received = False
-        self.is_peg_finished = False
         self.start_received = False
         self.first_odom_received = False  
         self.planner_ready_published = False   
@@ -124,7 +123,7 @@ class MpcPlannerNode(Node):
         self.camera_offset = np.array([cam_x, cam_y, cam_z])
         self.camera_rpy = np.array([cam_roll, cam_pitch, cam_yaw])
 
-        # --- Momentum Observer (Fabio Ruggiero style) ---
+        # --- Momentum Observer  (Ruggiero style) ---
         self.p_momentum = mass * np.zeros(3)  # Linear momentum integrated
         self.L_momentum = np.zeros(3)         # Angular momentum integrated
         self.f_ext_est  = np.zeros(3)         # Estimated external force (world frame)
@@ -137,44 +136,9 @@ class MpcPlannerNode(Node):
         self.fov_h = self.get_parameter('fov_h').value
         self.fov_v = self.get_parameter('fov_v').value
 
-        # Riferimenti mutual 
-        radius = 2.0
-        mut_pos_ref = np.array([radius, 0.0, 0.0]) # pan = pi per stare "dietro" al peg
-        mut_rot_ref = np.array([0.0, 0.0, 0.0])
-        
-        # Trasformazione testa-braccio (solo traslazioni)
-        depth_cam = 1  
-        right_cam = 0.3  
-        down_cam  = 0.2  
-        scale_factor = 2.0 
-        
-        # Target visivo finale (fase di task)
-        Y_c_target = -right_cam * scale_factor
-        Z_c_target = -down_cam * scale_factor
-        self.final_visual_ref = np.array([Y_c_target, Z_c_target])
+        # Target visivo di default (PoV: Xc, Yc, Zc, Pan)
+        self.pov_target = np.array([2.0, 0.0, 0.0, 0.0])
 
-        X_c_target = depth_cam * scale_factor
-        base_pan = 0.0
-        
-        # Conversione del target da piano immagine a coordinate cartesiane
-        # Usiamo i segni negativi per rimanere nella zona "dietro" al peg (X < X_peg)
-        offset_x = X_c_target * np.cos(base_pan) - Y_c_target * np.sin(base_pan)
-        offset_y = X_c_target * np.sin(base_pan) + Y_c_target * np.cos(base_pan)
-        offset_z = Z_c_target 
-        
-        # Conversione del target da coordinate cartesiane a coordinate sferiche
-        r_final = np.sqrt(offset_x**2 + offset_y**2 + offset_z**2)
-        pan_final = np.arctan2(offset_y, offset_x)
-        tilt_final = np.arcsin(offset_z / r_final)
-
-        mut_pos_final_ref = np.array([r_final, pan_final, tilt_final])
-        mut_rot_final_ref = np.array([0.0, 0.0, 0.0]) # Yaw = 0 per guardare il peg da dietro
-
-        self.ref = np.concatenate([mut_pos_ref, mut_rot_ref])
-        self.final_ref = np.concatenate([mut_pos_final_ref, mut_rot_final_ref])
-        self.current_ref = self.ref.copy()
-
-        self.declare_parameter('human_hold_ref', 0.1)
         self.declare_parameter('control_flag',  1)  
         self.control_flag_val = self.get_parameter('control_flag').get_parameter_value().integer_value
         
@@ -208,9 +172,6 @@ class MpcPlannerNode(Node):
         else:
             self.get_logger().info("MPC pubblica Wrench standard su: /optimal_wrench")
 
-        self.base_ref = self.ref.copy()      
-        self.hgoal_ref = None                
-        self.hgoal_until = None              
 
         self.current_position = np.zeros(3)
         self.current_rpy = np.zeros(3)
@@ -230,9 +191,6 @@ class MpcPlannerNode(Node):
         self.peg_path_subscription = self.create_subscription(
             Path, '/peg_path', self.peg_path_callback, qos_latched)
         
-        self.peg_end_subscription = self.create_subscription(
-            Bool, '/peg_path_finished', self.peg_path_finished_callback, qos_latched
-        )
 
         self.odom_subscription = self.create_subscription(
             VehicleOdometry, '/fmu/out/vehicle_odometry', self.odom_callback, px4_qos_profile
@@ -247,7 +205,7 @@ class MpcPlannerNode(Node):
 
         self.control_timer = self.create_timer(self.ts, self.control_step)
         self.start_subscription = self.create_subscription(PoseStamped, '/peg_pose', self.start_callback, 10)
-        self.human_goal_sub = self.create_subscription(Float64MultiArray, 'human_goal', self.human_goal_callback, 10)
+        self.pov_target_sub = self.create_subscription(Float64MultiArray, '/pov_target', self.pov_target_callback, 10)
 
         self.get_logger().info("MPC Node avviato. In attesa...")
 
@@ -276,11 +234,6 @@ class MpcPlannerNode(Node):
         self.path_received = True
 
 
-    def peg_path_finished_callback(self, msg: Bool):
-        if msg.data is True:
-            self.is_peg_finished = True
-        return
-    
     def planner_configure(self):
         if self.acados_solver_ready == True:
             return
@@ -387,22 +340,18 @@ class MpcPlannerNode(Node):
         drone_pose_msg.pose.orientation = t.transform.rotation
         self.drone_pose_pub.publish(drone_pose_msg)
 
-    def human_goal_callback(self, msg: Float64MultiArray):
-        if len(msg.data) >= 3:
-            r, pan, tilt = float(msg.data[0]), float(msg.data[1]), float(msg.data[2])
-            self.hgoal_ref = np.array([r, pan, tilt, 0.0, 0.0, 0.0], dtype=float)
-            hold_human_ref = float(self.get_parameter('human_hold_ref').value)
-            from rclpy.duration import Duration
-            self.hgoal_until = self.get_clock().now() + Duration(seconds=hold_human_ref)
+    def pov_target_callback(self, msg: Float64MultiArray):
+        if len(msg.data) >= 4:
+            self.pov_target = np.array([msg.data[0], msg.data[1], msg.data[2], msg.data[3]], dtype=float)
 
     # ==================== Configurazione e Solve ====================
     def configure_mpc(self):
 
         # g0 importato da common.py
 
-        X = 10; Y = 10; Z = 10; V = 5.0; QUAT = 1            
+        X = 2; Y = 2; Z = 5; V = 5.0; QUAT = 1            
         ANG_DOT = 3.0; ACC = 10.0; ACC_ANG = 11.0     
-        VISUAL = 2; JERK = 20.0; SNAP = 200.0
+        JERK = 20.0; SNAP = 200.0
         U_F = self.get_parameter('f_max').value
         
         # Le accelerazioni angolari massime teoriche (rad/s^2) dipendono dalla fisica del drone.
@@ -414,26 +363,26 @@ class MpcPlannerNode(Node):
         U_TAU_XY = self.Ixx * acc_ang_max_xy
         U_TAU_Z  = self.Izz * acc_ang_max_z
 
-        PesoPos = 10
-        PesoVis = PesoPos / 20
-        PesoRot = PesoPos 
-        PesoVel = PesoPos / 10
-        PesoAngVel = PesoRot / 5
-        PesoAcc = PesoVel 
-        PesoAngAcc = PesoAngVel
-        PesoJerk = PesoAcc / 5
+        PesoVis = 10
+        PesoPan = PesoVis/2
+        PesoRot = PesoVis
+        PesoVel = PesoVis / 20
+        PesoAngVel = PesoRot / 10
+        PesoAcc = PesoVel * 2
+        PesoAngAcc = PesoAngVel * 2
+        PesoJerk = PesoAcc 
         PesoSnap = PesoJerk
-        PesoForce = PesoPos / 100
-        PesoTorque = PesoForce
+        PesoForce = PesoPan / 100
+        PesoTorque = PesoForce  * 2
 
-        Q_pos = np.diag([PesoPos,PesoPos]) / [X**2, Y**2]
-        Q_visual = np.diag([PesoVis,PesoVis]) / VISUAL**2 
-        Q_vel = np.diag([PesoVel, PesoVel, PesoVel]) / V**2
+        Q_pan = np.diag([PesoPan]) / (ca.pi)**2
+        Q_visual = np.diag([PesoVis,PesoVis,PesoVis]) / np.array([X,Y,Z])**2 
+        Q_vel = np.diag([PesoVel, PesoVel, PesoVel/4]) / V**2
         Q_rot = np.diag([PesoRot, PesoRot]) / QUAT**2  
         
-        Q_ang_dot = np.diag([PesoAngVel, PesoAngVel, PesoAngVel]) / ANG_DOT**2
-        Q_acc = np.diag([PesoAcc, PesoAcc, PesoAcc]) / ACC**2
-        Q_acc_ang = np.diag([PesoAngAcc, PesoAngAcc, PesoAngAcc/2]) / ACC_ANG**2
+        Q_ang_dot = np.diag([PesoAngVel, PesoAngVel, PesoAngVel/4]) / ANG_DOT**2
+        Q_acc = np.diag([PesoAcc, PesoAcc, PesoAcc/10]) / ACC**2
+        Q_acc_ang = np.diag([PesoAngAcc, PesoAngAcc, PesoAngAcc/10]) / ACC_ANG**2
         Q_jerk = np.diag([PesoJerk, PesoJerk, PesoJerk]) / JERK**2
         Q_snap = np.diag([PesoSnap, PesoSnap, PesoSnap]) / SNAP**2
         
@@ -441,28 +390,20 @@ class MpcPlannerNode(Node):
         R_tau = ca.diagcat(PesoTorque / U_TAU_XY**2, PesoTorque / U_TAU_XY**2, PesoTorque / U_TAU_Z**2)
         
         R = ca.diagcat(R_f, R_tau)
-        Q = ca.diagcat(Q_pos, Q_visual, Q_vel, Q_rot, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
+        Q = ca.diagcat(Q_pan, Q_visual, Q_vel, Q_rot, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
 
         # Definiamo i limiti fisici reali da passare al solver
         u_min = np.array([0.0, -U_TAU_XY, -U_TAU_XY, -U_TAU_Z])
         u_max = np.array([U_F, U_TAU_XY, U_TAU_XY, U_TAU_Z]) 
 
         W   = ca.diagcat(Q, R).full()
-        W_e = 10* Q.full()
-
-        p_init = self.p_obj[0]
-        r_init, pan_init, tilt_init = self.ref[0], self.ref[1], self.ref[2]
-        dummy_pos = np.array([
-            p_init[0] + r_init * np.cos(tilt_init) * np.cos(pan_init),
-            p_init[1] + r_init * np.cos(tilt_init) * np.sin(pan_init),
-            p_init[2] + r_init * np.sin(tilt_init)
-        ])
+        W_e = 20* Q.full()
 
         (self.ocp_solver, self.N_horiz, self.nx, self.nu, self.y_idx, self.ny, self.ny_e) = configure_mpc(
             model=self.model, x0=self.x0, camera_offset=self.camera_offset,
             p_obj=self.p_obj, rpy_obj=self.rpy_obj, Tf=self.Tp, ts=self.ts,
             W=W, W_e=W_e, u_min=u_min, u_max=u_max,
-            pos_ref=dummy_pos, visual_ref = np.array([0,0]),
+            pan_ref=0.0, visual_ref = np.array([2.0,0.0,0.0]),
             cam_rpy=self.camera_rpy, fov_h=self.fov_h, fov_v=self.fov_v
         )
 
@@ -479,24 +420,32 @@ class MpcPlannerNode(Node):
         self.k = 0 
         self.publish_predicted_path_from_buffers()
 
-    def solve_MPC(self, xk, online_spherical_ref, online_visual_ref):
+    def solve_MPC(self, xk, pov_target):
         yref0 = None
         set_initial_state(self.ocp_solver, xk)
         t0_idx = self.k
         M = len(self.p_obj)
 
-        r, pan, tilt = online_spherical_ref[0], online_spherical_ref[1], online_spherical_ref[2]
-        offset_x = r * np.cos(tilt) * np.cos(pan)
-        offset_y = r * np.cos(tilt) * np.sin(pan)
-        offset_z = r * np.sin(tilt)
+        online_visual_ref = pov_target[0:3]
+        pan_target = pov_target[3]
+
+        # Calcoliamo il pan attuale rispetto all'oggetto per il wrapping
+        p_obj_now = self.p_obj[t0_idx]
+        current_pan = np.arctan2(xk[1] - p_obj_now[1], xk[0] - p_obj_now[0])
+
+        # SHORTEST PATH WRAP: evitiamo che il drone faccia un giro di 350 gradi 
+        # quando attraversa la barriera di pi/-pi.
+        diff_pan = (pan_target - current_pan + np.pi) % (2 * np.pi) - np.pi
+        pan_target = current_pan + diff_pan
+
+        # PROTEZIONE DECOLLO: Se il drone è molto basso (< 0.6m), forziamo il pan_target
+        # a quello attuale per evitare inclinazioni violente dovute all'orbita.
+        if self.current_position[2] < 0.6:
+            pan_target = current_pan
 
         for i in range(self.N_horiz + 1):
             idx = min(t0_idx + i, M - 1)
             p_i   = self.p_obj[idx]
-            pos_target = np.array([p_i[0] + offset_x, p_i[1] + offset_y, p_i[2] + offset_z])
-            
-            # Yaw reference is generally 0 in this application (looking straight)
-            psi_target = 0.0 
             
             params = np.zeros(9)
             params[0:3] = p_i               # Target object position
@@ -506,11 +455,11 @@ class MpcPlannerNode(Node):
             self.ocp_solver.set(i, "p", params)
             
             if i < self.N_horiz:
-                yref_val = build_yref_online(self.y_idx, pos_target, online_visual_ref, self.u_hover)
+                yref_val = build_yref_online(self.y_idx, pan_target, online_visual_ref, self.u_hover)
                 self.ocp_solver.set(i, "yref", yref_val)
                 if i == 0: yref0 = yref_val
             elif i == self.N_horiz:
-                self.ocp_solver.set(self.N_horiz, "yref", build_yref_online(self.y_idx, pos_target, online_visual_ref, self.u_hover)[:self.ny_e])
+                self.ocp_solver.set(self.N_horiz, "yref", build_yref_online(self.y_idx, pan_target, online_visual_ref, self.u_hover)[:self.ny_e])
 
         status = self.ocp_solver.solve()
         if status != 0:
@@ -601,24 +550,22 @@ class MpcPlannerNode(Node):
             self.current_ang_vel[0], self.current_ang_vel[1], self.current_ang_vel[2]
         ])
 
-        now = self.get_clock().now()
-        if self.hgoal_ref is not None and self.hgoal_until is not None and now < self.hgoal_until:
-            online_spherical_ref = self.hgoal_ref
-            online_visual_ref = np.array([0,0])
-        else:
-            if self.is_peg_finished is True:
-                online_spherical_ref = self.final_ref 
-                online_visual_ref = self.final_visual_ref
-            else:
-                online_spherical_ref = self.base_ref  
-                online_visual_ref = np.array([0,0])
-
+        # Pubblicazione riferimenti per RViz/Logger (manteniamo formato compatibile se necessario)
+        # Il pov_target è [Xc, Yc, Zc, Pan]
+        online_visual_ref = self.pov_target[0:3]
+        pan_target = self.pov_target[3]
+        
+        # Per mantenere la compatibilità col logger creiamo uno spherical fake: [Xc, Pan, 0]
+        online_spherical_ref = np.array([online_visual_ref[0], pan_target, 0.0])
         ref_msg = Float64MultiArray(data=[float(x) for x in online_spherical_ref])
         self.ref_pub.publish(ref_msg)
         self.visual_ref_pub.publish(Float64MultiArray(data=[float(x) for x in online_visual_ref]))
 
         t_start = time.perf_counter()
-        u0, x_seq, yref0 = self.solve_MPC(xk,online_spherical_ref, online_visual_ref)
+        u0, x_seq, yref0 = self.solve_MPC(xk, self.pov_target)
+        t_end = time.perf_counter()
+        if (t_end - t_start) > self.ts:
+            self.get_logger().info(f"Solver time: {(t_end - t_start) * 1000:.2f} ms")
         
         # PUBBLICAZIONE OUTPUT
         if x_seq is not None and len(x_seq) >= 2:

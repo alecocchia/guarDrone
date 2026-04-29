@@ -30,11 +30,11 @@ docker run --rm -it --privileged \
 --env="NVIDIA_DRIVER_CAPABILITIES=all" \
 -e ROS_DOMAIN_ID=14 \
 -e XDG_RUNTIME_DIR="/tmp/runtime-root" \
--e PX4_GZ_MODELS="/root/PX4-Autopilot/Tools/simulation/gz/models" \
--e PX4_GZ_WORLDS="/root/PX4-Autopilot/Tools/simulation/gz/worlds" \
--e GZ_SIM_RESOURCE_PATH="/root/PX4-Autopilot/Tools/simulation/gz/models:/root/PX4-Autopilot/Tools/simulation/gz/worlds:/root/guarDrone/my_ros2_ws/src/$GZ_ENVIRONMENT_PKG/models:/root/guarDrone/models:/root/guarDrone/worlds" \
--e GZ_SIM_SYSTEM_PLUGIN_PATH="/root/guarDrone/my_ros2_ws/install/$GZ_ENVIRONMENT_PKG/lib" \
+-e PX4_GZ_MODELS="/root/guarDrone/PX4-Autopilot/Tools/simulation/gz/models" \
+-e PX4_GZ_WORLDS="/root/guarDrone/PX4-Autopilot/Tools/simulation/gz/worlds" \
+-e GZ_SIM_RESOURCE_PATH="/root/guarDrone/PX4-Autopilot/Tools/simulation/gz/models:/root/guarDrone/PX4-Autopilot/Tools/simulation/gz/worlds:/root/guarDrone/my_ros2_ws/src/$GZ_ENVIRONMENT_PKG/models:/root/guarDrone/my_ros2_ws/models:/root/guarDrone/my_ros2_ws/src/$GZ_ENVIRONMENT_PKG/worlds" \
+-e GZ_SIM_SYSTEM_PLUGIN_PATH="/root/guarDrone/my_ros2_ws/install/$GZ_ENVIRONMENT_PKG/lib/$GZ_ENVIRONMENT_PKG" \
 -e LD_LIBRARY_PATH=/opt/acados/lib \
 -w /root/guarDrone/my_ros2_ws \
 --network host \
---name=px4-cnt px4-img bash
+--name=px4-cnt guardrone_img bash

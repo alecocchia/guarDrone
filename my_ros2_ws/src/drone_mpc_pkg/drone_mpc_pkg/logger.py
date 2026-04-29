@@ -67,7 +67,7 @@ class Logger(Node):
 
         self.last_peg_pos = [0.0, 0.0, 0.0]
         self.last_online_ref = [0.0] * 6
-        self.last_online_visual_ref = [0.0, 0.0]
+        self.last_online_visual_ref = [0.0, 0.0, 0.0]
         self.last_pref_pos, self.last_pref_rpy, self.last_pref_q = [0.0]*3, [0.0]*3, [1.0, 0.0, 0.0, 0.0]
         self.last_vref, self.last_omegaref = [0.0]*3, [0.0]*3
         
@@ -208,12 +208,12 @@ class Logger(Node):
 
         # 2. Calcolo Camera Position e Visual/Spherical Actuals
         p_cam = pos + rot_flu2enu.apply(self.cam_offset)
-        p_rel_world = peg_pos - p_cam
-        p_rel_cam = rot_flu2enu.inv().apply(p_rel_world) # [Xc, Yc, Zc]
+        p_rel_world_obj2cam = p_cam - peg_pos
+        p_rel_cam = rot_flu2enu.inv().apply(peg_pos - p_cam) # [Xc, Yc, Zc]
         
         Xc, Yc, Zc = p_rel_cam[:, 0], p_rel_cam[:, 1], p_rel_cam[:, 2]
-        radius = np.linalg.norm(p_rel_world, axis=1)
-        pan = np.arctan2(p_rel_world[:, 1], p_rel_world[:, 0])
+        radius = np.linalg.norm(p_rel_world_obj2cam, axis=1)
+        pan = np.arctan2(p_rel_world_obj2cam[:, 1], p_rel_world_obj2cam[:, 0])
         tilt = np.arcsin(Zc / np.clip(radius, 1e-3, None))
 
         out = dict(
@@ -231,7 +231,7 @@ class Logger(Node):
             peg_pos=peg_pos, online_ref=online_ref,
             online_visual_ref=online_visual_ref,
             acc=acc, ang_acc=ang_acc, jerk=jerk, snap=snap,
-            p_cam=p_cam, Yc=Yc, Zc=Zc, 
+            p_cam=p_cam, Xc=Xc, Yc=Yc, Zc=Zc, 
             radius_real=radius, pan_real=pan, tilt_real=tilt,
             mass=self.mass, cam_offset=self.cam_offset
         )
