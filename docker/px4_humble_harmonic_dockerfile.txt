@@ -110,18 +110,6 @@ RUN mkdir -p /root/px4_ws/src \
     
 RUN echo "source /root/px4_ws/install/local_setup.bash" >> /root/.bashrc
 
-# ==========================================
-# PX4-Autopilot (CLONAZIONE E PATCH AUTOMATICA)
-# ==========================================
-WORKDIR /root
-RUN git clone --single-branch -b release/1.16 --recursive https://github.com/PX4/PX4-Autopilot.git
-
-# Aggiunge UXRCE_DDS_SYNCT=0 all'airframe x500 per la simulazione Gazebo (use_sim_time)
-RUN echo "" >> /root/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/4001_gz_x500 \
-    && echo "# Disabilita sync tempo DDS per usare use_sim_time ROS2" >> /root/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/4001_gz_x500 \
-    && echo "param set-default UXRCE_DDS_SYNCT 0" >> /root/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/4001_gz_x500
-# ==========================================
-
 # Additional packages
 RUN apt-get update && apt-get install -y --no-install-recommends \    
     aptitude \
@@ -229,7 +217,7 @@ RUN mkdir -p /opt/acados/bin && \
     curl -L https://github.com/acados/tera_renderer/releases/download/v0.2.0/t_renderer-v0.2.0-linux-amd64 \
     -o /opt/acados/bin/t_renderer && \
     chmod +x /opt/acados/bin/t_renderer
-    
+   
 # Add acados library paths to bashrc
 RUN echo "export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH:/opt/acados/lib" >> /root/.bashrc
 
@@ -238,9 +226,9 @@ RUN echo '#!/bin/bash\n\
 set -e\n\
 source /opt/ros/humble/setup.bash\n\
 [ -f /root/px4_ws/install/setup.bash ] && source /root/px4_ws/install/setup.bash\n\
-[ -f /root/guarDrone/my_ros2_ws/install/setup.bash ] && source /root/guarDrone/my_ros2_ws/install/setup.bash\n\
+[ -f /root/my_ros2_ws/install/setup.bash ] && source /root/my_ros2_ws/install/setup.bash\n\
 # Crea il symlink per tmux se il file esiste nel volume montato\n\
-[ -f /root/guarDrone/my_ros2_ws/SimulationScripts/tmux.conf ] && ln -sf /root/guarDrone/my_ros2_ws/SimulationScripts/tmux.conf /root/.tmux.conf\n\
+[ -f /root/my_ros2_ws/SimulationScripts/tmux.conf ] && ln -sf /root/my_ros2_ws/SimulationScripts/tmux.conf /root/.tmux.conf\n\
 exec "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

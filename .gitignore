@@ -1,24 +1,43 @@
-# 1. Ignora tutto (file e cartelle)
+# ==========================================
+# 1. BLOCCA TUTTO (Whitelist approach)
+# ==========================================
+# Ignora qualsiasi file e cartella di default
 *
 
-# 2. Permetti a Git di ENTRARE nelle sottocartelle (altrimenti non vedrà mai cosa c'è dentro)
+# ==========================================
+# 2. SBLOCCA L'ESPLORAZIONE DELLE CARTELLE
+# ==========================================
+# Essenziale: permette a Git di entrare nelle directory per cercare i file consentiti
 !*/
 
-# 3. Specifica cosa NON ignorare (Whitelist)
-!my_ros2_ws/**
-!docker/**
+# ==========================================
+# 3. COSA SALVARE (Le eccezioni)
+# ==========================================
+# File di configurazione e documentazione
 !.gitignore
+!.gitmodules
 !README.md
-!*.sh
-!*.md
 
-# 4. Filtri di sicurezza (Ignora le build dentro le cartelle autorizzate)
-**/build/
-**/install/
-**/log/
-**/.catkin/
-**/build_local/
-**/*.pyc
-.vscode/
-.DS_Store
+# La cartella ROS 2 e tutti i file al suo interno
+!my_ros2_ws/
+!my_ros2_ws/**
 
+# La cartella ROS 2 e tutti i file al suo interno
+!docker/
+!docker/**
+
+# Il sottomodulo PX4 (Cruciale: sblocchiamo solo il puntatore, senza asterischi)
+!PX4-Autopilot
+!PX4-Autopilot/
+
+# ==========================================
+# 4. RI-BLOCCA LE SCHIFEZZE (Dentro le aree sbloccate)
+# ==========================================
+# Anche se my_ros2_ws è sbloccata, blocchiamo le cartelle di build
+my_ros2_ws/build/
+my_ros2_ws/install/
+my_ros2_ws/log/
+
+# Ignora file temporanei di Python
+__pycache__/
+*.pyc
