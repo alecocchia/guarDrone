@@ -114,7 +114,8 @@ def quat_to_RPY(q):
     
     # Pitch (y-axis rotation)
     sinp = 2 * (qw*qy - qz*qx)
-    pitch = ca.asin(sinp)
+    # Protezione numerica per evitare NaN se sinp > 1 o < -1
+    pitch = ca.asin(ca.fmax(ca.fmin(sinp, 0.9999), -0.9999))
     
     # Yaw (z-axis rotation)
     siny_cosp = 2 * (qw*qz + qx*qy)

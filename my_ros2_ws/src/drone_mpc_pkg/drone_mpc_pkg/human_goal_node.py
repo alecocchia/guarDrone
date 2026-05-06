@@ -32,6 +32,7 @@ class HumanGoalNode(Node):
         self.sub = self.create_subscription(Float64MultiArray, cmd_topic, self.cmd_cb, qos_in)
         self.key_ref_sub = self.create_subscription(Float64MultiArray, '/online_ref', self.keyboard_ref_cb, qos_in)
         self.joy_sub = self.create_subscription(Joy, '/joy', self.joy_cb, qos_sensor)
+        self.actual_pov_sub = self.create_subscription(Float64MultiArray, '/actual_pov', self.actual_pov_cb, qos_in)
 
         # FIX 1: Inizializzato con coordinate PoV: [Xc, Yc, Zc, Pan_mutuo]
         self.current_pov_ref = [2.0, 0.0, 0.0, 0.0]  
@@ -51,6 +52,12 @@ class HumanGoalNode(Node):
         self.get_logger().info(f"Human Goal Node attivo. In attesa di comandi joypad...")
 
     def keyboard_ref_cb(self, msg: Float64MultiArray):
+        if not self.joy_active and len(msg.data) >= 4:
+            self.current_pov_ref = [msg.data[0], msg.data[1], msg.data[2], msg.data[3]]
+
+    def actual_pov_cb(self, msg: Float64MultiArray):
+        # Se il joystick non è attivo, il riferimento segue la posizione reale del drone
+        # per evitare "salti" quando si riprende il controllo.
         if not self.joy_active and len(msg.data) >= 4:
             self.current_pov_ref = [msg.data[0], msg.data[1], msg.data[2], msg.data[3]]
 
@@ -99,12 +106,12 @@ class HumanGoalNode(Node):
 
         # Limiti
         # 1. Limiti sulla Profondità (Xc)
-        xc_min = 0.5  
+        xc_min = 1.5  
         xc_max = 8.0  
         self.current_pov_ref[0] = max(xc_min, min(xc_max, self.current_pov_ref[0]))
         
         # 2. Limiti sull'inquadratura verticale (Zc)
-        max_zc = 2.0
+        max_zc = 0.5
         self.current_pov_ref[2] = max(-max_zc, min(max_zc, self.current_pov_ref[2]))
         
         # Wrap-Around del pan_mutuo

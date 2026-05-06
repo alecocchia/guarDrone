@@ -53,11 +53,11 @@ def export_quadrotor_ode_model(m,Ixx,Iyy,Izz) -> AcadosModel:
     F_body = ca.vertcat(0, 0, Fz)  # Force vector in body frame [0, 0, Fz_total]
     tau_body = ca.vertcat(tau_x, tau_y, tau_z) # Torque vector in body frame [tau_x, tau_y, tau_z]
 
-    # External wrench parameters (Disturbance Observer)
     # p[0:3] = object position (p_obj)
     # p[3:6] = external force in world frame (f_ext)
     # p[6:9] = external torque in body frame (tau_ext)
-    ref_sym = ca.SX.sym('p', 9) 
+    # p[9]   = pan reference (pan_ref)
+    ref_sym = ca.SX.sym('p', 10) 
     f_ext = ref_sym[3:6]
     tau_ext = ref_sym[6:9]
 
