@@ -2,7 +2,7 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Pose, PoseStamped
-from nav_msgs.msg import Path
+from nav_msgs.msg import Path, Odometry
 from std_msgs.msg import Bool
 import numpy as np
 from drone_mpc_pkg.common import RPY_to_quat
@@ -82,8 +82,8 @@ class PegPlannerNode(Node):
             depth=1
         )
         
-        # Publisher per il Path completo (usato dal controllore)
-        self.path_pub = self.create_publisher(Path, '/peg_path', qos_profile)
+        # Publisher per l'odometria continua (usato dal controllore)
+        self.odom_pub = self.create_publisher(Odometry, '/peg_odom', qos_profile)
 
         self.path_finished_pub = self.create_publisher(Bool, '/peg_path_finished', qos_profile)
 
@@ -103,57 +103,21 @@ class PegPlannerNode(Node):
             self.controller_ready_callback,
             qos_ready)
         
-        # Pubblica l'intero path una sola volta per il controllore
-        self.publish_full_path()
-        
         self.current_index = 0
-        self.timer = None
-        self.get_logger().info("Peg planner Node avviato. Path completo pubblicato. In attesa del segnale 'ready' dal planner.")
-
-
-    def publish_full_path(self):
-        path_msg = Path()
-        path_msg.header.stamp = self.get_clock().now().to_msg()
-        path_msg.header.frame_id = 'world'
-        now = self.get_clock().now().to_msg()
-        for i in range(len(self.traj_time)):
-            pose_stamped = PoseStamped()
-            pose_stamped.header.frame_id = 'world'
-            sec = now.sec + int(self.traj_time[i])
-            nanosec = now.nanosec + int((self.traj_time[i] - int(self.traj_time[i])) * 1e9)
-            if nanosec >= 1_000_000_000:
-                sec += 1
-                nanosec -= 1_000_000_000
-            pose_stamped.header.stamp.sec = sec
-            pose_stamped.header.stamp.nanosec = nanosec
-            p = self.p_obj[i]
-            rpy = self.rpy_obj[i]
-            q = RPY_to_quat(rpy[0], rpy[1], rpy[2])
-            pose_stamped.pose.position.x = float(p[0])
-            pose_stamped.pose.position.y = float(p[1])
-            pose_stamped.pose.position.z = float(p[2])
-            pose_stamped.pose.orientation.w = float(q[0])
-            pose_stamped.pose.orientation.x = float(q[1])
-            pose_stamped.pose.orientation.y = float(q[2])
-            pose_stamped.pose.orientation.z = float(q[3])
-            
-            #print(f"Step {i} pos: {p}, rpy: {rpy}")
-            #print(f"PoseStamped type: {type(pose_stamped)}")
-            path_msg.poses.append(pose_stamped)
+        self.is_ready = False
         
-        #print(f"Path message length: {len(path_msg.poses)}")
-        #print(f"First pose: {path_msg.poses[0] if path_msg.poses else 'None'}")
-        #print(f"Last pose: {path_msg.poses[-1] if path_msg.poses else 'None'}")
-        #print(f"Path message type: {type(path_msg)}")
-        self.path_pub.publish(path_msg)
-        self.get_logger().info(f"Path pubblicato con {len(path_msg.poses)} pose.")
+        # Iniziamo subito a pubblicare la posa iniziale in modo continuo
+        # sicché l'MPC possa leggerla e inizializzarsi.
+        self.timer = self.create_timer(self.ts, self.publish_next_pose)
+        
+        self.get_logger().info("Peg planner Node avviato. Pubblicazione posa inziale in corso. In attesa del segnale 'ready' dal planner.")
 
 
     def controller_ready_callback(self, msg: Bool):
         """Callback chiamato quando il controllore invia il segnale di pronto."""
-        if msg.data and self.timer is None:
-            self.get_logger().info("Segnale 'ready' ricevuto dal planner del drone. Avvio pubblicazione pose.")
-            self.timer = self.create_timer(self.ts, self.publish_next_pose)
+        if msg.data and not self.is_ready:
+            self.get_logger().info("Segnale 'ready' ricevuto dal planner del drone. Inizio movimento lungo la traiettoria.")
+            self.is_ready = True
             self.destroy_subscription(self.ready_subscription)
 
 
@@ -185,7 +149,27 @@ class PegPlannerNode(Node):
         pose_stamped_msg.pose.orientation.z = float(q[3])
         
         self.pose_pub.publish(pose_stamped_msg)
-        self.current_index += 1
+
+        # Calcolo velocità numerica
+        if self.current_index > 0:
+            p_prev = self.p_obj[self.current_index - 1]
+            v = (p - p_prev) / self.ts
+        else:
+            v = np.zeros(3)
+
+        # Creazione e pubblicazione Odometry
+        odom_msg = Odometry()
+        odom_msg.header = pose_stamped_msg.header
+        odom_msg.child_frame_id = 'peg_base_link'
+        odom_msg.pose.pose = pose_stamped_msg.pose
+        odom_msg.twist.twist.linear.x = float(v[0])
+        odom_msg.twist.twist.linear.y = float(v[1])
+        odom_msg.twist.twist.linear.z = float(v[2])
+        self.odom_pub.publish(odom_msg)
+
+        # Avanza lungo la traiettoria solo se l'MPC ha dato il via libera
+        if self.is_ready:
+            self.current_index += 1
 
 
 def main(args=None):

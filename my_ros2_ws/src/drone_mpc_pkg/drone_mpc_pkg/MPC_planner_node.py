@@ -14,7 +14,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from geometry_msgs.msg import PoseStamped, TwistStamped, TransformStamped, Wrench
-from nav_msgs.msg import Path
+from nav_msgs.msg import Path, Odometry
 from std_msgs.msg import Bool, Float64MultiArray
 
 # --- PX4 MESSAGES IMPORTS ---
@@ -65,7 +65,7 @@ class MpcPlannerNode(Node):
         self.declare_parameter('arm_l_y', 0.174)
         self.declare_parameter('moment_const', 0.016)
         self.declare_parameter('use_momentum_observer', True)
-        self.declare_parameter('rp_limit', 35.0)
+        self.declare_parameter('rp_limit', 45.0)
 
         mass = self.get_parameter('mass').value
         ixx = self.get_parameter('ixx').value
@@ -94,25 +94,23 @@ class MpcPlannerNode(Node):
         self.model, self.model_rpy = setup_model(mass, ixx, iyy, izz)
         self.x0, self.x0_rpy = setup_initial_conditions(start_x,start_y,start_z,start_roll,start_pitch,start_yaw)
         # === Tempo/Orizzonte ===
-        self.Tf = 25.0
-        num_campioni = 25
-        self.ts = 0.01  # 100 Hz
-        self.Tp = num_campioni*self.ts
+        self.ts = 0.01             # 100 Hz
+        self.N_horiz = 50          # Orizzonte di predizione (numero di campioni)
+        self.Tp = self.N_horiz * self.ts  # Tempo totale dell'orizzonte 
         self.ts_peg = 0.005
-        self.N_horiz = int(self.Tf / self.ts)
+
         self.path_pub_counter = 0  # Contatore per limitare la frequenza di pubblicazione del path
 
         self.t_prev = 0.0
 
         # === Stato MPC / loop ===
         self.acados_solver_ready = False
-        self.path_received = False
+        self.obj_state_received = False
         self.start_received = False
         self.first_odom_received = False  
         self.planner_ready_published = False   
         self.startup_counter = 0               
-        self.k = 0
-        self.start_mission_time = None
+
         self.mpc_path_published = False
 
         self.u_prev = None
@@ -122,8 +120,9 @@ class MpcPlannerNode(Node):
         self.last_odom_timestamp_us = 0  # Ultimo timestamp processato dal control loop (µs)
         self.armed_counter = 0           # Contatore per attendere il decollo effettivo
 
-        self.p_obj = None
-        self.rpy_obj = None
+        self.current_obj_pos = np.zeros(3)
+        self.current_obj_vel = np.zeros(3)
+        self.current_obj_rpy = np.zeros(3)
         self.camera_offset = np.array([cam_x, cam_y, cam_z])
         self.camera_rpy = np.array([cam_roll, cam_pitch, cam_yaw])
 
@@ -132,8 +131,8 @@ class MpcPlannerNode(Node):
         self.L_momentum = np.zeros(3)         # Angular momentum integrated
         self.f_ext_est  = np.zeros(3)         # Estimated external force (world frame)
         self.tau_ext_est = np.zeros(3)        # Estimated external torque (body frame)
-        self.K_f = 0.1                        # Observer gain linear
-        self.K_tau = 0.5                      # Observer gain angular
+        self.K_f = 0.005                        # Observer gain linear
+        self.K_tau = 0.005                      # Observer gain angular
         self.J_matrix = np.diag([ixx, iyy, izz])
         self.use_momentum_observer = self.get_parameter('use_momentum_observer').value
         
@@ -192,8 +191,8 @@ class MpcPlannerNode(Node):
         self.ready_publisher  = self.create_publisher(Bool, '/drone_planner_ready',  qos_latched)
         self.optimal_path_pub = self.create_publisher(Path, '/optimal_drone_path', qos_latched)
 
-        self.peg_path_subscription = self.create_subscription(
-            Path, '/peg_path', self.peg_path_callback, qos_latched)
+        self.peg_odom_subscription = self.create_subscription(
+            Odometry, '/peg_odom', self.peg_odom_callback, qos_latched)
         
 
         self.odom_subscription = self.create_subscription(
@@ -220,23 +219,12 @@ class MpcPlannerNode(Node):
         self.is_armed = msg.flag_armed
         self.is_offboard = msg.flag_control_offboard_enabled
 
-    def peg_path_callback(self, msg: Path):
-        p_obj_list, rpy_obj_list = [], []
-        count = 0
-        times_ratio = max(1, int(round(self.ts / self.ts_peg)))
-
-        for pose_stamped in msg.poses:
-            if count % times_ratio == 0:
-                p = pose_stamped.pose.position
-                q = pose_stamped.pose.orientation
-                rpy = quat_to_RPY([q.w, q.x, q.y, q.z])  
-                p_obj_list.append([p.x, p.y, p.z])
-                rpy_obj_list.append(np.squeeze(np.array(rpy)))
-            count += 1
-
-        self.p_obj = np.array(p_obj_list)
-        self.rpy_obj = np.squeeze(np.array(rpy_obj_list))
-        self.path_received = True
+    def peg_odom_callback(self, msg: Odometry):
+        self.current_obj_pos = np.array([msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z])
+        self.current_obj_vel = np.array([msg.twist.twist.linear.x, msg.twist.twist.linear.y, msg.twist.twist.linear.z])
+        q = msg.pose.pose.orientation
+        self.current_obj_rpy = np.squeeze(np.array(quat_to_RPY([q.w, q.x, q.y, q.z])))
+        self.obj_state_received = True
 
 
     def planner_configure(self):
@@ -354,7 +342,7 @@ class MpcPlannerNode(Node):
 
         # g0 importato da common.py
 
-        X = 5; Y = 2; Z = 2; V = 5.0; ANG = ca.pi
+        X = 6; Y = 3; Z = 3; V = 5.0; ANG = ca.pi
         ANG_DOT = 3.0; ACC = 10.0; ACC_ANG = 11.0     
         JERK = 20.0; SNAP = 200.0
         
@@ -372,11 +360,11 @@ class MpcPlannerNode(Node):
 
         PesoVis = 100.0
         PesoPan = PesoVis
-        PesoRot = PesoVis / 2
+        PesoRot = PesoVis / 20
         PesoVel = PesoVis / 5
         PesoAngVel = PesoVel 
         PesoAcc = PesoVel
-        PesoAngAcc = PesoAngVel
+        PesoAngAcc = PesoAngVel 
         PesoJerk = PesoAcc
         PesoSnap = PesoJerk 
         PesoForce = PesoVis / 100
@@ -410,7 +398,7 @@ class MpcPlannerNode(Node):
 
         (self.ocp_solver, self.N_horiz, self.nx, self.nu, self.y_idx, self.ny, self.ny_e) = configure_mpc(
             model=self.model, x0=self.x0, camera_offset=self.camera_offset,
-            p_obj=self.p_obj, rpy_obj=self.rpy_obj, Tf=self.Tp, ts=self.ts,
+            p_obj=np.array([self.current_obj_pos]), rpy_obj=np.array([self.current_obj_rpy]), Tf=self.Tp, ts=self.ts,
             W=W, W_e=W_e, u_min=u_min, u_max=u_max,
             pan_ref=0.0, visual_ref = np.array([2.0,0.0, 0.0]),
             cam_rpy=self.camera_rpy, fov_h=self.fov_h, fov_v=self.fov_v,
@@ -427,20 +415,16 @@ class MpcPlannerNode(Node):
             self.ocp_solver.set(i, "x", self.x_prev[i])
         self.ocp_solver.set(self.N_horiz, "x", self.x_prev[self.N_horiz])
 
-        self.k = 0 
         self.publish_predicted_path_from_buffers()
 
     def solve_MPC(self, xk, pov_target):
         yref0 = None
         set_initial_state(self.ocp_solver, xk)
-        t0_idx = self.k
-        M = len(self.p_obj)
-
+        
         online_visual_ref = pov_target[0:3]
         pan_target = pov_target[3]
 
-        # Calcoliamo il pan attuale rispetto all'oggetto per il wrapping
-        p_obj_now = self.p_obj[t0_idx]
+        p_obj_now = self.current_obj_pos
         current_pan = np.arctan2(xk[1] - p_obj_now[1], xk[0] - p_obj_now[0])
 
         # SHORTEST PATH WRAP: evitiamo che il drone faccia il giro largo 
@@ -448,14 +432,8 @@ class MpcPlannerNode(Node):
         diff_pan = (pan_target - current_pan + np.pi) % (2 * np.pi) - np.pi
         pan_target = current_pan + diff_pan
 
-        # PROTEZIONE DECOLLO: Se il drone è molto basso (< 0.6m), forziamo il pan_target
-        # a quello attuale per evitare inclinazioni violente dovute all'orbita.
-        #if self.current_position[2] < 0.6:
-        #    pan_target = current_pan
-
         for i in range(self.N_horiz + 1):
-            idx = min(t0_idx + i, M - 1)
-            p_i   = self.p_obj[idx]
+            p_i = self.current_obj_pos + self.current_obj_vel * (i * self.ts)
             
             params = np.zeros(10)
             params[0:3] = p_i               # Target object position
@@ -477,31 +455,43 @@ class MpcPlannerNode(Node):
         if status != 0:
             # Se il solver fallisce, usiamo l'ultimo comando valido o l'hover
             u0 = self.u_prev[0].copy() if self.u_prev is not None else self.u_hover.copy()
-            self.get_logger().warn(f"MPC Solver failed (Status {status}). Using fallback command.", throttle_duration_sec=1.0)
-            
             x_seq = [self.x_prev[i].copy() for i in range(self.N_horiz + 1)] if self.x_prev is not None else None
+            self.get_logger().warn(f"MPC Solver failed (Status {status}). Shifting buffers and using fallback.", throttle_duration_sec=1.0)
+            
+            # --- SHIFT BUFFERS EVEN ON FAILURE ---
+            if self.u_prev is not None and self.x_prev is not None:
+                for i in range(self.N_horiz - 1):
+                    self.u_prev[i] = self.u_prev[i+1].copy()
+                    self.x_prev[i] = self.x_prev[i+1].copy()
+                
+                self.x_prev[self.N_horiz - 1] = self.x_prev[self.N_horiz].copy()
+                if self.N_horiz > 1:
+                    self.u_prev[self.N_horiz - 1] = self.u_prev[self.N_horiz - 2].copy()
+                # Nota: x_prev[N_horiz] rimane invariato (ultimo stato predetto)
+            
             return u0, x_seq, yref0
 
+        # --- SUCCESS: Get results and shift buffers ---
         u0 = self.ocp_solver.get(0, "u")
         x_seq = [self.ocp_solver.get(i, "x") for i in range(self.N_horiz + 1)]
-
-########## controllare come gestisco fallimenti
 
         for i in range(self.N_horiz - 1):
             self.u_prev[i] = self.ocp_solver.get(i + 1, "u")
             self.x_prev[i] = self.ocp_solver.get(i + 1, "x")
+            
         if self.N_horiz > 1:
             self.u_prev[self.N_horiz - 1] = self.u_prev[self.N_horiz - 2].copy()
         else:
             self.u_prev[0] = self.ocp_solver.get(0, "u").copy()
+            
         self.x_prev[self.N_horiz] = self.ocp_solver.get(self.N_horiz, "x")
 
         return u0, x_seq, yref0
 
     # ==================== Ciclo planner ====================
     def control_step(self):
-        if not self.path_received :
-            self.get_logger().info("In attesa della ricezione del percorso del peg da peg_planner_node...", throttle_duration_sec=2.0)
+        if not self.obj_state_received :
+            self.get_logger().info("In attesa della ricezione dell'odometria del peg...", throttle_duration_sec=2.0)
             return
         
         if not self.first_odom_received:
@@ -577,7 +567,7 @@ class MpcPlannerNode(Node):
         p_cam = p_drone + Rb @ self.camera_offset
         
         # 2. Posa relativa oggetto-camera nella terna camera
-        p_obj_now = self.p_obj[self.k]
+        p_obj_now = self.current_obj_pos
         p_rel_world = p_obj_now - p_cam
         R_cam_body = Rotation.from_euler('xyz', self.camera_rpy).as_matrix()
         P_c = R_cam_body.T @ Rb.T @ p_rel_world
@@ -618,10 +608,7 @@ class MpcPlannerNode(Node):
             self.publish_predicted_path(x_seq)
             self.path_pub_counter = 0
 
-        if self.start_mission_time is not None:
-            # Calcolo l'indice k in base al tempo trascorso dalla partenza del peg
-            elapsed_time = (self.get_clock().now() - self.start_mission_time).nanoseconds / 1e9
-            self.k = min(int(round(elapsed_time / self.ts)), len(self.p_obj) - 1)
+
 
     # ==================== Funzioni PX4 Controllo Integrato ====================
 
@@ -667,9 +654,8 @@ class MpcPlannerNode(Node):
                     self.armed_counter += 1
                     # Aspettiamo 20 cicli per far girare le eliche e stabilizzare il decollo
                     if self.armed_counter >= 20: 
-                        self.get_logger().info("Decollo completato e quota raggiunta! Sblocco il movimento del peg.")
+                        self.get_logger().info("Decollo completato e quota raggiunta! Inizio inseguimento dinamico.")
                         self.ready_publisher.publish(Bool(data=True))
-                        self.start_mission_time = self.get_clock().now()
                         self.planner_ready_published = True
 
     # ==================== Pubblicazione ====================
