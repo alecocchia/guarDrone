@@ -6,7 +6,7 @@ It has inside:
 - docker/, with docker image and docker run script
 
 ## Architecture Overview
-1) Clone this repo in your host PC
+1) Clone this repo in your host PC (actual most updated branch is laptop_prisma) ( git clone --recurse-submodules -b laptop_prisma https://github.com/alecocchia/guarDrone.git)
 2) Build image px4_humble_harmonic_dockerfile.txt
 3) Start and execute container with run_px4_cnt.sh
 
