@@ -4,7 +4,7 @@ This repository contains tools and configurations for PX4 SITL (Software In The 
 It has inside:
 - my_ros2_ws/, with src/ and SimulationScripts/
 - docker/, with docker image and docker run script
-- PX4-Autopilot/, with static firmware inside
+- PX4-Autopilot/, with PX4 firmware inside
 
 ## Architecture Overview
 1) Clone this repo in your host PC
