@@ -37,6 +37,8 @@
 my_ros2_ws/build/
 my_ros2_ws/install/
 my_ros2_ws/log/
+my_ros2_ws/src/fd_sdk_vendor/
+my_ros2_ws/src/forcedimension_ros2/
 
 # Ignora file temporanei di Python
 __pycache__/
