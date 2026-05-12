@@ -26,10 +26,6 @@
 !docker/
 !docker/**
 
-# Il sottomodulo PX4 (Cruciale: sblocchiamo solo il puntatore, senza asterischi)
-!PX4-Autopilot
-!PX4-Autopilot/
-
 # ==========================================
 # 4. RI-BLOCCA LE SCHIFEZZE (Dentro le aree sbloccate)
 # ==========================================
