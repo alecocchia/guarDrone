@@ -15,6 +15,15 @@ else
     echo "[INFO] Trovata cartella guarDrone in: $HOST_GUARDRONE_DIR"
 fi
 
+HOST_FIRMWARE_DIR=$(find "/home/${USER}" -maxdepth 4 -type d -iname "PX4-Autopilot" -print -quit 2>/dev/null)
+
+if [ -z "$HOST_FIRMWARE_DIR" ]; then
+    echo "[ERROR] Impossibile trovare la cartella 'PX4-Autopilot'."
+    exit 1
+else
+    echo "[INFO] Trovata cartella PX4-Autopilot in: $HOST_FIRMWARE_DIR"
+fi
+
 GZ_ENVIRONMENT_PKG=gz_env_pkg	# cambiare se cambia il nome del package per il setup dell'environment
 
 echo "---------------------------------------------------"
@@ -25,7 +34,7 @@ docker run --rm -it --privileged \
 -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
 -v "/dev:/dev" \
 -v "${HOST_GUARDRONE_DIR}/.git:/root/.git:ro" \
--v "${HOST_GUARDRONE_DIR}/PX4-Autopilot:/root/PX4-Autopilot:rw" \
+-v "${HOST_FIRMWARE_DIR}/PX4-Autopilot:/root/PX4-Autopilot:rw" \
 -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/src:/root/my_ros2_ws/src:rw" \
 -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/SimulationScripts:/root/my_ros2_ws/SimulationScripts:rw" \
 --env="DISPLAY=$DISPLAY" \
