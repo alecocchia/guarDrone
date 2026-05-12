@@ -26,6 +26,12 @@
 !docker/
 !docker/**
 
+# Le cartelle relative all'haptic device
+!forcedimension_ros2/
+!forcedimension_ros2/**
+!fd_sdk_vendor/
+!fd_sdk_vendor/**
+
 # ==========================================
 # 4. RI-BLOCCA LE SCHIFEZZE (Dentro le aree sbloccate)
 # ==========================================
