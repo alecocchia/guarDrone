@@ -34,7 +34,7 @@ docker run --rm -it --privileged \
 -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
 -v "/dev:/dev" \
 -v "${HOST_GUARDRONE_DIR}/.git:/root/.git:ro" \
--v "${HOST_FIRMWARE_DIR}/PX4-Autopilot:/root/PX4-Autopilot:rw" \
+-v "${HOST_FIRMWARE_DIR}:/root/PX4-Autopilot:rw" \
 -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/src:/root/my_ros2_ws/src:rw" \
 -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/SimulationScripts:/root/my_ros2_ws/SimulationScripts:rw" \
 --env="DISPLAY=$DISPLAY" \
