@@ -123,21 +123,34 @@ class PegPlannerNode(Node):
 
     def publish_next_pose(self):
         """Pubblica la prossima posa dell'oggetto e gestisce la fine della traiettoria."""
+        v = np.zeros(3)
+        
         if self.current_index >= len(self.traj_time):
-            is_finished = Bool()
-            is_finished.data = True
-            self.path_finished_pub.publish(is_finished)
-            self.get_logger().info("Fine traiettoria. L'oggetto rimarrà nella posizione finale.")
-            self.timer.cancel()
-            return
+            # Traiettoria finita: rimaniamo sull'ultimo punto con velocità zero
+            idx = len(self.traj_time) - 1
+            if not hasattr(self, 'finished_logged'):
+                is_finished = Bool()
+                is_finished.data = True
+                self.path_finished_pub.publish(is_finished)
+                self.get_logger().info("Fine traiettoria. L'oggetto rimarrà nella posizione finale (v=0).")
+                self.finished_logged = True
+        else:
+            idx = self.current_index
+            # Calcolo velocità numerica solo se non siamo alla fine
+            if idx > 0:
+                p_curr = self.p_obj[idx]
+                p_prev = self.p_obj[idx - 1]
+                v = (p_curr - p_prev) / self.ts
+            else:
+                v = np.zeros(3)
 
         # Crea un messaggio PoseStamped per includere l'header
         pose_stamped_msg = PoseStamped()
         pose_stamped_msg.header.stamp = self.get_clock().now().to_msg()
         pose_stamped_msg.header.frame_id = 'world'
 
-        p = self.p_obj[self.current_index]
-        rpy = self.rpy_obj[self.current_index]
+        p = self.p_obj[idx]
+        rpy = self.rpy_obj[idx]
         q = RPY_to_quat(rpy[0], rpy[1], rpy[2])
 
         pose_stamped_msg.pose.position.x = float(p[0])
@@ -150,13 +163,6 @@ class PegPlannerNode(Node):
         
         self.pose_pub.publish(pose_stamped_msg)
 
-        # Calcolo velocità numerica
-        if self.current_index > 0:
-            p_prev = self.p_obj[self.current_index - 1]
-            v = (p - p_prev) / self.ts
-        else:
-            v = np.zeros(3)
-
         # Creazione e pubblicazione Odometry
         odom_msg = Odometry()
         odom_msg.header = pose_stamped_msg.header
@@ -168,7 +174,7 @@ class PegPlannerNode(Node):
         self.odom_pub.publish(odom_msg)
 
         # Avanza lungo la traiettoria solo se l'MPC ha dato il via libera
-        if self.is_ready:
+        if self.is_ready and self.current_index < len(self.traj_time):
             self.current_index += 1
 
 

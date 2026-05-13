@@ -36,7 +36,7 @@ def generate_launch_description():
             'k_spring': 40.0,
             'v_pan_max': 0.5,
             'v_zc_max': 0.5,
-            'v_xc_max': 1.0,
+            'v_xc_max': 0.8,
             'deadband': 0.005
         }]
     )

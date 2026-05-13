@@ -238,7 +238,6 @@ def launch_setup(context, *args, **kwargs):
             'start_yaw': drone_yaw,
             'w_min': auto_wmin, 'w_max': auto_wmax,
             'arm_l_x': auto_lx, 'arm_l_y': auto_ly, 'moment_const': auto_mc,
-            'use_momentum_observer': LaunchConfiguration('use_momentum_observer'),
         }],
         condition=IfCondition(PythonExpression([f"'{planner_mode}' == '1'"]))
     )
@@ -306,7 +305,6 @@ def generate_launch_description():
         DeclareLaunchArgument('cf', default_value='8.0e-4'),
         DeclareLaunchArgument('ct', default_value='1.0e-5'),
         DeclareLaunchArgument('world', default_value='default.sdf', description='Nome del mondo SDF da caricare'),
-        DeclareLaunchArgument('use_momentum_observer', default_value='false'),
     ]
 
     peg_x = LaunchConfiguration('peg_x')

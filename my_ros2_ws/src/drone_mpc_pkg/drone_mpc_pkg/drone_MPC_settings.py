@@ -10,14 +10,13 @@ from scipy.spatial.transform import Rotation
 #################  AGGIUSTARE: ricavare snap, jerk, acc in qualche modo perché da y_expr non si può tramite get(...)
 ##############  Estendere lo stato con tutti gli stati
 
-def build_yref_online(y_idx, pan_ref, visual_ref, u_ref=np.zeros(4)):
+def build_yref_online(y_idx, visual_ref, vel_ref, u_ref=np.zeros(4)):
     yref = np.zeros(y_idx["u"].stop) 
     yref[y_idx["pan"]]     = 0.0                    # Errore di pan centrato in 0 (gestito da min_angle nel modello)
-    yref[y_idx["vel"]]     = np.array([0,0,0])
-    #yref[y_idx["quat"]]    = xy_pos_ref[3:7]          # Quaternione puro w, x, y, z
+    yref[y_idx["vel"]]     = vel_ref
     yref[y_idx["rp"]]      = np.array([0,0])        # X_c, Y_c (posizione dell'oggetto rispetto alla camera, nella terna camera)
     yref[y_idx["visual"]]  = visual_ref
-    yref[y_idx["dot_rpy"]] = np.array([0,0,0])
+    yref[y_idx["ang_vel"]] = np.array([0,0,0])
     yref[y_idx["acc"]]     = np.array([0,0,0])
     yref[y_idx["acc_ang"]] = np.array([0,0,0])
     yref[y_idx["jerk"]]    = np.array([0,0,0])
@@ -25,8 +24,8 @@ def build_yref_online(y_idx, pan_ref, visual_ref, u_ref=np.zeros(4)):
     yref[y_idx["u"]]       = u_ref
     return yref
 
-def build_yref_terminal(y_idx, pan_ref, visual_ref, ny_e, u_ref=np.zeros(4)):
-    y = build_yref_online(y_idx, pan_ref, visual_ref, u_ref)
+def build_yref_terminal(y_idx, visual_ref, vel_ref, ny_e, u_ref=np.zeros(4)):
+    y = build_yref_online(y_idx, visual_ref, vel_ref, u_ref)
     return y[:ny_e]  
 
 
@@ -65,7 +64,7 @@ def set_initial_state(ocp_solver, xk):
 
 def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts, W, W_e, 
                   u_min, u_max,
-                  pan_ref = 0.0, visual_ref = np.zeros(3),
+                  pan_ref = 0.0, visual_ref = np.zeros(3), vel_ref = np.zeros(3),
                   cam_rpy = np.zeros(3), fov_h = 80.0, fov_v = 60.0,
                   rp_limit = 35.0 * np.pi / 180.0):
     
@@ -108,7 +107,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     pitch = rpy_expr[1]
     yaw = rpy_expr[2]
     w_expr = model.x[10:13]
-    dot_rpy=w_expr
+    ang_vel=w_expr
 
     # Rotazione attuale del drone rispetto al world
     R_expr = quat_to_R(q_expr)
@@ -142,7 +141,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     # Pan mutuo: angolo del vettore (P_cam - P_obj) nel piano XY globale
     # Usiamo min_angle per calcolare la distanza minima rispetto al riferimento passato come parametro p[9]
     pan_raw = ca.atan2(p_cam[1] - p_obj_expr[1], p_cam[0] - p_obj_expr[0])
-    pan_expr = min_angle(pan_raw - model.p[9])
+    pan_expr = min_angle(pan_raw - model.p[3])
 
     # state dynamics vector
     xdot = model.f_expl_expr  
@@ -244,7 +243,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
         v_expr,                         # velocity
         roll,                           # Roll
         pitch,                          # Pitch
-        dot_rpy,                        # Euler rates (non è vero, ora sono velocità angolari)
+        ang_vel,                        # Euler rates (non è vero, ora sono velocità angolari)
         acc_expr,                       # acceleration
         acc_ang_expr,                   # angular acceleration
         j_expr,                         # jerk
@@ -261,7 +260,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
         v_expr,                         # velocity
         roll,
         pitch,                         
-        dot_rpy,                        # Euler rates
+        ang_vel,                        # Euler rates
         acc_hover,                      # acceleration
         acc_ang_hover,
         j_hover,                        # jerk
@@ -277,8 +276,8 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     ocp.cost.W_e = W_e
     ocp.cost.set = True
     
-    # I parametri ora passati al modello (p) sono [p_obj (3), f_ext (3), tau_ext (3), pan_ref (1)] = 10
-    ocp.parameter_values = np.zeros(10)
+    # I parametri ora passati al modello (p) sono [p_obj (3), pan_ref (1)] = 4
+    ocp.parameter_values = np.zeros(4)
     ocp.parameter_values[0:3] = p_obj[0,:] 
 
     '''
@@ -287,8 +286,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     
     # Definition of constant references
     rp_ref = np.array([0,0]) #roll and pitch refs
-    dot_rpy_ref = np.array([0,0,0])
-    v_ref=np.array([0,0,0])
+    ang_vel_ref = np.array([0,0,0])
     acc_ref=np.array([0,0,0])
     acc_ang_ref = np.array([0,0,0])
     jerk_ref=np.array([0,0,0])
@@ -302,8 +300,8 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     vel_ind = slice(visual_ind.stop,visual_ind.stop+3)
     rp_ind = slice(vel_ind.stop, vel_ind.stop+2)
     #quat_ind = slice(vel_ind.stop, vel_ind.stop+4)
-    dot_rpy_ind = slice(rp_ind.stop,rp_ind.stop+3)
-    acc_ind = slice(dot_rpy_ind.stop,dot_rpy_ind.stop+3)
+    ang_vel_ind = slice(rp_ind.stop,rp_ind.stop+3)
+    acc_ind = slice(ang_vel_ind.stop,ang_vel_ind.stop+3)
     acc_ang_ind = slice(acc_ind.stop,acc_ind.stop+3)
     jerk_ind = slice(acc_ang_ind.stop,acc_ang_ind.stop+3)   
     snap_ind = slice(jerk_ind.stop,jerk_ind.stop+3)
@@ -314,7 +312,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
         "visual": visual_ind,
         "vel": vel_ind,
         "rp": rp_ind,
-        "dot_rpy": dot_rpy_ind,
+        "ang_vel": ang_vel_ind,
         "acc": acc_ind,
         "acc_ang": acc_ang_ind,
         "jerk": jerk_ind,
@@ -330,9 +328,9 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     # ASSIGN REFERENCES
     yref[pan_ind]= 0.0                  # L'errore di pan è già gestito nel modello (distanza minima da p[9])
     yref[visual_ind]=visual_ref
-    yref[vel_ind]=v_ref
+    yref[vel_ind]=vel_ref
     yref[rp_ind]= rp_ref
-    yref[dot_rpy_ind]=dot_rpy_ref
+    yref[ang_vel_ind]= ang_vel_ref
     yref[acc_ind]=acc_ref
     yref[acc_ang_ind]=acc_ang_ref
     yref[jerk_ind]=jerk_ref         

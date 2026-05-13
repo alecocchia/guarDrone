@@ -64,11 +64,10 @@ def main():
     # --- FIGURE 2: Orientation (RPY) ---
     fig_rpy_data = [
         {'sim': data['rpy'][:, 0], 'ref': data['pref_rpy'][:, 0]},
-        {'sim': data['rpy'][:, 1], 'ref': data['pref_rpy'][:, 1]},
-        {'sim': data['rpy'][:, 2], 'ref': data['pref_rpy'][:, 2]}
+        {'sim': data['rpy'][:, 1], 'ref': data['pref_rpy'][:, 1]}
     ]
-    myPlot(t, fig_rpy_data, ["Roll [rad]", "Pitch [rad]", "Yaw [rad]"], 
-           "Drone Orientation vs MPC Reference", ncols=3, use_tex=args.tex, block=block)
+    myPlot(t, fig_rpy_data, ["Roll [rad]", "Pitch [rad]"], 
+           "Drone Orientation (Roll/Pitch) vs MPC Reference", ncols=2, use_tex=args.tex, block=block)
 
     # --- FIGURE 3: Velocities ---
     fig_vel_data = [
@@ -86,11 +85,10 @@ def main():
     # --- FIGURE 4: PoV Orbiting & Orientation ---
     fig4_data = [
         {'sim': data['pan_real'],    'ref': data['online_ref'][:, 1]},
-        {'sim': data['rpy'][:, 2],   'ref': data['pref_rpy'][:, 2]},
         {'sim': data['radius_real'], 'ref': data['online_ref'][:, 0]}
     ]
-    myPlot(t, fig4_data, ["Pan Mutuo (Orbit) [rad]", "Absolute Yaw [rad]", "Mutual Distance (Xc) [m]"], 
-           "PoV Orbiting and Orientation Tracking", ncols=3, use_tex=args.tex, block=block)
+    myPlot(t, fig4_data, ["Pan Mutuo (Orbit) [rad]", "Mutual Distance (Xc) [m]"], 
+           "PoV Orbiting and Distance Tracking", ncols=2, use_tex=args.tex, block=block)
 
     # --- FIGURE 5: Visual Servoing (Camera Frame) ---
     fig5_data = [

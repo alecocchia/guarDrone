@@ -86,7 +86,7 @@ class Logger(Node):
         self.create_subscription(Float64MultiArray, '/online_spherical_ref', self.cb_online_ref, 10)
         self.create_subscription(Float64MultiArray, '/online_visual_ref', self.cb_online_visual_ref, 10)
         self.create_subscription(PoseStamped,  '/optimal_drone_pose',  self.cb_ref_pose,   10)
-        self.create_subscription(TwistStamped, '/optimal_drone_twist', self.cb_ref_twist,  10)
+        self.create_subscription(TwistStamped, '/velocity_reference', self.cb_ref_twist,  10)
         self.create_subscription(Wrench, '/optimal_wrench', self.cb_wrench_ref, 10)
         self.create_subscription(Wrench, '/wrench_reference', self.cb_wrench_target, 10)
         self.create_subscription(Wrench, '/wrench_cmd', self.cb_wrench_cmd, 10)

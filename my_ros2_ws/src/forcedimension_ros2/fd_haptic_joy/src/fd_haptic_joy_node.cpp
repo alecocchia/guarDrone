@@ -25,7 +25,7 @@ public:
     // Parametri integrazione PoV (stessi di human_goal_node)
     this->declare_parameter("v_pan_max", 0.5);   
     this->declare_parameter("v_zc_max", 0.5);  
-    this->declare_parameter("v_xc_max", 1.0);
+    this->declare_parameter("v_xc_max", 0.8);
     this->declare_parameter("dt", 0.02);           // 50 Hz
 
     // Subscribers
@@ -41,9 +41,11 @@ public:
     // Publishers
     force_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/fd/fd_controller/commands", 10);
     goal_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/pov_target", 10);
+    haptic_ref_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/haptic_ref", 10);
 
     // Initial state
     current_pov_ref_ = {2.0, 0.0, 0.0, 0.0}; // [Xc, Yc, Zc, Pan_mutuo]
+    current_pov_vel_ = {0.0, 0.0, 0.0, 0.0}; // [dXc, dYc, dZc, dPan]
     falcon_pos_ = {0.0, 0.0, 0.0};
     button_pressed_ = false;
 
@@ -69,6 +71,8 @@ private:
       RCLCPP_INFO(this->get_logger(), ">>> Pulsante Falcon PREMUTO: Controllo drone ATTIVATO");
     } else if (!msg->data && button_pressed_) {
       RCLCPP_INFO(this->get_logger(), "<<< Pulsante Falcon RILASCIATO: Controllo drone DISATTIVATO");
+      // Resetta velocità quando rilasci
+      current_pov_vel_ = {0.0, 0.0, 0.0, 0.0};
     }
     button_pressed_ = msg->data;
   }
@@ -81,6 +85,7 @@ private:
       current_pov_ref_[1] = msg->data[1]; // Yc
       current_pov_ref_[2] = msg->data[2]; // Zc
       current_pov_ref_[3] = msg->data[3]; // Pan
+      current_pov_vel_ = {0.0, 0.0, 0.0, 0.0};
     }
   }
 
@@ -116,18 +121,24 @@ private:
       // Falcon Z (Su/Giù)          -> Zc (Altezza)
       
       double joy_scale = this->get_parameter("joy_scale").as_double();
-      double xc_cmd  = apply_deadband(-falcon_pos_[0], deadband) * joy_scale; // Avanti -> Avvicina
-      double pan_cmd = apply_deadband(falcon_pos_[1], deadband) * joy_scale;  // Destra -> Pan positivo
-      double zc_cmd  = apply_deadband(falcon_pos_[2], deadband) * joy_scale;  // Su -> Alza
+      double xc_cmd  = apply_deadband(falcon_pos_[0], deadband) * joy_scale; 
+      double pan_cmd = apply_deadband(falcon_pos_[1], deadband) * joy_scale;  
+      double zc_cmd  = apply_deadband(falcon_pos_[2], deadband) * joy_scale;  
 
       double v_pan_max = this->get_parameter("v_pan_max").as_double();
       double v_zc_max  = this->get_parameter("v_zc_max").as_double();
       double v_xc_max  = this->get_parameter("v_xc_max").as_double();
 
-      // Integrazione
-      current_pov_ref_[0] -= xc_cmd  * v_xc_max  * dt; // Xc (Zoom)
-      current_pov_ref_[3] += pan_cmd * v_pan_max * dt; // Pan_mutuo
-      current_pov_ref_[2] += zc_cmd  * v_zc_max  * dt; // Zc
+      // Calcolo velocità di riferimento
+      current_pov_vel_[0] = xc_cmd  * v_xc_max;
+      current_pov_vel_[1] = 0.0; // Yc non comandata direttamente
+      current_pov_vel_[2] = zc_cmd  * v_zc_max;
+      current_pov_vel_[3] = pan_cmd * v_pan_max;
+
+      // Integrazione posizione
+      current_pov_ref_[0] += current_pov_vel_[0] * dt; // Xc (Zoom)
+      current_pov_ref_[2] += current_pov_vel_[2] * dt; // Zc
+      current_pov_ref_[3] += current_pov_vel_[3] * dt; // Pan_mutuo
 
       // Limiti di sicurezza
       current_pov_ref_[0] = std::max(1.5, std::min(8.0, current_pov_ref_[0])); // Xc
@@ -138,10 +149,18 @@ private:
       if (current_pov_ref_[3] < 0) current_pov_ref_[3] += 2.0 * M_PI;
       current_pov_ref_[3] -= M_PI;
 
-      // 3. Pubblicazione Goal al drone (SOLO se il pulsante è premuto)
+      // 3. Pubblicazione Goal (Legacy)
       auto goal_msg = std_msgs::msg::Float64MultiArray();
       goal_msg.data = current_pov_ref_;
       goal_pub_->publish(goal_msg);
+
+      // 4. Pubblicazione Haptic Ref (Completo)
+      auto haptic_msg = std_msgs::msg::Float64MultiArray();
+      haptic_msg.data.insert(haptic_msg.data.end(), current_pov_ref_.begin(), current_pov_ref_.end());
+      haptic_msg.data.insert(haptic_msg.data.end(), current_pov_vel_.begin(), current_pov_vel_.end());
+      haptic_ref_pub_->publish(haptic_msg);
+    } else {
+      current_pov_vel_ = {0.0, 0.0, 0.0, 0.0};
     }
   }
 
@@ -153,6 +172,7 @@ private:
 
   // State
   std::vector<double> current_pov_ref_;
+  std::vector<double> current_pov_vel_;
   std::vector<double> falcon_pos_;
   bool button_pressed_;
 
@@ -162,6 +182,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr actual_pov_sub_;
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr force_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr goal_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr haptic_ref_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 };
 

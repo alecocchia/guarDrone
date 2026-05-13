@@ -54,20 +54,18 @@ def export_quadrotor_ode_model(m,Ixx,Iyy,Izz) -> AcadosModel:
     tau_body = ca.vertcat(tau_x, tau_y, tau_z) # Torque vector in body frame [tau_x, tau_y, tau_z]
 
     # p[0:3] = object position (p_obj)
-    # p[3:6] = external force in world frame (f_ext)
-    # p[6:9] = external torque in body frame (tau_ext)
-    # p[9]   = pan reference (pan_ref)
-    ref_sym = ca.SX.sym('p', 10) 
-    f_ext = ref_sym[3:6]
-    tau_ext = ref_sym[6:9]
+    # p[3]   = pan reference (pan_ref)
+    ref_sym = ca.SX.sym('p', 4) 
+    p_obj_sym = ref_sym[0:3]
+    pan_ref_sym = ref_sym[3]
 
     # Equations of motion (ODEs)
     p_dot = v
     # F_body è la forza nel frame del corpo. Deve essere ruotata nel frame inerziale.
-    v_dot = (1/m) * (ca.mtimes(Rb, F_body) + f_ext) - g
+    v_dot = (1/m) * (ca.mtimes(Rb, F_body)) - g
     q_dot = 0.5 * ca.mtimes(omega_matrix(w), q)
     # tau_body è la coppia nel frame del corpo.
-    w_dot = ca.mtimes(ca.inv(J), (tau_body + tau_ext - ca.cross(w, ca.mtimes(J, w))))
+    w_dot = ca.mtimes(ca.inv(J), (tau_body - ca.cross(w, ca.mtimes(J, w))))
 
     # Compose state and xdot
     x = ca.vertcat(p, v, q, w)

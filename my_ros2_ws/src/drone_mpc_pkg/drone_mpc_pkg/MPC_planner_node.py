@@ -64,7 +64,6 @@ class MpcPlannerNode(Node):
         self.declare_parameter('arm_l_x', 0.174)
         self.declare_parameter('arm_l_y', 0.174)
         self.declare_parameter('moment_const', 0.016)
-        self.declare_parameter('use_momentum_observer', True)
         self.declare_parameter('rp_limit', 45.0)
 
         mass = self.get_parameter('mass').value
@@ -122,20 +121,11 @@ class MpcPlannerNode(Node):
 
         self.current_obj_pos = np.zeros(3)
         self.current_obj_vel = np.zeros(3)
+        self.current_obj_ang_vel = np.zeros(3)
         self.current_obj_rpy = np.zeros(3)
         self.camera_offset = np.array([cam_x, cam_y, cam_z])
         self.camera_rpy = np.array([cam_roll, cam_pitch, cam_yaw])
 
-        # --- Momentum Observer  (Ruggiero style) ---
-        self.p_momentum = mass * np.zeros(3)  # Linear momentum integrated
-        self.L_momentum = np.zeros(3)         # Angular momentum integrated
-        self.f_ext_est  = np.zeros(3)         # Estimated external force (world frame)
-        self.tau_ext_est = np.zeros(3)        # Estimated external torque (body frame)
-        self.K_f = 0.005                        # Observer gain linear
-        self.K_tau = 0.005                      # Observer gain angular
-        self.J_matrix = np.diag([ixx, iyy, izz])
-        self.use_momentum_observer = self.get_parameter('use_momentum_observer').value
-        
         self.fov_h = self.get_parameter('fov_h').value
         self.fov_v = self.get_parameter('fov_v').value
 
@@ -202,6 +192,7 @@ class MpcPlannerNode(Node):
         self.single_pose_pub  = self.create_publisher(PoseStamped,  '/optimal_drone_pose',  1)
         self.drone_pose_pub   = self.create_publisher(PoseStamped,  '/drone_pose',          1) # <--- Per RViz
         self.single_twist_pub = self.create_publisher(TwistStamped, '/optimal_drone_twist', 1)
+        self.vel_ref_pub      = self.create_publisher(TwistStamped, '/velocity_reference',  1)
         self.tf_broadcaster   = tf2_ros.TransformBroadcaster(self)
         self.ref_pub = self.create_publisher(Float64MultiArray, '/online_spherical_ref', 1)
         self.visual_ref_pub = self.create_publisher(Float64MultiArray, '/online_visual_ref', 1)
@@ -210,6 +201,12 @@ class MpcPlannerNode(Node):
         self.control_timer = self.create_timer(self.ts, self.control_step)
         self.start_subscription = self.create_subscription(PoseStamped, '/peg_pose', self.start_callback, 10)
         self.pov_target_sub = self.create_subscription(Float64MultiArray, '/pov_target', self.pov_target_callback, 10)
+        self.haptic_ref_sub = self.create_subscription(Float64MultiArray, '/haptic_ref', self.haptic_ref_callback, 10)
+
+        # Haptic state
+        self.haptic_pov = None
+        self.haptic_pov_dot = None
+        self.haptic_timestamp = None
 
         self.get_logger().info("MPC Node avviato. In attesa...")
 
@@ -222,6 +219,7 @@ class MpcPlannerNode(Node):
     def peg_odom_callback(self, msg: Odometry):
         self.current_obj_pos = np.array([msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z])
         self.current_obj_vel = np.array([msg.twist.twist.linear.x, msg.twist.twist.linear.y, msg.twist.twist.linear.z])
+        self.current_obj_ang_vel = np.array([msg.twist.twist.angular.x, msg.twist.twist.angular.y, msg.twist.twist.angular.z])
         q = msg.pose.pose.orientation
         self.current_obj_rpy = np.squeeze(np.array(quat_to_RPY([q.w, q.x, q.y, q.z])))
         self.obj_state_received = True
@@ -337,12 +335,18 @@ class MpcPlannerNode(Node):
         if len(msg.data) >= 4:
             self.pov_target = np.array([msg.data[0], msg.data[1], msg.data[2], msg.data[3]], dtype=float)
 
+    def haptic_ref_callback(self, msg: Float64MultiArray):
+        if len(msg.data) >= 8:
+            self.haptic_pov = np.array(msg.data[0:4], dtype=float)
+            self.haptic_pov_dot = np.array(msg.data[4:8], dtype=float)
+            self.haptic_timestamp = self.get_clock().now()
+
     # ==================== Configurazione e Solve ====================
     def configure_mpc(self):
 
         # g0 importato da common.py
 
-        X = 6; Y = 3; Z = 3; V = 5.0; ANG = ca.pi
+        X = 3; Y = 3; Z = 3; V = 5.0; ANG = ca.pi
         ANG_DOT = 3.0; ACC = 10.0; ACC_ANG = 11.0     
         JERK = 20.0; SNAP = 200.0
         
@@ -359,10 +363,10 @@ class MpcPlannerNode(Node):
 
 
         PesoVis = 100.0
-        PesoPan = PesoVis
+        PesoPan = PesoVis / 5
         PesoRot = PesoVis / 20
         PesoVel = PesoVis / 5
-        PesoAngVel = PesoVel 
+        PesoAngVel = PesoVis / 3
         PesoAcc = PesoVel
         PesoAngAcc = PesoAngVel 
         PesoJerk = PesoAcc
@@ -400,7 +404,8 @@ class MpcPlannerNode(Node):
             model=self.model, x0=self.x0, camera_offset=self.camera_offset,
             p_obj=np.array([self.current_obj_pos]), rpy_obj=np.array([self.current_obj_rpy]), Tf=self.Tp, ts=self.ts,
             W=W, W_e=W_e, u_min=u_min, u_max=u_max,
-            pan_ref=0.0, visual_ref = np.array([2.0,0.0, 0.0]),
+            pan_ref=self.pov_target[3], visual_ref = self.pov_target[0:3],
+            vel_ref=np.zeros(3),
             cam_rpy=self.camera_rpy, fov_h=self.fov_h, fov_v=self.fov_v,
             rp_limit=rp_limit_rad
         )
@@ -421,8 +426,21 @@ class MpcPlannerNode(Node):
         yref0 = None
         set_initial_state(self.ocp_solver, xk)
         
-        online_visual_ref = pov_target[0:3]
-        pan_target = pov_target[3]
+        # Check haptic active
+        haptic_active = False
+        if self.haptic_timestamp is not None:
+            dt_haptic = (self.get_clock().now() - self.haptic_timestamp).nanoseconds / 1e9
+            if dt_haptic < 0.2:
+                haptic_active = True
+
+        if haptic_active:
+            online_visual_ref = self.haptic_pov[0:3]
+            pan_target = self.haptic_pov[3]
+            d_pov = self.haptic_pov_dot
+        else:
+            online_visual_ref = pov_target[0:3]
+            pan_target = pov_target[3]
+            d_pov = np.zeros(4)
 
         p_obj_now = self.current_obj_pos
         current_pan = np.arctan2(xk[1] - p_obj_now[1], xk[0] - p_obj_now[0])
@@ -430,26 +448,51 @@ class MpcPlannerNode(Node):
         # SHORTEST PATH WRAP: evitiamo che il drone faccia il giro largo 
         # quando attraversa la barriera di pi/-pi.
         diff_pan = (pan_target - current_pan + np.pi) % (2 * np.pi) - np.pi
-        pan_target = current_pan + diff_pan
+        pan_target = pov_target[3] + diff_pan
+
+        # Calcoliamo i riferimenti una volta sola fuori dal loop (sono costanti nell'orizzonte)
+        # La velocità di riferimento per il drone considera il moto dell'oggetto e il comando haptic
+        
+        if haptic_active:
+            # 1. Componente lineare (Xc, Yc, Zc) trasformata in mondo
+            R_body_world = Rotation.from_quat([xk[7], xk[8], xk[9], xk[6]]).as_matrix() # x,y,z,w
+            R_cam_body = Rotation.from_euler('xyz', self.camera_rpy).as_matrix()
+            R_world_cam = R_body_world @ R_cam_body
+            
+            # Se dXc > 0 (voglio allontanarmi), v_linear_rel deve essere opposta alla direzione della camera
+            v_linear_rel_world = R_world_cam @ d_pov[0:3]
+            
+            # 2. Componente di orbita (Pan) - velocità tangenziale
+            p_rel_xy = xk[0:2] - self.current_obj_pos[0:2]
+            dist_xy = np.linalg.norm(p_rel_xy)
+            v_orbit_world = np.zeros(3)
+            if dist_xy > 0.1:
+                # Versore tangente (CCW): [-y, x]
+                tangent = np.array([-p_rel_xy[1], p_rel_xy[0]]) / dist_xy
+                v_orbit_world[0:2] = tangent * (dist_xy * d_pov[3])
+            
+            # Combinazione: Vel_Drone = Vel_Obj + Vel_Orbit - Vel_Linear_Rel
+            vel_ref = self.current_obj_vel + v_orbit_world - v_linear_rel_world
+        else:
+            vel_ref = self.current_obj_vel
+        
+        # Il pan_ref viene ora passato solo come parametro del modello, yref[pan] è fisso a 0
+        yref_val = build_yref_online(self.y_idx, online_visual_ref, vel_ref, u_ref=self.u_hover)
+        yref_e = yref_val[:self.ny_e]
+        yref0 = yref_val
+
+        params = np.zeros(4)
+        params[3]   = pan_target        # Reference for pan
 
         for i in range(self.N_horiz + 1):
             p_i = self.current_obj_pos + self.current_obj_vel * (i * self.ts)
-            
-            params = np.zeros(10)
             params[0:3] = p_i               # Target object position
-            params[3:6] = self.f_ext_est    # Est. external force (world)
-            params[6:9] = self.tau_ext_est  # Est. external torque (body)
-            params[9]   = pan_target        # Shortest-path Reference for min_angle in model
-            
             self.ocp_solver.set(i, "p", params)
             
             if i < self.N_horiz:
-                yref_val = build_yref_online(self.y_idx, pan_target, online_visual_ref, self.u_hover)
                 self.ocp_solver.set(i, "yref", yref_val)
-                if i == 0: 
-                    yref0 = yref_val
             elif i == self.N_horiz:
-                self.ocp_solver.set(self.N_horiz, "yref", build_yref_online(self.y_idx, pan_target, online_visual_ref, self.u_hover)[:self.ny_e])
+                self.ocp_solver.set(self.N_horiz, "yref", yref_e)
 
         status = self.ocp_solver.solve()
         if status != 0:
@@ -502,40 +545,6 @@ class MpcPlannerNode(Node):
             self.get_logger().info("Configurazione solver ACADOS con posa iniziale reale...", throttle_duration_sec=2.0)
             self.planner_configure()
             return
-
-        # --- Momentum Observer (prof Fabio Ruggiero style) ---
-        self.use_momentum_observer = self.get_parameter('use_momentum_observer').value
-        if self.use_momentum_observer and self.u_prev is not None and len(self.u_prev) > 0:
-            # Se disarmato, la forza/coppia prodotta è zero. 
-            # Usiamo self.is_armed (aggiornato da VehicleControlMode) per la coerenza online.
-            u_actual = self.u_prev[0] if self.is_armed else np.zeros(4)
-
-            # 1. Osservatore Lineare (World Frame)
-            # thrust_body = [0, 0, Thrust]
-            thrust_body = np.array([0, 0, u_actual[0]])
-            # Ruotiamo la spinta nel frame mondo usando il quaternione attuale [w, x, y, z]
-            q = self.current_quat
-            Rb = Rotation.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
-            thrust_world = Rb @ thrust_body
-            
-            # Dinamica del momento lineare: p_dot = f_thrust + f_ext - m*g
-            self.p_momentum += (thrust_world - self.mass * np.array([0, 0, g0]) + self.f_ext_est) * self.ts
-            self.f_ext_est = self.K_f * (self.mass * self.current_vel - self.p_momentum)
-            
-            # 2. Osservatore Angolare (Body Frame)
-            # Dinamica del momento angolare: L_dot = tau_cmd - w x (J w) + tau_ext
-            tau_cmd = u_actual[1:4]
-            w = self.current_ang_vel
-            coriolis_tau = np.cross(w, self.J_matrix @ w)
-            self.L_momentum += (tau_cmd - coriolis_tau + self.tau_ext_est) * self.ts
-            self.tau_ext_est = self.K_tau * (self.J_matrix @ w - self.L_momentum)
-        else:
-            # Se disabilitato, resettiamo le stime a zero per non influenzare l'MPC
-            self.f_ext_est = np.zeros(3)
-            self.tau_ext_est = np.zeros(3)
-            # Resettiamo anche gli integratori del momento per evitare "salti" alla riattivazione
-            self.p_momentum = self.mass * self.current_vel
-            self.L_momentum = self.J_matrix @ self.current_ang_vel
 
         self.R = Rotation.from_euler('xyz',self.current_rpy).as_matrix()
         self.current_vel[:] = self.current_raw_vel[:]
@@ -601,6 +610,18 @@ class MpcPlannerNode(Node):
                 w_ref_msg.torque.y = float(yref_u[2])
                 w_ref_msg.torque.z = float(yref_u[3])
                 self.wrench_ref_pub.publish(w_ref_msg)
+
+                # Pubblichiamo anche il riferimento di velocità (Feed-forward)
+                v_ref_msg = TwistStamped()
+                v_ref_msg.header.stamp = self.get_clock().now().to_msg()
+                v_ref_msg.header.frame_id = "world"
+                v_ref_msg.twist.linear.x = float(yref0[self.y_idx["vel"]][0])
+                v_ref_msg.twist.linear.y = float(yref0[self.y_idx["vel"]][1])
+                v_ref_msg.twist.linear.z = float(yref0[self.y_idx["vel"]][2])
+                v_ref_msg.twist.angular.x = 0.0
+                v_ref_msg.twist.angular.y = 0.0
+                v_ref_msg.twist.angular.z = 0.0
+                self.vel_ref_pub.publish(v_ref_msg)
 
         # Pubblicazione del path ottimale a 10Hz (ogni 5 cicli a 50Hz)
         self.path_pub_counter += 1
