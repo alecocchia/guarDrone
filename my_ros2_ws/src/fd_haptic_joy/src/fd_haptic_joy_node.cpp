@@ -40,7 +40,7 @@ public:
 
     // Publishers
     force_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/fd/fd_controller/commands", 10);
-    goal_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/pov_target", 10);
+    // goal_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/pov_target", 10);
     haptic_ref_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/haptic_ref", 10);
 
     // Initial state
@@ -149,10 +149,12 @@ private:
       if (current_pov_ref_[3] < 0) current_pov_ref_[3] += 2.0 * M_PI;
       current_pov_ref_[3] -= M_PI;
 
-      // 3. Pubblicazione Goal (Legacy)
+      // 3. Pubblicazione Goal (Legacy) - DISATTIVATA per evitare sovrascritture del riferimento autonomo
+      /*
       auto goal_msg = std_msgs::msg::Float64MultiArray();
       goal_msg.data = current_pov_ref_;
       goal_pub_->publish(goal_msg);
+      */
 
       // 4. Pubblicazione Haptic Ref (Completo)
       auto haptic_msg = std_msgs::msg::Float64MultiArray();

@@ -29,8 +29,8 @@ def build_yref_terminal(y_idx, visual_ref, vel_ref, ny_e, u_ref=np.zeros(4)):
     return y[:ny_e]  
 
 
-def setup_model(m, Ixx, Iyy, Izz):
-    model = export_quadrotor_ode_model(m, Ixx, Iyy, Izz)
+def setup_model(m, Ixx, Iyy, Izz, camera_offset, camera_rpy):
+    model = export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset, camera_rpy)
     model_rpy = convert_to_rpy_model(model, m, Ixx, Iyy, Izz)
     return model, model_rpy
 
@@ -109,6 +109,9 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     w_expr = model.x[10:13]
     ang_vel=w_expr
 
+    # Stati integrali
+    xi_expr = model.x[13:16]
+
     # Rotazione attuale del drone rispetto al world
     R_expr = quat_to_R(q_expr)
 
@@ -139,7 +142,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     Z_c = P_c[2]
 
     # Pan mutuo: angolo del vettore (P_cam - P_obj) nel piano XY globale
-    # Usiamo min_angle per calcolare la distanza minima rispetto al riferimento passato come parametro p[9]
+    # Usiamo min_angle per calcolare la distanza minima rispetto al riferimento passato come parametro p[3]
     pan_raw = ca.atan2(p_cam[1] - p_obj_expr[1], p_cam[0] - p_obj_expr[0])
     pan_expr = min_angle(pan_raw - model.p[3])
 
@@ -240,6 +243,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
         X_c,                            # Posizione X dell'oggetto rispetto alla camera
         Y_c,                            # Posizione Y dell'oggetto rispetto alla camera
         Z_c,                            # Posizione Z dell'oggetto rispetto alla camera
+        xi_expr,                        # INTEGRALI (ix, iy, iz)
         v_expr,                         # velocity
         roll,                           # Roll
         pitch,                          # Pitch
@@ -257,6 +261,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
         X_c,
         Y_c,
         Z_c,
+        xi_expr,                        # INTEGRALI
         v_expr,                         # velocity
         roll,
         pitch,                         
@@ -276,9 +281,12 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     ocp.cost.W_e = W_e
     ocp.cost.set = True
     
-    # I parametri ora passati al modello (p) sono [p_obj (3), pan_ref (1)] = 4
-    ocp.parameter_values = np.zeros(4)
-    ocp.parameter_values[0:3] = p_obj[0,:] 
+    # I parametri ora passati al modello (p) sono 7: 
+    # [p_obj (3), pan_ref (1), visual_ref (3)]
+    ocp.parameter_values = np.zeros(7)
+    ocp.parameter_values[0:3]   = p_obj[0,:] 
+    ocp.parameter_values[3]     = pan_ref
+    ocp.parameter_values[4:7]   = visual_ref
 
     '''
                                         REFERENCES
@@ -297,7 +305,8 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     # Indexes (Aggiornati per le nuove dimensioni)
     pan_ind = slice(0,1) # pan
     visual_ind = slice(pan_ind.stop,pan_ind.stop+3) # X_c, Y_c, Z_c
-    vel_ind = slice(visual_ind.stop,visual_ind.stop+3)
+    integral_ind = slice(visual_ind.stop, visual_ind.stop+3) # INTEGRALI
+    vel_ind = slice(integral_ind.stop, integral_ind.stop+3)
     rp_ind = slice(vel_ind.stop, vel_ind.stop+2)
     #quat_ind = slice(vel_ind.stop, vel_ind.stop+4)
     ang_vel_ind = slice(rp_ind.stop,rp_ind.stop+3)
@@ -310,6 +319,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     y_idx = {
         "pan": pan_ind,
         "visual": visual_ind,
+        "integral": integral_ind,
         "vel": vel_ind,
         "rp": rp_ind,
         "ang_vel": ang_vel_ind,
@@ -317,7 +327,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
         "acc_ang": acc_ang_ind,
         "jerk": jerk_ind,
         "snap": snap_ind,
-        "u": slice(snap_ind.stop, snap_ind.stop+4),
+        "u": u_ind,
     }
     ny   = y_idx["u"].stop   
     ny_e = y_idx["u"].start  

@@ -24,6 +24,9 @@ import casadi as ca
 from casadi import pi as pi
 from scipy.spatial.transform import Rotation
 import time
+import threading
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 
 from drone_mpc_pkg.drone_MPC_settings import (
     setup_model, setup_initial_conditions, configure_mpc, set_initial_state, build_yref_online
@@ -36,6 +39,11 @@ import tf2_ros
 class MpcPlannerNode(Node):
     def __init__(self):
         super().__init__('mpc_planner_node')
+
+        # === Threading e Callback Groups ===
+        self.callback_group = ReentrantCallbackGroup()
+        self.state_lock = threading.Lock()
+        self.solver_is_running = False
 
         # === Modello e condizioni iniziali ===
         self.declare_parameter('mass', 2.064)
@@ -89,8 +97,10 @@ class MpcPlannerNode(Node):
         self.Ixx = ixx
         self.Iyy = iyy
         self.Izz = izz
+        self.camera_offset = np.array([cam_x, cam_y, cam_z])
+        self.camera_rpy = np.array([cam_roll, cam_pitch, cam_yaw])
 
-        self.model, self.model_rpy = setup_model(mass, ixx, iyy, izz)
+        self.model, self.model_rpy = setup_model(mass, ixx, iyy, izz, self.camera_offset, self.camera_rpy)
         self.x0, self.x0_rpy = setup_initial_conditions(start_x,start_y,start_z,start_roll,start_pitch,start_yaw)
         # === Tempo/Orizzonte ===
         self.ts = 0.01             # 100 Hz
@@ -123,14 +133,18 @@ class MpcPlannerNode(Node):
         self.current_obj_vel = np.zeros(3)
         self.current_obj_ang_vel = np.zeros(3)
         self.current_obj_rpy = np.zeros(3)
-        self.camera_offset = np.array([cam_x, cam_y, cam_z])
-        self.camera_rpy = np.array([cam_roll, cam_pitch, cam_yaw])
 
         self.fov_h = self.get_parameter('fov_h').value
         self.fov_v = self.get_parameter('fov_v').value
 
         # Target visivo di default (PoV: Xc, Yc, Zc, Pan)
         self.pov_target = np.array([2.0, 0.0, 0.0, np.pi/2])
+        xc_hand = 0.5
+        yc_hand = -0.3
+        zc_hand = -0.5
+        scale_factor = 1.0
+        self.final_target=np.array([xc_hand, yc_hand, zc_hand]) * scale_factor #aggiungere pan
+        self.integral_error = np.zeros(3)
 
         self.declare_parameter('control_flag',  1)  
         self.control_flag_val = self.get_parameter('control_flag').get_parameter_value().integer_value
@@ -147,7 +161,7 @@ class MpcPlannerNode(Node):
         )
 
         self.control_mode_sub = self.create_subscription(
-            VehicleControlMode, '/fmu/out/vehicle_control_mode', self.control_mode_callback, px4_qos_profile
+            VehicleControlMode, '/fmu/out/vehicle_control_mode', self.control_mode_callback, px4_qos_profile, callback_group=self.callback_group
         )
         
         # PUBBLICATORI PER IL LOGGER
@@ -182,11 +196,11 @@ class MpcPlannerNode(Node):
         self.optimal_path_pub = self.create_publisher(Path, '/optimal_drone_path', qos_latched)
 
         self.peg_odom_subscription = self.create_subscription(
-            Odometry, '/peg_odom', self.peg_odom_callback, qos_latched)
+            Odometry, '/peg_odom', self.peg_odom_callback, qos_latched, callback_group=self.callback_group)
         
 
         self.odom_subscription = self.create_subscription(
-            VehicleOdometry, '/fmu/out/vehicle_odometry', self.odom_callback, px4_qos_profile
+            VehicleOdometry, '/fmu/out/vehicle_odometry', self.odom_callback, px4_qos_profile, callback_group=self.callback_group
         )
 
         self.single_pose_pub  = self.create_publisher(PoseStamped,  '/optimal_drone_pose',  1)
@@ -198,10 +212,10 @@ class MpcPlannerNode(Node):
         self.visual_ref_pub = self.create_publisher(Float64MultiArray, '/online_visual_ref', 1)
         self.actual_pov_pub = self.create_publisher(Float64MultiArray, '/actual_pov', 1)
 
-        self.control_timer = self.create_timer(self.ts, self.control_step)
-        self.start_subscription = self.create_subscription(PoseStamped, '/peg_pose', self.start_callback, 10)
-        self.pov_target_sub = self.create_subscription(Float64MultiArray, '/pov_target', self.pov_target_callback, 10)
-        self.haptic_ref_sub = self.create_subscription(Float64MultiArray, '/haptic_ref', self.haptic_ref_callback, 10)
+        self.control_timer = self.create_timer(self.ts, self.control_step, callback_group=self.callback_group)
+        self.start_subscription = self.create_subscription(PoseStamped, '/peg_pose', self.start_callback, 10, callback_group=self.callback_group)
+        self.pov_target_sub = self.create_subscription(Float64MultiArray, '/pov_target', self.pov_target_callback, 10, callback_group=self.callback_group)
+        self.haptic_ref_sub = self.create_subscription(Float64MultiArray, '/haptic_ref', self.haptic_ref_callback, 10, callback_group=self.callback_group)
 
         # Haptic state
         self.haptic_pov = None
@@ -213,34 +227,37 @@ class MpcPlannerNode(Node):
     # ==================== Callbacks I/O ====================
 
     def control_mode_callback(self, msg: VehicleControlMode):
-        self.is_armed = msg.flag_armed
-        self.is_offboard = msg.flag_control_offboard_enabled
+        with self.state_lock:
+            self.is_armed = msg.flag_armed
+            self.is_offboard = msg.flag_control_offboard_enabled
 
     def peg_odom_callback(self, msg: Odometry):
-        self.current_obj_pos = np.array([msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z])
-        self.current_obj_vel = np.array([msg.twist.twist.linear.x, msg.twist.twist.linear.y, msg.twist.twist.linear.z])
-        self.current_obj_ang_vel = np.array([msg.twist.twist.angular.x, msg.twist.twist.angular.y, msg.twist.twist.angular.z])
-        q = msg.pose.pose.orientation
-        self.current_obj_rpy = np.squeeze(np.array(quat_to_RPY([q.w, q.x, q.y, q.z])))
-        self.obj_state_received = True
+        with self.state_lock:
+            self.current_obj_pos = np.array([msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z])
+            self.current_obj_vel = np.array([msg.twist.twist.linear.x, msg.twist.twist.linear.y, msg.twist.twist.linear.z])
+            self.current_obj_ang_vel = np.array([msg.twist.twist.angular.x, msg.twist.twist.angular.y, msg.twist.twist.angular.z])
+            q = msg.pose.pose.orientation
+            self.current_obj_rpy = np.squeeze(np.array(quat_to_RPY([q.w, q.x, q.y, q.z])))
+            self.obj_state_received = True
 
 
     def planner_configure(self):
-        if self.acados_solver_ready == True:
-            return
-        
-        # prima configurazione dell' MPC
-        self.configure_mpc()
-        
-        # se questo nodo viene usato solo come planner allora è pronto e può partire già
-        if self.control_flag_val != 1 and not self.planner_ready_published:
-            self.ready_publisher.publish(Bool(data=True))
-            self.planner_ready_published = True
+        with self.state_lock:
+            if self.acados_solver_ready == True:
+                return
+            
+            # prima configurazione dell' MPC
+            self.configure_mpc()
+            
+            # se questo nodo viene usato solo come planner allora è pronto e può partire già
+            if self.control_flag_val != 1 and not self.planner_ready_published:
+                self.ready_publisher.publish(Bool(data=True))
+                self.planner_ready_published = True
 
-        if self.acados_solver_ready :
-            self.publish_predicted_path_from_buffers()
-        
-        self.acados_solver_ready=True
+            if self.acados_solver_ready :
+                self.publish_predicted_path_from_buffers()
+            
+            self.acados_solver_ready=True
 
     def start_callback(self, _msg: PoseStamped):
         if self.start_received:
@@ -273,41 +290,45 @@ class MpcPlannerNode(Node):
         rot_flu2enu = Rotation.from_matrix(R_flu2enu)
         q_flu2enu = rot_flu2enu.as_quat() # [x, y, z, w] (formato scipy)
 
-        # Posizione: NED → ENU (M_ned2enu @ [N,E,D] = [E,N,-D])
-        self.current_position[:] = M_ned2enu @ np.array([msg.position[0], msg.position[1], msg.position[2]])
+        with self.state_lock:
+            # Posizione: NED → ENU (M_ned2enu @ [N,E,D] = [E,N,-D])
+            self.current_position[:] = M_ned2enu @ np.array([msg.position[0], msg.position[1], msg.position[2]])
 
-        # Assegnazione all'MPC (che si aspetta [w, x, y, z])
-        q_w = q_flu2enu[3]
-        q_x = q_flu2enu[0]
-        q_y = q_flu2enu[1]
-        q_z = q_flu2enu[2]
-        
-        q = [q_w, q_x, q_y, q_z]
-        self.current_quat = q / np.linalg.norm(q)    # norma quaternione ad 1
-        self.current_rpy[:] = rot_flu2enu.as_euler('xyz')
+            # Assegnazione all'MPC (che si aspetta [w, x, y, z])
+            q_w = q_flu2enu[3]
+            q_x = q_flu2enu[0]
+            q_y = q_flu2enu[1]
+            q_z = q_flu2enu[2]
+            
+            q = [q_w, q_x, q_y, q_z]
+            self.current_quat = q / np.linalg.norm(q)    # norma quaternione ad 1
+            self.current_rpy[:] = rot_flu2enu.as_euler('xyz')
 
-        # Velocità lineare: NED → ENU
-        self.current_raw_vel[:] = M_ned2enu @ np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]]).T
-        
-        self.current_ang_vel[:] = M_frd2flu @ np.array([msg.angular_velocity[0], msg.angular_velocity[1], msg.angular_velocity[2]]).T
-        self.px4_odom_timestamp_us = msg.timestamp  # Timestamp PX4 in microsecondi
-        
-        # --- INIZIALIZZAZIONE DINAMICA X0 ---
-        if not self.first_odom_received:
-            self.x0 = np.array([
-                self.current_position[0], self.current_position[1], self.current_position[2],
-                self.current_raw_vel[0],  self.current_raw_vel[1],  self.current_raw_vel[2],
-                q_w, q_x, q_y, q_z,
-                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2]
-            ])
-            self.x0_rpy = np.array([
-                self.current_position[0], self.current_position[1], self.current_position[2],
-                self.current_raw_vel[0],  self.current_raw_vel[1],  self.current_raw_vel[2],
-                self.current_rpy[0],      self.current_rpy[1],      self.current_rpy[2],
-                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2]
-            ])
-            self.get_logger().info(f"Posa iniziale inizializzata da odometria: {self.current_position}")
-            self.first_odom_received = True 
+            # Velocità lineare: NED → ENU
+            self.current_raw_vel[:] = M_ned2enu @ np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]]).T
+            
+            self.current_ang_vel[:] = M_frd2flu @ np.array([msg.angular_velocity[0], msg.angular_velocity[1], msg.angular_velocity[2]]).T
+            
+            self.px4_odom_timestamp_us = msg.timestamp  # Timestamp PX4 in microsecondi
+            
+            # --- INIZIALIZZAZIONE DINAMICA X0 ---
+            if not self.first_odom_received:
+                self.x0 = np.array([
+                    self.current_position[0], self.current_position[1], self.current_position[2],
+                    self.current_raw_vel[0],  self.current_raw_vel[1],  self.current_raw_vel[2],
+                    q_w, q_x, q_y, q_z,
+                    self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
+                    0.0, 0.0, 0.0 # Integral states
+                ])
+                self.x0_rpy = np.array([
+                    self.current_position[0], self.current_position[1], self.current_position[2],
+                    self.current_raw_vel[0],  self.current_raw_vel[1],  self.current_raw_vel[2],
+                    self.current_rpy[0],      self.current_rpy[1],      self.current_rpy[2],
+                    self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
+                    0.0, 0.0, 0.0 # Integral states
+                ])
+                self.get_logger().info(f"Posa iniziale inizializzata da odometria: {self.current_position}")
+                self.first_odom_received = True 
 
         t = TransformStamped()
         t.header.stamp = self.get_clock().now().to_msg()
@@ -333,22 +354,74 @@ class MpcPlannerNode(Node):
 
     def pov_target_callback(self, msg: Float64MultiArray):
         if len(msg.data) >= 4:
-            self.pov_target = np.array([msg.data[0], msg.data[1], msg.data[2], msg.data[3]], dtype=float)
+            with self.state_lock:
+                self.pov_target = np.array([msg.data[0], msg.data[1], msg.data[2], msg.data[3]], dtype=float)
 
     def haptic_ref_callback(self, msg: Float64MultiArray):
         if len(msg.data) >= 8:
-            self.haptic_pov = np.array(msg.data[0:4], dtype=float)
-            self.haptic_pov_dot = np.array(msg.data[4:8], dtype=float)
-            self.haptic_timestamp = self.get_clock().now()
+            with self.state_lock:
+                self.haptic_pov = np.array(msg.data[0:4], dtype=float)
+                self.haptic_pov_dot = np.array(msg.data[4:8], dtype=float)
+                self.haptic_timestamp = self.get_clock().now()
 
     # ==================== Configurazione e Solve ====================
+    def get_current_ref(self, xk):
+        """
+        Calcola i riferimenti (visuali, pan, velocità) in base alla modalità attuale 
+        (Haptic o Traiettoria Autonoma).
+        """
+        # 1. Check haptic active
+        haptic_active = False
+        if self.haptic_timestamp is not None:
+            dt_haptic = (self.get_clock().now() - self.haptic_timestamp).nanoseconds / 1e9
+            if dt_haptic < 0.2:
+                haptic_active = True
+
+        # 2. Determina i riferimenti nominali
+        if haptic_active:
+            visual_ref = self.haptic_pov[0:3]
+            pan_target = self.haptic_pov[3]
+            d_pov = self.haptic_pov_dot
+        else:
+            visual_ref = self.pov_target[0:3]
+            pan_target = self.pov_target[3]
+            d_pov = np.zeros(4)
+
+        # 3. Shortest Path Wrap per il Pan
+        p_obj_now = self.current_obj_pos
+        current_pan = np.arctan2(xk[1] - p_obj_now[1], xk[0] - p_obj_now[0])
+        diff_pan = (pan_target - current_pan + np.pi) % (2 * np.pi) - np.pi
+        pan_target = current_pan + diff_pan
+
+        # 4. Calcola vel_ref (Trasformazione haptic o inseguimento oggetto)
+        if haptic_active:
+            # Componente lineare (Xc, Yc, Zc) trasformata in mondo
+            R_body_world = Rotation.from_quat([xk[7], xk[8], xk[9], xk[6]]).as_matrix() # x,y,z,w
+            R_cam_body = Rotation.from_euler('xyz', self.camera_rpy).as_matrix()
+            R_world_cam = R_body_world @ R_cam_body
+            v_linear_rel_world = R_world_cam @ d_pov[0:3]
+            
+            # Componente di orbita (Pan) - velocità tangenziale
+            p_rel_xy = xk[0:2] - self.current_obj_pos[0:2]
+            dist_xy = np.linalg.norm(p_rel_xy)
+            v_orbit_world = np.zeros(3)
+            if dist_xy > 0.1:
+                tangent = np.array([-p_rel_xy[1], p_rel_xy[0]]) / dist_xy
+                v_orbit_world[0:2] = tangent * (dist_xy * d_pov[3])
+            
+            vel_ref = self.current_obj_vel + v_orbit_world - v_linear_rel_world
+        else:
+            vel_ref = self.current_obj_vel
+
+        return visual_ref, pan_target, vel_ref
+
     def configure_mpc(self):
 
         # g0 importato da common.py
 
-        X = 3; Y = 3; Z = 3; V = 5.0; ANG = ca.pi
+        X = 5; Y = 2; Z = 2; V = 5.0; ANG = ca.pi
         ANG_DOT = 3.0; ACC = 10.0; ACC_ANG = 11.0     
-        JERK = 20.0; SNAP = 200.0
+        JERK = 20.0; SNAP = 200.0; INT = 5
         
         
         f_max = self.get_parameter('f_max').value
@@ -363,18 +436,20 @@ class MpcPlannerNode(Node):
 
 
         PesoVis = 100.0
-        PesoPan = PesoVis / 5
+        PesoInt = PesoVis / 50  # Peso azione integrale
+        PesoPan = PesoVis
         PesoRot = PesoVis / 20
-        PesoVel = PesoVis / 5
-        PesoAngVel = PesoVis / 3
-        PesoAcc = PesoVel
-        PesoAngAcc = PesoAngVel 
+        PesoVel = PesoVis / 2
+        PesoAngVel = PesoVis / 2
+        PesoAcc = PesoVel * 2
+        PesoAngAcc = PesoAngVel * 2
         PesoJerk = PesoAcc
         PesoSnap = PesoJerk 
-        PesoForce = PesoVis / 100
+        PesoForce = PesoVis / 200
         PesoTorque = PesoForce  
 
         Q_pan = np.diag([PesoPan]) / ANG**2
+        Q_integral = np.diag([PesoInt, PesoInt, PesoInt]) / INT**2
         Q_visual = np.diag([PesoVis,PesoVis,PesoVis]) / np.array([X,Y,Z])**2 
         Q_vel = np.diag([PesoVel, PesoVel, PesoVel]) / V**2
         Q_rot = np.diag([PesoRot, PesoRot]) / ANG**2  
@@ -389,7 +464,7 @@ class MpcPlannerNode(Node):
         R_tau = ca.diagcat(PesoTorque / self.U_TAU_X**2, PesoTorque / self.U_TAU_Y**2, PesoTorque / self.U_TAU_Z**2)
         
         R = ca.diagcat(R_f, R_tau)
-        Q = ca.diagcat(Q_pan, Q_visual, Q_vel, Q_rot, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
+        Q = ca.diagcat(Q_pan, Q_visual, Q_integral, Q_vel, Q_rot, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
 
         # Definiamo i limiti fisici reali da passare al solver
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
@@ -422,67 +497,19 @@ class MpcPlannerNode(Node):
 
         self.publish_predicted_path_from_buffers()
 
-    def solve_MPC(self, xk, pov_target):
+    def solve_MPC(self, xk, visual_ref, pan_target, vel_ref):
         yref0 = None
         set_initial_state(self.ocp_solver, xk)
         
-        # Check haptic active
-        haptic_active = False
-        if self.haptic_timestamp is not None:
-            dt_haptic = (self.get_clock().now() - self.haptic_timestamp).nanoseconds / 1e9
-            if dt_haptic < 0.2:
-                haptic_active = True
-
-        if haptic_active:
-            online_visual_ref = self.haptic_pov[0:3]
-            pan_target = self.haptic_pov[3]
-            d_pov = self.haptic_pov_dot
-        else:
-            online_visual_ref = pov_target[0:3]
-            pan_target = pov_target[3]
-            d_pov = np.zeros(4)
-
-        p_obj_now = self.current_obj_pos
-        current_pan = np.arctan2(xk[1] - p_obj_now[1], xk[0] - p_obj_now[0])
-
-        # SHORTEST PATH WRAP: evitiamo che il drone faccia il giro largo 
-        # quando attraversa la barriera di pi/-pi.
-        diff_pan = (pan_target - current_pan + np.pi) % (2 * np.pi) - np.pi
-        pan_target = pov_target[3] + diff_pan
-
-        # Calcoliamo i riferimenti una volta sola fuori dal loop (sono costanti nell'orizzonte)
-        # La velocità di riferimento per il drone considera il moto dell'oggetto e il comando haptic
-        
-        if haptic_active:
-            # 1. Componente lineare (Xc, Yc, Zc) trasformata in mondo
-            R_body_world = Rotation.from_quat([xk[7], xk[8], xk[9], xk[6]]).as_matrix() # x,y,z,w
-            R_cam_body = Rotation.from_euler('xyz', self.camera_rpy).as_matrix()
-            R_world_cam = R_body_world @ R_cam_body
-            
-            # Se dXc > 0 (voglio allontanarmi), v_linear_rel deve essere opposta alla direzione della camera
-            v_linear_rel_world = R_world_cam @ d_pov[0:3]
-            
-            # 2. Componente di orbita (Pan) - velocità tangenziale
-            p_rel_xy = xk[0:2] - self.current_obj_pos[0:2]
-            dist_xy = np.linalg.norm(p_rel_xy)
-            v_orbit_world = np.zeros(3)
-            if dist_xy > 0.1:
-                # Versore tangente (CCW): [-y, x]
-                tangent = np.array([-p_rel_xy[1], p_rel_xy[0]]) / dist_xy
-                v_orbit_world[0:2] = tangent * (dist_xy * d_pov[3])
-            
-            # Combinazione: Vel_Drone = Vel_Obj + Vel_Orbit - Vel_Linear_Rel
-            vel_ref = self.current_obj_vel + v_orbit_world - v_linear_rel_world
-        else:
-            vel_ref = self.current_obj_vel
-        
         # Il pan_ref viene ora passato solo come parametro del modello, yref[pan] è fisso a 0
-        yref_val = build_yref_online(self.y_idx, online_visual_ref, vel_ref, u_ref=self.u_hover)
+        yref_val = build_yref_online(self.y_idx, visual_ref, vel_ref, u_ref=self.u_hover)
         yref_e = yref_val[:self.ny_e]
         yref0 = yref_val
 
-        params = np.zeros(4)
-        params[3]   = pan_target        # Reference for pan
+        # Parametri (7): [p_obj(3), pan_ref(1), visual_ref(3)]
+        params = np.zeros(7)
+        params[3]     = pan_target        
+        params[4:7]   = visual_ref
 
         for i in range(self.N_horiz + 1):
             p_i = self.current_obj_pos + self.current_obj_vel * (i * self.ts)
@@ -518,18 +545,22 @@ class MpcPlannerNode(Node):
         u0 = self.ocp_solver.get(0, "u")
         x_seq = [self.ocp_solver.get(i, "x") for i in range(self.N_horiz + 1)]
 
-        for i in range(self.N_horiz - 1):
-            self.u_prev[i] = self.ocp_solver.get(i + 1, "u")
-            self.x_prev[i] = self.ocp_solver.get(i + 1, "x")
-            
-        if self.N_horiz > 1:
-            self.u_prev[self.N_horiz - 1] = self.u_prev[self.N_horiz - 2].copy()
-        else:
-            self.u_prev[0] = self.ocp_solver.get(0, "u").copy()
-            
-        self.x_prev[self.N_horiz] = self.ocp_solver.get(self.N_horiz, "x")
+        # Estraiamo l'intera sequenza predetta per l'uso in "Hold and Shift"
+        new_u_plan = []
+        new_x_plan = []
+        for i in range(self.N_horiz):
+            new_u_plan.append(self.ocp_solver.get(i, "u"))
+            new_x_plan.append(self.ocp_solver.get(i, "x"))
+        new_x_plan.append(self.ocp_solver.get(self.N_horiz, "x")) # ultimo stato
 
-        return u0, x_seq, yref0
+        # Aggiornamento buffer per warm-start (manteniamo la logica originale per il solver)
+        for i in range(self.N_horiz - 1):
+            self.u_prev[i] = new_u_plan[i+1]
+            self.x_prev[i] = new_x_plan[i+1]
+        self.u_prev[self.N_horiz-1] = new_u_plan[-1]
+        self.x_prev[self.N_horiz] = new_x_plan[-1]
+
+        return u0, x_seq, yref0, np.array(new_u_plan), np.array(new_x_plan)
 
     # ==================== Ciclo planner ====================
     def control_step(self):
@@ -541,67 +572,99 @@ class MpcPlannerNode(Node):
             self.get_logger().info("In attesa della prima odometria da PX4...", throttle_duration_sec=2.0)
             return
 
-        if not (self.acados_solver_ready):
-            self.get_logger().info("Configurazione solver ACADOS con posa iniziale reale...", throttle_duration_sec=2.0)
+        with self.state_lock:
+            ready = self.acados_solver_ready
+
+        if not ready:
             self.planner_configure()
             return
 
-        self.R = Rotation.from_euler('xyz',self.current_rpy).as_matrix()
-        self.current_vel[:] = self.current_raw_vel[:]
+        # --- LOGICA HOLD AND SHIFT ---
+        with self.state_lock:
+            if self.solver_is_running:
+                if hasattr(self, 'u_plan') and len(self.u_plan) > 1:
+                    self.u_plan = np.roll(self.u_plan, -1, axis=0)
+                    self.x_plan = np.roll(self.x_plan, -1, axis=0)
+                    
+                    u0 = self.u_plan[0]
+                    next_x = self.x_plan[1]
+                    
+                    self.publish_optimal_wrench(u0)
+                    self.publish_pose_and_twist(next_x)
+                return
 
-        # Stato xk a 13 elementi (senza integratori)
-        xk = np.array([
-            self.current_position[0], self.current_position[1], self.current_position[2],
-            self.current_vel[0], self.current_vel[1], self.current_vel[2],
-            self.current_quat[0], self.current_quat[1], self.current_quat[2], self.current_quat[3],
-            self.current_ang_vel[0], self.current_ang_vel[1], self.current_ang_vel[2]
-        ])
-
-        # Pubblicazione riferimenti per RViz/Logger (manteniamo formato compatibile se necessario)
-        # Il pov_target è [Xc, Yc, Zc, Pan]
-        online_visual_ref = self.pov_target[0:3]
-        pan_target = self.pov_target[3]
-        
-        # Per mantenere la compatibilità col logger creiamo uno spherical fake: [Xc, Pan, 0]
-        online_spherical_ref = np.array([online_visual_ref[0], pan_target, 0.0])
-        ref_msg = Float64MultiArray(data=[float(x) for x in online_spherical_ref])
-        self.ref_pub.publish(ref_msg)
-        self.visual_ref_pub.publish(Float64MultiArray(data=[float(x) for x in online_visual_ref]))
-
-        # --- Calcolo e pubblicazione ACTUAL POV per sincronizzazione online ---
-        # 1. Posizione camera nel mondo
-        p_drone = xk[0:3]
-        q_drone = xk[6:10]
-        Rb = Rotation.from_quat([q_drone[1], q_drone[2], q_drone[3], q_drone[0]]).as_matrix()
-        p_cam = p_drone + Rb @ self.camera_offset
-        
-        # 2. Posa relativa oggetto-camera nella terna camera
-        p_obj_now = self.current_obj_pos
-        p_rel_world = p_obj_now - p_cam
-        R_cam_body = Rotation.from_euler('xyz', self.camera_rpy).as_matrix()
-        P_c = R_cam_body.T @ Rb.T @ p_rel_world
-        
-        # 3. Pan attuale
-        actual_pan = np.arctan2(p_cam[1] - p_obj_now[1], p_cam[0] - p_obj_now[0])
-        
-        actual_pov_msg = Float64MultiArray()
-        actual_pov_msg.data = [float(P_c[0]), float(P_c[1]), float(P_c[2]), float(actual_pan)]
-        self.actual_pov_pub.publish(actual_pov_msg)
-
-        t_start = time.perf_counter()
-        u0, x_seq, yref0 = self.solve_MPC(xk, self.pov_target)
-        t_end = time.perf_counter()
-        if (t_end - t_start) > self.ts:
-            self.get_logger().info(f"Solver time: {(t_end - t_start) * 1000:.2f} ms")
-        
-        # PUBBLICAZIONE OUTPUT
-        if x_seq is not None and len(x_seq) >= 2:
-            self.publish_pose_and_twist(x_seq[1])
-
-        if u0 is not None and len(u0) >= 2:
-            self.publish_optimal_wrench(u0)
+            self.solver_is_running = True
             
-            # Pubblichiamo anche il riferimento (yref) usato dall'ottimizzatore per plotting
+            self.R = Rotation.from_euler('xyz',self.current_rpy).as_matrix()
+            self.current_vel[:] = self.current_raw_vel[:]
+            xk = np.array([
+                self.current_position[0], self.current_position[1], self.current_position[2],
+                self.current_vel[0], self.current_vel[1], self.current_vel[2],
+                self.current_quat[0], self.current_quat[1], self.current_quat[2], self.current_quat[3],
+                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
+                self.integral_error[0],   self.integral_error[1],   self.integral_error[2]
+            ])
+            # Calcolo dei riferimenti (disaccoppiato dal solver)
+            online_visual_ref, pan_target, vel_ref = self.get_current_ref(xk)
+
+            # Pubblicazione riferimenti per debugging/monitoring
+            online_spherical_ref = np.array([online_visual_ref[0], pan_target, 0.0])
+            self.ref_pub.publish(Float64MultiArray(data=[float(x) for x in online_spherical_ref]))
+            self.visual_ref_pub.publish(Float64MultiArray(data=[float(x) for x in online_visual_ref]))
+
+            p_drone = xk[0:3]
+            q_drone = xk[6:10]
+            Rb = Rotation.from_quat([q_drone[1], q_drone[2], q_drone[3], q_drone[0]]).as_matrix()
+            p_cam = p_drone + Rb @ self.camera_offset
+            p_obj_now = self.current_obj_pos
+            p_rel_world = p_obj_now - p_cam
+            R_cam_body = Rotation.from_euler('xyz', self.camera_rpy).as_matrix()
+            P_c = R_cam_body.T @ Rb.T @ p_rel_world
+            actual_pan = np.arctan2(p_cam[1] - p_obj_now[1], p_cam[0] - p_obj_now[0])
+            
+            actual_pov_msg = Float64MultiArray()
+            actual_pov_msg.data = [float(P_c[0]), float(P_c[1]), float(P_c[2]), float(actual_pan)]
+            self.actual_pov_pub.publish(actual_pov_msg)
+
+            # --- AGGIORNAMENTO INTEGRALE ---
+            error_vis = P_c - online_visual_ref
+            self.integral_error += error_vis * self.ts
+            self.integral_error = np.clip(self.integral_error, -2.0, 2.0)
+
+        try:
+            t_start = time.perf_counter()
+            u0_new, x_seq_new, yref0, u_plan_new, x_plan_new = self.solve_MPC(xk, online_visual_ref, pan_target, vel_ref)
+            t_end = time.perf_counter()
+            
+            dt_solve = t_end - t_start
+            
+            with self.state_lock:
+                self.u_plan = u_plan_new
+                self.x_plan = x_plan_new
+                
+                n_skip = int(dt_solve / self.ts)
+                if n_skip > 0:
+                    self.get_logger().warn(
+                        f"Solver time ({dt_solve:.4f}s) exceeded sampling time ({self.ts}s)! Skipping {n_skip} steps.",
+                        throttle_duration_sec=1.0
+                    )
+                    if n_skip < self.N_horiz:
+                        self.u_plan = np.roll(self.u_plan, -n_skip, axis=0)
+                        self.x_plan = np.roll(self.x_plan, -n_skip, axis=0)
+                
+                u0 = self.u_plan[0]
+                next_x = self.x_plan[1]
+                self.solver_is_running = False
+
+            self.publish_optimal_wrench(u0)
+            self.publish_pose_and_twist(next_x)
+
+            self.path_pub_counter += 1
+            if self.path_pub_counter >= 5:
+                self.publish_predicted_path(x_plan_new)
+                self.path_pub_counter = 0
+
+            # Pubblicazione riferimenti per plotting
             if yref0 is not None:
                 yref_u = yref0[self.y_idx["u"]]
                 w_ref_msg = Wrench()
@@ -611,23 +674,19 @@ class MpcPlannerNode(Node):
                 w_ref_msg.torque.z = float(yref_u[3])
                 self.wrench_ref_pub.publish(w_ref_msg)
 
-                # Pubblichiamo anche il riferimento di velocità (Feed-forward)
                 v_ref_msg = TwistStamped()
                 v_ref_msg.header.stamp = self.get_clock().now().to_msg()
                 v_ref_msg.header.frame_id = "world"
                 v_ref_msg.twist.linear.x = float(yref0[self.y_idx["vel"]][0])
                 v_ref_msg.twist.linear.y = float(yref0[self.y_idx["vel"]][1])
                 v_ref_msg.twist.linear.z = float(yref0[self.y_idx["vel"]][2])
-                v_ref_msg.twist.angular.x = 0.0
-                v_ref_msg.twist.angular.y = 0.0
-                v_ref_msg.twist.angular.z = 0.0
                 self.vel_ref_pub.publish(v_ref_msg)
 
-        # Pubblicazione del path ottimale a 10Hz (ogni 5 cicli a 50Hz)
-        self.path_pub_counter += 1
-        if x_seq is not None and self.path_pub_counter >= 5:
-            self.publish_predicted_path(x_seq)
-            self.path_pub_counter = 0
+        except Exception as e:
+            self.get_logger().error(f"Errore nel solver: {e}")
+            with self.state_lock:
+                self.solver_is_running = False
+            return
 
 
 
@@ -728,15 +787,7 @@ class MpcPlannerNode(Node):
             # Calcoliamo la velocità angolare desiderata [0, w_max] rad/s
             w_target = w_max * np.sqrt(max(0.0, float(u0[0])) / self.U_F)
             # Mappatura su norm_thrust [0, 1] considerando il range dell'airframe [w_min, w_max]
-            norm_thrust = (w_target - w_min) / (w_max - w_min)
-
-            # --- Takeoff Boost ---
-            # Se il drone è armato da poco e si trova rasoterra, l'MPC tende a dare l'esatta 
-            # spinta di hovering per "alzare il muso". Questo lo fa rimbalzare sul terreno.
-            # Diamo un leggero boost (+5%) per forzare uno stacco pulito in aria.
-            if not self.planner_ready_published and self.current_position[2] < 0.2:
-                norm_thrust += 0.05
-                
+            norm_thrust = (w_target - w_min) / (w_max - w_min)   
             norm_thrust = max(0.0, min(1.0, norm_thrust))
             
             thrust_msg = VehicleThrustSetpoint()
@@ -791,8 +842,10 @@ class MpcPlannerNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = MpcPlannerNode()
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     node.destroy_node()
