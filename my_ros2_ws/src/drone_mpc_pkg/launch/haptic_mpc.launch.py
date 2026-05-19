@@ -33,7 +33,8 @@ def generate_launch_description():
         name='fd_haptic_joy_node',
         output='screen',
         parameters=[{
-            'k_spring': 40.0,
+            'k_spring': 50.0,
+            'b_damping': 10.0,
             'v_pan_max': 0.5,
             'v_zc_max': 0.5,
             'v_xc_max': 0.8,

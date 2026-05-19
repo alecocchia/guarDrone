@@ -33,6 +33,7 @@ class HumanGoalNode(Node):
         self.key_ref_sub = self.create_subscription(Float64MultiArray, '/online_ref', self.keyboard_ref_cb, qos_in)
         self.joy_sub = self.create_subscription(Joy, '/joy', self.joy_cb, qos_sensor)
         self.actual_pov_sub = self.create_subscription(Float64MultiArray, '/actual_pov', self.actual_pov_cb, qos_in)
+        self.joy_ref_pub = self.create_publisher(Float64MultiArray, '/joy_ref', 1)
 
         # FIX 1: Inizializzato con coordinate PoV: [Xc, Yc, Zc, Pan_mutuo]
         self.current_pov_ref = [2.0, 0.0, 0.0, 0.0]  
@@ -41,6 +42,12 @@ class HumanGoalNode(Node):
         self.buttons = [0] * 15
         self.task_phase_active = False
         self.last_button_state = 0
+        self.last_joy_active = False
+
+        # Variabili per il Joypad separato
+        self.joy_pov_ref = [2.0, 0.0, 0.0, 0.0] 
+        self.joy_pov_dot = [0.0, 0.0, 0.0, 0.0]
+        self.actual_pov = [2.0, 0.0, 0.0, 0.0]
 
         # Parametri Joystick
         self.dt = 0.02   # 50 Hz
@@ -56,10 +63,9 @@ class HumanGoalNode(Node):
             self.current_pov_ref = [msg.data[0], msg.data[1], msg.data[2], msg.data[3]]
 
     def actual_pov_cb(self, msg: Float64MultiArray):
-        # Se il joystick non è attivo, il riferimento segue la posizione reale del drone
-        # per evitare "salti" quando si riprende il controllo.
-        if not self.joy_active and len(msg.data) >= 4:
-            self.current_pov_ref = [msg.data[0], msg.data[1], msg.data[2], msg.data[3]]
+        # Memorizziamo la posa reale attuale
+        if len(msg.data) >= 4:
+            self.actual_pov = [msg.data[0], msg.data[1], msg.data[2], msg.data[3]]
 
     def joy_cb(self, msg: Joy):
         self.axes = msg.axes
@@ -79,7 +85,17 @@ class HumanGoalNode(Node):
         self.publish_goal()
 
     def control_loop(self):
+        # --- Rilevamento fronte di salita joy_active ---
+        if self.joy_active and not self.last_joy_active:
+            # Quando iniziamo a usare il joypad, partiamo dalla posizione attuale del drone
+            self.joy_pov_ref = list(self.actual_pov)
+            self.get_logger().info("Joypad ACTIVE: Partenza dalla posizione reale del drone.")
+        
+        self.last_joy_active = self.joy_active
+
         if not self.joy_active:
+            # Se il joypad non è attivo, pubblichiamo solo il target autonomo su /pov_target
+            self.publish_goal()
             return
 
         # Toggle Task Phase with button 0 (es. 'A' o 'Cross')
@@ -96,26 +112,36 @@ class HumanGoalNode(Node):
                     self.current_pov_ref[0] = 2.0
             self.last_button_state = self.buttons[0]
 
-        pan_cmd  = self.axes[0]  # Destra/Sinistra per orbitare
-        zc_cmd   = self.axes[1]  # Su/Giù per alzare/abbassare inquadratura (Zc)
-        xc_cmd   = self.axes[3]  # Avanti/Indietro per zoom (Xc)
+        # Comandi Joypad (velocità desiderate)
+        pan_vel  = self.axes[0] * self.v_pan_max
+        zc_vel   = self.axes[1] * self.v_zc_max
+        xc_vel   = self.axes[3] * self.v_xc_max
+        yc_vel   = 0.0 # Per ora non mappato ma disponibile
 
-        self.current_pov_ref[3] += pan_cmd * self.v_pan_max * self.dt  # Pan_mutuo
-        self.current_pov_ref[2] += zc_cmd * self.v_zc_max * self.dt    # Zc
-        self.current_pov_ref[0] += xc_cmd * self.v_xc_max * self.dt    # Xc
+        # Integrazione
+        self.joy_pov_ref[3] += pan_vel * self.dt
+        self.joy_pov_ref[2] += zc_vel * self.dt
+        self.joy_pov_ref[0] += xc_vel * self.dt
 
         # Limiti
-        # 1. Limiti sulla Profondità (Xc)
-        xc_min = 1.5  
-        xc_max = 8.0  
-        self.current_pov_ref[0] = max(xc_min, min(xc_max, self.current_pov_ref[0]))
-        
-        # 2. Limiti sull'inquadratura verticale (Zc)
+        xc_min, xc_max = 1.5, 8.0
+        self.joy_pov_ref[0] = max(xc_min, min(xc_max, self.joy_pov_ref[0]))
         max_zc = 0.5
-        self.current_pov_ref[2] = max(-max_zc, min(max_zc, self.current_pov_ref[2]))
-        
-        # Wrap-Around del pan_mutuo
-        self.current_pov_ref[3] = (self.current_pov_ref[3] + math.pi) % (2 * math.pi) - math.pi
+        self.joy_pov_ref[2] = max(-max_zc, min(max_zc, self.joy_pov_ref[2]))
+        self.joy_pov_ref[3] = (self.joy_pov_ref[3] + math.pi) % (2 * math.pi) - math.pi
+
+        # Memorizziamo le velocità (dot)
+        self.joy_pov_dot = [xc_vel, yc_vel, zc_vel, pan_vel]
+
+        # Pubblicazione Joy Reference
+        joy_msg = Float64MultiArray()
+        joy_msg.data = [
+            float(self.joy_pov_ref[0]), float(self.joy_pov_ref[1]), float(self.joy_pov_ref[2]), float(self.joy_pov_ref[3]),
+            float(self.joy_pov_dot[0]), float(self.joy_pov_dot[1]), float(self.joy_pov_dot[2]), float(self.joy_pov_dot[3])
+        ]
+        self.joy_ref_pub.publish(joy_msg)
+
+        # Continuiamo a pubblicare l'autonomo su /pov_target
         self.publish_goal()
 
     def publish_goal(self):

@@ -136,6 +136,8 @@ class MpcPlannerNode(Node):
 
         self.fov_h = self.get_parameter('fov_h').value
         self.fov_v = self.get_parameter('fov_v').value
+        self.declare_parameter('haptic_transition_duration', 3.0)
+        self.haptic_transition_duration = self.get_parameter('haptic_transition_duration').value
 
         # Target visivo di default (PoV: Xc, Yc, Zc, Pan)
         self.pov_target = np.array([2.0, 0.0, 0.0, np.pi/2])
@@ -221,6 +223,14 @@ class MpcPlannerNode(Node):
         self.haptic_pov = None
         self.haptic_pov_dot = None
         self.haptic_timestamp = None
+
+        # Joy state
+        self.joy_ref_sub = self.create_subscription(Float64MultiArray, '/joy_ref', self.joy_ref_callback, 10, callback_group=self.callback_group)
+        self.joy_pov = None
+        self.joy_pov_dot = None
+        self.joy_timestamp = None
+        self.declare_parameter('joy_transition_duration', 3.0)
+        self.joy_transition_duration = self.get_parameter('joy_transition_duration').value
 
         self.get_logger().info("MPC Node avviato. In attesa...")
 
@@ -364,54 +374,99 @@ class MpcPlannerNode(Node):
                 self.haptic_pov_dot = np.array(msg.data[4:8], dtype=float)
                 self.haptic_timestamp = self.get_clock().now()
 
+    def joy_ref_callback(self, msg: Float64MultiArray):
+        if len(msg.data) >= 8:
+            with self.state_lock:
+                self.joy_pov = np.array(msg.data[0:4], dtype=float)
+                self.joy_pov_dot = np.array(msg.data[4:8], dtype=float)
+                self.joy_timestamp = self.get_clock().now()
+
     # ==================== Configurazione e Solve ====================
     def get_current_ref(self, xk):
         """
-        Calcola i riferimenti (visuali, pan, velocità) in base alla modalità attuale 
-        (Haptic o Traiettoria Autonoma).
+        Calcola i riferimenti (visuali, pan, velocità) con interpolazione tra 
+        Manual (Haptic/Joypad) e Traiettoria Autonoma per una transizione fluida.
         """
-        # 1. Check haptic active
-        haptic_active = False
+        now = self.get_clock().now()
+        dt_off = 0.2 # soglia di inattività (s)
+
+        # 1. Valutazione Haptic
+        alpha_h = 1.0
+        h_active = False
         if self.haptic_timestamp is not None:
-            dt_haptic = (self.get_clock().now() - self.haptic_timestamp).nanoseconds / 1e9
-            if dt_haptic < 0.2:
-                haptic_active = True
+            dt_h = (now - self.haptic_timestamp).nanoseconds / 1e9
+            h_active = (dt_h < dt_off)
+            if h_active:
+                alpha_h = 0.0
+            else:
+                alpha_h = min(1.0, max(0.0, (dt_h - dt_off) / self.haptic_transition_duration))
 
-        # 2. Determina i riferimenti nominali
-        if haptic_active:
-            visual_ref = self.haptic_pov[0:3]
-            pan_target = self.haptic_pov[3]
-            d_pov = self.haptic_pov_dot
+        # 2. Valutazione Joypad
+        alpha_j = 1.0
+        j_active = False
+        if self.joy_timestamp is not None:
+            dt_j = (now - self.joy_timestamp).nanoseconds / 1e9
+            j_active = (dt_j < dt_off)
+            if j_active:
+                alpha_j = 0.0
+            else:
+                alpha_j = min(1.0, max(0.0, (dt_j - dt_off) / self.joy_transition_duration))
+
+        # 3. Selezione del riferimento manuale (Haptic ha priorità)
+        if h_active:
+            alpha = 0.0
+            manual_pov = self.haptic_pov
+            manual_d_pov = self.haptic_pov_dot
+        elif j_active:
+            alpha = 0.0
+            manual_pov = self.joy_pov
+            manual_d_pov = self.joy_pov_dot
         else:
-            visual_ref = self.pov_target[0:3]
-            pan_target = self.pov_target[3]
-            d_pov = np.zeros(4)
+            # Entrambi in transizione o inattivi: usiamo quello più "fresco" (alpha minore)
+            if alpha_h < alpha_j:
+                alpha = alpha_h
+                manual_pov = self.haptic_pov
+                manual_d_pov = self.haptic_pov_dot
+            else:
+                alpha = alpha_j
+                manual_pov = self.joy_pov
+                manual_d_pov = self.joy_pov_dot
 
-        # 3. Shortest Path Wrap per il Pan
+        # 4. Riferimento Autonomo
+        auto_visual_ref = self.pov_target[0:3]
+        auto_pan_target = self.pov_target[3]
+
+        if manual_pov is None:
+            manual_pov = np.concatenate([auto_visual_ref, [auto_pan_target]])
+            manual_d_pov = np.zeros(4)
+            alpha = 1.0
+
+        # 5. Interpolazione finale
+        visual_ref = (1 - alpha) * manual_pov[0:3] + alpha * auto_visual_ref
+        
         p_obj_now = self.current_obj_pos
         current_pan = np.arctan2(xk[1] - p_obj_now[1], xk[0] - p_obj_now[0])
-        diff_pan = (pan_target - current_pan + np.pi) % (2 * np.pi) - np.pi
-        pan_target = current_pan + diff_pan
+        diff_m = (manual_pov[3] - current_pan + np.pi) % (2 * np.pi) - np.pi
+        diff_a = (auto_pan_target - current_pan + np.pi) % (2 * np.pi) - np.pi
+        pan_target = current_pan + (1 - alpha) * diff_m + alpha * diff_a
 
-        # 4. Calcola vel_ref (Trasformazione haptic o inseguimento oggetto)
-        if haptic_active:
-            # Componente lineare (Xc, Yc, Zc) trasformata in mondo
-            R_body_world = Rotation.from_quat([xk[7], xk[8], xk[9], xk[6]]).as_matrix() # x,y,z,w
-            R_cam_body = Rotation.from_euler('xyz', self.camera_rpy).as_matrix()
-            R_world_cam = R_body_world @ R_cam_body
-            v_linear_rel_world = R_world_cam @ d_pov[0:3]
-            
-            # Componente di orbita (Pan) - velocità tangenziale
-            p_rel_xy = xk[0:2] - self.current_obj_pos[0:2]
-            dist_xy = np.linalg.norm(p_rel_xy)
-            v_orbit_world = np.zeros(3)
-            if dist_xy > 0.1:
-                tangent = np.array([-p_rel_xy[1], p_rel_xy[0]]) / dist_xy
-                v_orbit_world[0:2] = tangent * (dist_xy * d_pov[3])
-            
-            vel_ref = self.current_obj_vel + v_orbit_world - v_linear_rel_world
-        else:
-            vel_ref = self.current_obj_vel
+        d_pov = (1 - alpha) * manual_d_pov
+
+        # Componente lineare (Xc, Yc, Zc) trasformata in mondo
+        R_body_world = Rotation.from_quat([xk[7], xk[8], xk[9], xk[6]]).as_matrix() # x,y,z,w
+        R_cam_body = Rotation.from_euler('xyz', self.camera_rpy).as_matrix()
+        R_world_cam = R_body_world @ R_cam_body
+        v_linear_rel_world = R_world_cam @ d_pov[0:3]
+        
+        # Componente di orbita (Pan) - velocità tangenziale
+        p_rel_xy = xk[0:2] - self.current_obj_pos[0:2]
+        dist_xy = np.linalg.norm(p_rel_xy)
+        v_orbit_world = np.zeros(3)
+        if dist_xy > 0.1:
+            tangent = np.array([-p_rel_xy[1], p_rel_xy[0]]) / dist_xy
+            v_orbit_world[0:2] = tangent * (dist_xy * d_pov[3])
+        
+        vel_ref = self.current_obj_vel + v_orbit_world - v_linear_rel_world
 
         return visual_ref, pan_target, vel_ref
 
@@ -419,9 +474,9 @@ class MpcPlannerNode(Node):
 
         # g0 importato da common.py
 
-        X = 5; Y = 2; Z = 2; V = 5.0; ANG = ca.pi
+        X = 4; Y = 2; Z = 2; V = 5.0; ANG = ca.pi
         ANG_DOT = 3.0; ACC = 10.0; ACC_ANG = 11.0     
-        JERK = 20.0; SNAP = 200.0; INT = 5
+        JERK = 20.0; SNAP = 200.0; INT = 3.0
         
         
         f_max = self.get_parameter('f_max').value
@@ -435,22 +490,22 @@ class MpcPlannerNode(Node):
         self.U_TAU_Z = moment_const * f_max
 
 
-        PesoVis = 100.0
+        PesoVis = 100
         PesoInt = PesoVis / 50  # Peso azione integrale
         PesoPan = PesoVis
         PesoRot = PesoVis / 20
         PesoVel = PesoVis / 2
-        PesoAngVel = PesoVis / 2
+        PesoAngVel = PesoVel * 2
         PesoAcc = PesoVel * 2
         PesoAngAcc = PesoAngVel * 2
         PesoJerk = PesoAcc
         PesoSnap = PesoJerk 
-        PesoForce = PesoVis / 200
+        PesoForce = PesoVis / 100
         PesoTorque = PesoForce  
 
         Q_pan = np.diag([PesoPan]) / ANG**2
-        Q_integral = np.diag([PesoInt, PesoInt, PesoInt]) / INT**2
         Q_visual = np.diag([PesoVis,PesoVis,PesoVis]) / np.array([X,Y,Z])**2 
+        Q_integral = np.diag([PesoInt, PesoInt, PesoInt]) / INT**2
         Q_vel = np.diag([PesoVel, PesoVel, PesoVel]) / V**2
         Q_rot = np.diag([PesoRot, PesoRot]) / ANG**2  
         
@@ -526,20 +581,18 @@ class MpcPlannerNode(Node):
             # Se il solver fallisce, usiamo l'ultimo comando valido o l'hover
             u0 = self.u_prev[0].copy() if self.u_prev is not None else self.u_hover.copy()
             x_seq = [self.x_prev[i].copy() for i in range(self.N_horiz + 1)] if self.x_prev is not None else None
-            self.get_logger().warn(f"MPC Solver failed (Status {status}). Shifting buffers and using fallback.", throttle_duration_sec=1.0)
             
-            # --- SHIFT BUFFERS EVEN ON FAILURE ---
+            # Forniamo piani di fallback prelevati dall'ultimo piano valido
+            u_plan_fallback = np.array(self.u_prev) if self.u_prev is not None else np.tile(u0, (self.N_horiz, 1))
+            x_plan_fallback = np.array(self.x_prev) if self.x_prev is not None else np.tile(self.x0, (self.N_horiz + 1, 1))
+            
+            # Shiftiamo i buffer per l'iterazione successiva
             if self.u_prev is not None and self.x_prev is not None:
-                for i in range(self.N_horiz - 1):
-                    self.u_prev[i] = self.u_prev[i+1].copy()
-                    self.x_prev[i] = self.x_prev[i+1].copy()
-                
-                self.x_prev[self.N_horiz - 1] = self.x_prev[self.N_horiz].copy()
-                if self.N_horiz > 1:
-                    self.u_prev[self.N_horiz - 1] = self.u_prev[self.N_horiz - 2].copy()
-                # Nota: x_prev[N_horiz] rimane invariato (ultimo stato predetto)
+                self.u_prev = list(self.u_prev[1:]) + [self.u_prev[-1]]
+                self.x_prev = list(self.x_prev[1:]) + [self.x_prev[-1]]
             
-            return u0, x_seq, yref0
+            self.get_logger().warn(f"MPC Solver failed (Status {status}). Using fallback.", throttle_duration_sec=1.0)
+            return u0, x_seq, yref0, u_plan_fallback, x_plan_fallback
 
         # --- SUCCESS: Get results and shift buffers ---
         u0 = self.ocp_solver.get(0, "u")
@@ -592,6 +645,7 @@ class MpcPlannerNode(Node):
                     self.publish_optimal_wrench(u0)
                     self.publish_pose_and_twist(next_x)
                 return
+                return
 
             self.solver_is_running = True
             
@@ -625,17 +679,22 @@ class MpcPlannerNode(Node):
             actual_pov_msg = Float64MultiArray()
             actual_pov_msg.data = [float(P_c[0]), float(P_c[1]), float(P_c[2]), float(actual_pan)]
             self.actual_pov_pub.publish(actual_pov_msg)
-
-            # --- AGGIORNAMENTO INTEGRALE ---
+            
+            # --- AGGIORNAMENTO INTEGRALE (FEEDBACK REALE) ---
+            # Ripristiniamo l'integrazione basata sull'errore misurato per eliminare l'errore a regime
             error_vis = P_c - online_visual_ref
             self.integral_error += error_vis * self.ts
-            self.integral_error = np.clip(self.integral_error, -2.0, 2.0)
+            # Nota: L'anti-windup ora è gestito internamente dai Soft Constraints di Acados,
+            # ma manteniamo un clip di sicurezza esterno per evitare overflow numerici estremi.
+            self.integral_error = np.clip(self.integral_error, -3.0, 3.0)
 
+        
         try:
-            t_start = time.perf_counter()
+            t_start = time.perf_counter() # questo è un wall time (non deve dipendere dal simulatore)
             u0_new, x_seq_new, yref0, u_plan_new, x_plan_new = self.solve_MPC(xk, online_visual_ref, pan_target, vel_ref)
             t_end = time.perf_counter()
             
+            # Calcolo tempo di risoluzione dell'iterazione corrente dell'MPC 
             dt_solve = t_end - t_start
             
             with self.state_lock:
@@ -648,6 +707,7 @@ class MpcPlannerNode(Node):
                         f"Solver time ({dt_solve:.4f}s) exceeded sampling time ({self.ts}s)! Skipping {n_skip} steps.",
                         throttle_duration_sec=1.0
                     )
+                    # Se ci sono salti, shiftiamo gli array di u e x di n_skip posizioni per mantenere la predizione corretta
                     if n_skip < self.N_horiz:
                         self.u_plan = np.roll(self.u_plan, -n_skip, axis=0)
                         self.x_plan = np.roll(self.x_plan, -n_skip, axis=0)
@@ -728,15 +788,11 @@ class MpcPlannerNode(Node):
             elif not self.is_armed:
                 self.get_logger().info("Siamo in Offboard! Armamento motori...")
                 self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
-                self.armed_counter = 0
             else:
                 if not self.planner_ready_published:
-                    self.armed_counter += 1
-                    # Aspettiamo 20 cicli per far girare le eliche e stabilizzare il decollo
-                    if self.armed_counter >= 20: 
-                        self.get_logger().info("Decollo completato e quota raggiunta! Inizio inseguimento dinamico.")
-                        self.ready_publisher.publish(Bool(data=True))
-                        self.planner_ready_published = True
+                    self.get_logger().info("Decollo completato e quota raggiunta! Inizio inseguimento dinamico.")
+                    self.ready_publisher.publish(Bool(data=True))
+                    self.planner_ready_published = True
 
     # ==================== Pubblicazione ====================
 

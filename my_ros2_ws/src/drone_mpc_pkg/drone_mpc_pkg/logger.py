@@ -74,6 +74,9 @@ class Logger(Node):
         self.last_w_cmd = [0.0, 0.0, 0.0, 0.0]
         self.last_w_ref = [0.0, 0.0, 0.0, 0.0]
         self.last_w_target = [0.0, 0.0, 0.0, 0.0]
+        
+        self.haptic_force = []
+        self.last_haptic_force = [0.0, 0.0, 0.0]
 
         px4_qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -90,6 +93,7 @@ class Logger(Node):
         self.create_subscription(Wrench, '/optimal_wrench', self.cb_wrench_ref, 10)
         self.create_subscription(Wrench, '/wrench_reference', self.cb_wrench_target, 10)
         self.create_subscription(Wrench, '/wrench_cmd', self.cb_wrench_cmd, 10)
+        self.create_subscription(Float64MultiArray, '/fd/fd_controller/commands', self.cb_haptic_force, 10)
         self.create_subscription(VehicleOdometry, '/fmu/out/vehicle_odometry', self.cb_px4_odom, px4_qos_profile)
         
         self.get_logger().info(f'Logger ottimizzato avviato | Salva in: {self.save_path}')
@@ -105,6 +109,10 @@ class Logger(Node):
 
     def cb_wrench_target(self, msg: Wrench):
         self.last_w_target = [msg.force.z, msg.torque.x, msg.torque.y, msg.torque.z]
+
+    def cb_haptic_force(self, msg: Float64MultiArray):
+        if len(msg.data) >= 3:
+            self.last_haptic_force = [msg.data[0], msg.data[1], msg.data[2]]
 
     def cb_ref_pose(self, msg: PoseStamped):
         p = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z], dtype=float)
@@ -146,6 +154,7 @@ class Logger(Node):
         self.peg_pos.append(self.last_peg_pos)
         self.online_ref.append(self.last_online_ref)
         self.online_visual_ref.append(self.last_online_visual_ref) 
+        self.haptic_force.append(self.last_haptic_force.copy())
 
         self.last_log_time = t_now
 
@@ -228,6 +237,7 @@ class Logger(Node):
             wrench_cmd=np.asarray(self.wrench_cmd),
             wrench_ref=np.asarray(self.wrench_ref),
             wrench_target=np.asarray(self.wrench_target),
+            haptic_force=np.asarray(self.haptic_force),
             peg_pos=peg_pos, online_ref=online_ref,
             online_visual_ref=online_visual_ref,
             acc=acc, ang_acc=ang_acc, jerk=jerk, snap=snap,

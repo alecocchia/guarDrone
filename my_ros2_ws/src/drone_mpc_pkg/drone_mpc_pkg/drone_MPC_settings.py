@@ -16,6 +16,7 @@ def build_yref_online(y_idx, visual_ref, vel_ref, u_ref=np.zeros(4)):
     yref[y_idx["vel"]]     = vel_ref
     yref[y_idx["rp"]]      = np.array([0,0])        # X_c, Y_c (posizione dell'oggetto rispetto alla camera, nella terna camera)
     yref[y_idx["visual"]]  = visual_ref
+    yref[y_idx["integral"]]= np.array([0,0,0])
     yref[y_idx["ang_vel"]] = np.array([0,0,0])
     yref[y_idx["acc"]]     = np.array([0,0,0])
     yref[y_idx["acc_ang"]] = np.array([0,0,0])
@@ -179,9 +180,11 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
                                             CONSTRAINTS             
     '''
     ocp.constraints.x0 = x0
-    ocp.constraints.lbx = np.array([-100.0])  # zmin molto basso per evitare fallimenti del solver
-    ocp.constraints.ubx = np.array([100.0])  # zmax
-    ocp.constraints.idxbx = np.array([2])   
+    
+    # Vincolo su Z (Hard)
+    ocp.constraints.idxbx = np.array([2])
+    ocp.constraints.lbx = np.array([-1.0])
+    ocp.constraints.ubx = np.array([100.0])
 
     # Vincoli sugli ingressi (Spinta e Coppie)
     # Ora usiamo i parametri passati dinamicamente dal nodo per coerenza fisica
@@ -212,20 +215,20 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     
     model.con_h_expr = h_expr
     
-    X_min = 1.5 # Il peg deve stare almeno a X_min DAVANTI alla telecamera (distanza di sicurezza)
-    ocp.constraints.lh = np.array([-100,  0.0, -100,  0.0, X_min, -rp_limit, -rp_limit])
-    ocp.constraints.uh = np.array([ 0.0,  100,  0.0,  100, 100,    rp_limit,  rp_limit])
+    X_min = 1.5 
+    # [Y_right, Y_left, Z_up, Z_down, X_min, roll, pitch]
+    ocp.constraints.lh = np.array([-1000,  0.0, -1000,  0.0, X_min, -rp_limit, -rp_limit])
+    ocp.constraints.uh = np.array([ 0.0,  1000,  0.0,  1000, 100,    rp_limit,  rp_limit])
 
-    # ==========================================================
     # Slacks per vincoli visuali (5) + roll/pitch (2) = 7
     n_soft_h = 7
     ocp.constraints.idxsh = np.array(range(n_soft_h))
 
     # Pesi per i soft constraints
-    # [Y_right, Y_left, Z_up, Z_down, X_min, roll, pitch]
+    # [Visx4, dist_sicurezza, roll, pitch]
     penalty_L1 = 1e-1
-    penalty_L2 = 1e0  
-    weights_costs = np.array([1, 1, 1, 1, 10, 10, 10])
+    penalty_L2 = 1e0 
+    weights_costs = np.array([1, 1, 1, 1, 100, 1, 1])
 
     ocp.cost.Zl = penalty_L2 * weights_costs
     ocp.cost.Zu = penalty_L2 * weights_costs

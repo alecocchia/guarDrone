@@ -72,7 +72,8 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset, camera_rpy) -> A
     q_dot = 0.5 * ca.mtimes(omega_matrix(w), q)
     J_inv = ca.inv(J)
     w_dot = ca.mtimes(J_inv, (ca.vertcat(tau_x, tau_y, tau_z) - ca.cross(w, ca.mtimes(J, w))))
-    xi_dot = P_c - visual_ref_sym
+    # Integrator: xi_dot = error
+    xi_dot = (P_c - visual_ref_sym) 
 
     # Compose state and xdot
     x = ca.vertcat(p, v, q, w, xi)
@@ -100,7 +101,8 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset, camera_rpy) -> A
         r'$x$', r'$y$', r'$z$',
         r'$v_x$', r'$v_y$', r'$v_z$',
         r'$q_w$', r'$q_x$', r'$q_y$', r'$q_z$',
-        r'$\omega_x$', r'$\omega_y$', r'$\omega_z$'
+        r'$\omega_x$', r'$\omega_y$', r'$\omega_z$',
+        r'$i_x$', r'$i_y$', r'$i_z$'
     ]
     model.u_labels = [r'$F_z$', r'$\tau_x$', r'$\tau_y$', r'$\tau_z$']
     model.t_label = '$t$ [s]'

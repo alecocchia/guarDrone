@@ -2,11 +2,19 @@
 import argparse, numpy as np
 import matplotlib.pyplot as plt
 
-def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False):
+def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, fignum=None):
     plt.rcParams.update({"text.usetex": use_tex, "font.family": "serif"})
     n = len(data_list)
     nrows = int(np.ceil(n / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(12, 3.5 * nrows), squeeze=False)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(12, 3.5 * nrows), squeeze=False, num=fignum)
+    if fignum is not None:
+        try:
+            fig.canvas.manager.set_window_title(f"Figure {fignum}: {title}")
+        except AttributeError:
+            try:
+                fig.canvas.set_window_title(f"Figure {fignum}: {title}")
+            except Exception:
+                pass
     axes = axes.flatten()
     
     for i in range(n):
@@ -59,7 +67,7 @@ def main():
         {'sim': data['pos'][:, 2], 'ref': data['pref_pos'][:, 2]}
     ]
     myPlot(t, fig_pos_data, ["Position X [m]", "Position Y [m]", "Position Z [m]"], 
-           "Drone Position vs MPC Reference", ncols=3, use_tex=args.tex, block=block)
+           "Drone Position vs MPC Reference", ncols=3, use_tex=args.tex, block=block, fignum=1)
 
     # --- FIGURE 2: Orientation (RPY) ---
     fig_rpy_data = [
@@ -67,7 +75,7 @@ def main():
         {'sim': data['rpy'][:, 1], 'ref': data['pref_rpy'][:, 1]}
     ]
     myPlot(t, fig_rpy_data, ["Roll [rad]", "Pitch [rad]"], 
-           "Drone Orientation (Roll/Pitch) vs MPC Reference", ncols=2, use_tex=args.tex, block=block)
+           "Drone Orientation (Roll/Pitch) vs MPC Reference", ncols=2, use_tex=args.tex, block=block, fignum=2)
 
     # --- FIGURE 3: Velocities ---
     fig_vel_data = [
@@ -80,7 +88,7 @@ def main():
     ]
     myPlot(t, fig_vel_data, ["Vel X [m/s]", "Vel Y [m/s]", "Vel Z [m/s]", 
                   "Omega X [rad/s]", "Omega Y [rad/s]", "Omega Z [rad/s]"], 
-           "Drone Velocities vs MPC Reference", ncols=3, use_tex=args.tex, block=block)
+           "Drone Velocities vs MPC Reference", ncols=3, use_tex=args.tex, block=block, fignum=3)
 
     # --- FIGURE 4: PoV Orbiting & Orientation ---
     fig4_data = [
@@ -88,7 +96,7 @@ def main():
         {'sim': data['radius_real'], 'ref': data['online_ref'][:, 0]}
     ]
     myPlot(t, fig4_data, ["Pan Mutuo (Orbit) [rad]", "Mutual Distance (Xc) [m]"], 
-           "PoV Orbiting and Distance Tracking", ncols=2, use_tex=args.tex, block=block)
+           "PoV Orbiting and Distance Tracking", ncols=2, use_tex=args.tex, block=block, fignum=4)
 
     # --- FIGURE 5: Visual Servoing (Camera Frame) ---
     fig5_data = [
@@ -97,7 +105,7 @@ def main():
         {'sim': data['Zc'], 'ref': data['online_visual_ref'][:, 2]}
     ]
     myPlot(t, fig5_data, ["Xc (Depth/Zoom) [m]", "Yc (Horizontal Offset) [m]", "Zc (Vertical Offset) [m]"], 
-           "Visual Servoing: Target Position in Camera Frame", ncols=3, use_tex=args.tex, block=block)
+           "Visual Servoing: Target Position in Camera Frame", ncols=3, use_tex=args.tex, block=block, fignum=5)
 
     # --- FIGURE 6: Primary Tracking Errors (Position, Visual, Orientation) ---
     err_pos = np.linalg.norm(data['pos'][:, :2] - data['pref_pos'][:, :2], axis=1)
@@ -108,7 +116,7 @@ def main():
         {'sim': err_pos, 'ref': 0}, {'sim': err_vis, 'ref': 0}, {'sim': err_rp, 'ref': 0}
     ]
     myPlot(t, fig6_data, ["Norm Pos Error [m]", "Norm Visual Error [m]", "Norm Roll/Pitch Error"], 
-           "Primary Tracking Errors", ncols=3, use_tex=args.tex, block=block)
+           "Primary Tracking Errors", ncols=3, use_tex=args.tex, block=block, fignum=6)
 
     # --- FIGURE 7: Dynamic States Errors & Derivatives ---
     err_vel = np.linalg.norm(data['v'] - data['vref'], axis=1)
@@ -123,7 +131,7 @@ def main():
     ]
     myPlot(t, fig7_data, ["Norm Vel Error [m/s]", "Norm Omega Error [rad/s]", "Norm Acc [m/s^2]",
                "Norm AngAcc [rad/s^2]", "Norm Jerk [m/s^3]", "Norm Snap [m/s^4]"], 
-           "Dynamic States Errors and Derivatives", ncols=3, use_tex=args.tex, block=block)
+           "Dynamic States Errors and Derivatives", ncols=3, use_tex=args.tex, block=block, fignum=7)
 
     # --- FIGURE 8: Wrench ---
     fig8_data = [
@@ -133,7 +141,17 @@ def main():
         {'sim': data['wrench_cmd'][:, 3], 'ref': data['wrench_target'][:, 3]}
     ]
     myPlot(t, fig8_data, ["Force Z (Thrust) [N]", "Torque X [Nm]", "Torque Y [Nm]", "Torque Z [Nm]"], 
-           f"Control Wrench (Hover Force = {mass*g:.2f}N)", ncols=2, use_tex=args.tex, block=block)
+           f"Control Wrench (Hover Force = {mass*g:.2f}N)", ncols=2, use_tex=args.tex, block=block, fignum=8)
+
+    # --- FIGURE 9: Haptic Forces ---
+    if 'haptic_force' in data.files:
+        fig9_data = [
+            {'sim': data['haptic_force'][:, 0], 'ref': 0.0},
+            {'sim': data['haptic_force'][:, 1], 'ref': 0.0},
+            {'sim': data['haptic_force'][:, 2], 'ref': 0.0}
+        ]
+        myPlot(t, fig9_data, ["Force X (Zoom) [N]", "Force Y (Pan) [N]", "Force Z (Altitude) [N]"], 
+               "Haptic Feedback Forces Transmitted to Joystick", ncols=3, use_tex=args.tex, block=block, fignum=9)
 
     if args.save:
         for i in plt.get_fignums():
