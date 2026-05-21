@@ -146,7 +146,6 @@ class MpcPlannerNode(Node):
         zc_hand = -0.5
         scale_factor = 1.0
         self.final_target=np.array([xc_hand, yc_hand, zc_hand]) * scale_factor #aggiungere pan
-        self.integral_error = np.zeros(3)
 
         self.declare_parameter('control_flag',  1)  
         self.control_flag_val = self.get_parameter('control_flag').get_parameter_value().integer_value
@@ -327,15 +326,13 @@ class MpcPlannerNode(Node):
                     self.current_position[0], self.current_position[1], self.current_position[2],
                     self.current_raw_vel[0],  self.current_raw_vel[1],  self.current_raw_vel[2],
                     q_w, q_x, q_y, q_z,
-                    self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
-                    0.0, 0.0, 0.0 # Integral states
+                    self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2]
                 ])
                 self.x0_rpy = np.array([
                     self.current_position[0], self.current_position[1], self.current_position[2],
                     self.current_raw_vel[0],  self.current_raw_vel[1],  self.current_raw_vel[2],
                     self.current_rpy[0],      self.current_rpy[1],      self.current_rpy[2],
-                    self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
-                    0.0, 0.0, 0.0 # Integral states
+                    self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2]
                 ])
                 self.get_logger().info(f"Posa iniziale inizializzata da odometria: {self.current_position}")
                 self.first_odom_received = True 
@@ -388,9 +385,10 @@ class MpcPlannerNode(Node):
         Manual (Haptic/Joypad) e Traiettoria Autonoma per una transizione fluida.
         """
         now = self.get_clock().now()
-        dt_off = 0.2 # soglia di inattività (s)
+        # soglia di inattività (s): dopo dt_off si passa da riferimento manuale a autonomo
+        dt_off = 0.2 
 
-        # 1. Valutazione Haptic
+        # 1) Valutazione Haptic
         alpha_h = 1.0
         h_active = False
         if self.haptic_timestamp is not None:
@@ -401,7 +399,7 @@ class MpcPlannerNode(Node):
             else:
                 alpha_h = min(1.0, max(0.0, (dt_h - dt_off) / self.haptic_transition_duration))
 
-        # 2. Valutazione Joypad
+        # 2) Valutazione Joypad
         alpha_j = 1.0
         j_active = False
         if self.joy_timestamp is not None:
@@ -412,7 +410,7 @@ class MpcPlannerNode(Node):
             else:
                 alpha_j = min(1.0, max(0.0, (dt_j - dt_off) / self.joy_transition_duration))
 
-        # 3. Selezione del riferimento manuale (Haptic ha priorità)
+        # 3) Selezione del riferimento manuale (Haptic ha priorità)
         if h_active:
             alpha = 0.0
             manual_pov = self.haptic_pov
@@ -432,7 +430,7 @@ class MpcPlannerNode(Node):
                 manual_pov = self.joy_pov
                 manual_d_pov = self.joy_pov_dot
 
-        # 4. Riferimento Autonomo
+        # 4) Riferimento Autonomo
         auto_visual_ref = self.pov_target[0:3]
         auto_pan_target = self.pov_target[3]
 
@@ -441,15 +439,18 @@ class MpcPlannerNode(Node):
             manual_d_pov = np.zeros(4)
             alpha = 1.0
 
-        # 5. Interpolazione finale
+        # 5) Interpolazione finale
         visual_ref = (1 - alpha) * manual_pov[0:3] + alpha * auto_visual_ref
         
         p_obj_now = self.current_obj_pos
+        # pan : atan2(y-y_obj,x-x_obj)
         current_pan = np.arctan2(xk[1] - p_obj_now[1], xk[0] - p_obj_now[0])
+        # normalizzo angoli di pan (caso manuale e autonomo) in [-pi, pi]
         diff_m = (manual_pov[3] - current_pan + np.pi) % (2 * np.pi) - np.pi
         diff_a = (auto_pan_target - current_pan + np.pi) % (2 * np.pi) - np.pi
-        pan_target = current_pan + (1 - alpha) * diff_m + alpha * diff_a
 
+        # Interpolazione su pan e velocità relative comandate
+        pan_target = current_pan + (1 - alpha) * diff_m + alpha * diff_a
         d_pov = (1 - alpha) * manual_d_pov
 
         # Componente lineare (Xc, Yc, Zc) trasformata in mondo
@@ -458,11 +459,12 @@ class MpcPlannerNode(Node):
         R_world_cam = R_body_world @ R_cam_body
         v_linear_rel_world = R_world_cam @ d_pov[0:3]
         
-        # Componente di orbita (Pan) - velocità tangenziale
+        # Componente di orbita (Pan) - velocità tangenziale in mondo
         p_rel_xy = xk[0:2] - self.current_obj_pos[0:2]
         dist_xy = np.linalg.norm(p_rel_xy)
         v_orbit_world = np.zeros(3)
         if dist_xy > 0.1:
+            # segno - per far ruotare il drone in senso antiorario con un d_pov[3] (pan speed) > 0
             tangent = np.array([-p_rel_xy[1], p_rel_xy[0]]) / dist_xy
             v_orbit_world[0:2] = tangent * (dist_xy * d_pov[3])
         
@@ -474,9 +476,10 @@ class MpcPlannerNode(Node):
 
         # g0 importato da common.py
 
-        X = 4; Y = 2; Z = 2; V = 5.0; ANG = ca.pi
-        ANG_DOT = 3.0; ACC = 10.0; ACC_ANG = 11.0     
-        JERK = 20.0; SNAP = 200.0; INT = 3.0
+        X = 3; Y = 2; Z = 2; V = np.array([4.0, 4.0, 10.0]); PAN = ca.pi/2
+        RP_ANG = ca.pi/3; ANG_DOT = np.array([ca.pi/2, ca.pi/2, ca.pi])
+        ACC = np.array([5.0,5.0,2.0]); ACC_ANG = np.array([5.0,5.0,2.0])     
+        JERK = 20.0; SNAP = 200.0
         
         
         f_max = self.get_parameter('f_max').value
@@ -491,23 +494,21 @@ class MpcPlannerNode(Node):
 
 
         PesoVis = 100
-        PesoInt = PesoVis / 50  # Peso azione integrale
         PesoPan = PesoVis
-        PesoRot = PesoVis / 20
+        PesoRot = PesoVis / 100
         PesoVel = PesoVis / 2
-        PesoAngVel = PesoVel * 2
-        PesoAcc = PesoVel * 2
-        PesoAngAcc = PesoAngVel * 2
-        PesoJerk = PesoAcc
-        PesoSnap = PesoJerk 
-        PesoForce = PesoVis / 100
-        PesoTorque = PesoForce  
+        PesoAngVel = PesoVel /2
+        PesoAcc = PesoVel 
+        PesoAngAcc = PesoAngVel 
+        PesoJerk = PesoAcc / 2
+        PesoSnap = PesoJerk / 2
+        PesoForce = PesoVis / 500
+        PesoTorque = PesoForce * 2
 
-        Q_pan = np.diag([PesoPan]) / ANG**2
+        Q_pan = np.diag([PesoPan]) / PAN**2
         Q_visual = np.diag([PesoVis,PesoVis,PesoVis]) / np.array([X,Y,Z])**2 
-        Q_integral = np.diag([PesoInt, PesoInt, PesoInt]) / INT**2
         Q_vel = np.diag([PesoVel, PesoVel, PesoVel]) / V**2
-        Q_rot = np.diag([PesoRot, PesoRot]) / ANG**2  
+        Q_rot = np.diag([PesoRot, PesoRot]) / RP_ANG**2  
         
         Q_ang_dot = np.diag([PesoAngVel, PesoAngVel, PesoAngVel]) / ANG_DOT**2
         Q_acc = np.diag([PesoAcc, PesoAcc, PesoAcc]) / ACC**2
@@ -519,14 +520,14 @@ class MpcPlannerNode(Node):
         R_tau = ca.diagcat(PesoTorque / self.U_TAU_X**2, PesoTorque / self.U_TAU_Y**2, PesoTorque / self.U_TAU_Z**2)
         
         R = ca.diagcat(R_f, R_tau)
-        Q = ca.diagcat(Q_pan, Q_visual, Q_integral, Q_vel, Q_rot, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
+        Q = ca.diagcat(Q_pan, Q_visual, Q_vel, Q_rot, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
 
         # Definiamo i limiti fisici reali da passare al solver
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
         u_max = np.array([self.U_F, self.U_TAU_X, self.U_TAU_Y, self.U_TAU_Z]) 
 
         W   = ca.diagcat(Q, R).full()
-        W_e = 50* Q.full()
+        W_e = 5 * Q.full()
 
         rp_limit_rad = self.get_parameter('rp_limit').value * np.pi / 180.0
 
@@ -655,8 +656,7 @@ class MpcPlannerNode(Node):
                 self.current_position[0], self.current_position[1], self.current_position[2],
                 self.current_vel[0], self.current_vel[1], self.current_vel[2],
                 self.current_quat[0], self.current_quat[1], self.current_quat[2], self.current_quat[3],
-                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
-                self.integral_error[0],   self.integral_error[1],   self.integral_error[2]
+                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2]
             ])
             # Calcolo dei riferimenti (disaccoppiato dal solver)
             online_visual_ref, pan_target, vel_ref = self.get_current_ref(xk)
@@ -679,18 +679,9 @@ class MpcPlannerNode(Node):
             actual_pov_msg = Float64MultiArray()
             actual_pov_msg.data = [float(P_c[0]), float(P_c[1]), float(P_c[2]), float(actual_pan)]
             self.actual_pov_pub.publish(actual_pov_msg)
-            
-            # --- AGGIORNAMENTO INTEGRALE (FEEDBACK REALE) ---
-            # Ripristiniamo l'integrazione basata sull'errore misurato per eliminare l'errore a regime
-            error_vis = P_c - online_visual_ref
-            self.integral_error += error_vis * self.ts
-            # Nota: L'anti-windup ora è gestito internamente dai Soft Constraints di Acados,
-            # ma manteniamo un clip di sicurezza esterno per evitare overflow numerici estremi.
-            self.integral_error = np.clip(self.integral_error, -3.0, 3.0)
-
         
         try:
-            t_start = time.perf_counter() # questo è un wall time (non deve dipendere dal simulatore)
+            t_start = time.perf_counter() # questo è un wall time (non dipende dal simulatore)
             u0_new, x_seq_new, yref0, u_plan_new, x_plan_new = self.solve_MPC(xk, online_visual_ref, pan_target, vel_ref)
             t_end = time.perf_counter()
             
@@ -845,7 +836,8 @@ class MpcPlannerNode(Node):
             # Mappatura su norm_thrust [0, 1] considerando il range dell'airframe [w_min, w_max]
             norm_thrust = (w_target - w_min) / (w_max - w_min)   
             norm_thrust = max(0.0, min(1.0, norm_thrust))
-            
+            #norm_thrust = max(0.0, float(u0[0])/self.U_F)
+
             thrust_msg = VehicleThrustSetpoint()
             thrust_msg.timestamp = 0           # PX4 auto-compila con hrt_absolute_time()
             thrust_msg.timestamp_sample = 0    # PX4 auto-compila con hrt_absolute_time()

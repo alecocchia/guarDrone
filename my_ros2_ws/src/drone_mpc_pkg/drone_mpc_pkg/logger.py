@@ -37,7 +37,7 @@ class Logger(Node):
         self.declare_parameter('save_ref_flag', True)
         
         # Nuovi parametri per metadata
-        self.declare_parameter('mass', 2.0)
+        self.declare_parameter('mass', 2.064)
         self.declare_parameter('cam_x', 0.0)
         self.declare_parameter('cam_y', 0.0)
         self.declare_parameter('cam_z', 0.0)

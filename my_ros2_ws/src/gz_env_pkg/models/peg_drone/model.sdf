@@ -1,7 +1,7 @@
 <?xml version="1.0" ?>
 <sdf version="1.9">
   <model name="peg_drone">
-    <static>true</static>
+    <static>false</static>
     <!-- Includiamo l'x500 originale. merge=true fonde i modelli nello stesso namespace dei link -->
     <include merge="true">
       <uri>model://x500</uri>
@@ -9,13 +9,16 @@
 
     <!-- Aggiungiamo il link del PEG -->
     <link name="peg_link">
-      <gravity>false</gravity>
+      <gravity>true</gravity>
       <inertial>
         <mass>0.1</mass>
+        <!-- Inerzia corretta per cilindro solido: m=0.1, r=0.02, l=1.0
+             Ixx = Iyy = m/12*(3r^2 + l^2) ≈ 0.00834
+             Izz = m/2*r^2 = 0.00002 -->
         <inertia>
-          <ixx>0.001</ixx><ixy>0</ixy><ixz>0</ixz>
-          <iyy>0.001</iyy><iyz>0</iyz>
-          <izz>0.0001</izz>
+          <ixx>0.00834</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>0.00834</iyy><iyz>0</iyz>
+          <izz>0.00002</izz>
         </inertia>
       </inertial>
       <collision name="peg_collision">
@@ -43,35 +46,37 @@
       <pose>0.5 0 -0.05 0 1.5708 0</pose>
     </link>
 
-    <!-- Giunto fisso per tenere il peg attaccato al drone -->
-    <joint name="peg_joint" type="fixed">
+    <!-- Giunto universale: simula peg "non ben poggiato" con oscillazione su 2 assi -->
+    <joint name="peg_joint" type="universal">
       <parent>base_link</parent>
       <child>peg_link</child>
+      <axis>
+        <xyz>1 0 0</xyz>
+        <limit>
+          <lower>-0.2618</lower>  <!-- -15 deg -->
+          <upper>0.2618</upper>   <!-- +15 deg -->
+        </limit>
+        <dynamics>
+          <damping>0.1</damping>
+          <spring_stiffness>2.0</spring_stiffness>
+        </dynamics>
+      </axis>
+      <axis2>
+        <xyz>0 1 0</xyz>
+        <limit>
+          <lower>-0.2618</lower>  <!-- -15 deg -->
+          <upper>0.2618</upper>   <!-- +15 deg -->
+        </limit>
+        <dynamics>
+          <damping>0.1</damping>
+          <spring_stiffness>2.0</spring_stiffness>
+        </dynamics>
+      </axis2>
     </joint>
 
-    <!-- Plugin per il controllo della posa (lo stesso che usavi per il peg) -->
-    <plugin
-      filename="libpeg_pose_gz_plugin.so"
-      name="gz_env_pkg::SetPegPosePlugin">
-    </plugin>
-
-    <!-- Plugin per far girare le eliche (solo effetto visivo) -->
-    <plugin filename="gz-sim-joint-controller-system" name="gz::sim::systems::JointController">
-      <joint_name>rotor_0_joint</joint_name>
-      <sub_topic>rotor_0_cmd</sub_topic>
-    </plugin>
-    <plugin filename="gz-sim-joint-controller-system" name="gz::sim::systems::JointController">
-      <joint_name>rotor_1_joint</joint_name>
-      <sub_topic>rotor_1_cmd</sub_topic>
-    </plugin>
-    <plugin filename="gz-sim-joint-controller-system" name="gz::sim::systems::JointController">
-      <joint_name>rotor_2_joint</joint_name>
-      <sub_topic>rotor_2_cmd</sub_topic>
-    </plugin>
-    <plugin filename="gz-sim-joint-controller-system" name="gz::sim::systems::JointController">
-      <joint_name>rotor_3_joint</joint_name>
-      <sub_topic>rotor_3_cmd</sub_topic>
-    </plugin>
+    <!-- I motori sono gestiti dai plugin MulticopterMotorModel dell'x500 (merge=true) -->
+    <!-- Il plugin SetPegPosePlugin e i JointController visivi sono stati rimossi -->
 
   </model>
+
 </sdf>

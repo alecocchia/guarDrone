@@ -68,13 +68,28 @@ def generate_launch_description():
         output='screen'
     )
 
-    # Comando per far girare le eliche (solo effetto visivo)
-    spin_propellers_cmd = ExecuteProcess(
-        cmd=['gz topic -t /model/my_peg_drone/rotor_0_cmd -m gz.msgs.Double -p "data: 50.0" && '
-             'gz topic -t /model/my_peg_drone/rotor_1_cmd -m gz.msgs.Double -p "data: 50.0" && '
-             'gz topic -t /model/my_peg_drone/rotor_2_cmd -m gz.msgs.Double -p "data: -50.0" && '
-             'gz topic -t /model/my_peg_drone/rotor_3_cmd -m gz.msgs.Double -p "data: -50.0"'],
-        shell=True,
+    # --- PX4 SITL per il peg-drone (instance 1) ---
+    # Lancia una seconda istanza PX4 che si aggancia al modello 'my_peg_drone' in Gazebo.
+    # Usa PX4_GZ_MODEL_NAME per agganciare un modello gia' spawnato.
+    # -i 1 imposta l'instance number (porta MAVLink, ecc.)
+    # UXRCE_DDS_NS=px4_peg namespace per separare i topic DDS dal drone principale.
+    px4_autopilot_dir = '/root/PX4-Autopilot'
+    px4_build_dir = os.path.join(px4_autopilot_dir, 'build', 'px4_sitl_default')
+
+    launch_px4_peg = ExecuteProcess(
+        cmd=[
+            os.path.join(px4_build_dir, 'bin', 'px4'),
+            os.path.join(px4_build_dir, 'etc'),
+            '-s', 'etc/init.d-posix/rcS',
+            '-i', '1',
+            '-w', '/tmp/px4_sitl_peg',
+        ],
+        additional_env={
+            'PX4_GZ_MODEL_NAME': 'my_peg_drone',
+            'PX4_SYS_AUTOSTART': '4001',       # Airframe x500
+            'PX4_UXRCE_DDS_NS': 'px4_peg',     # Namespace DDS per separare i topic
+        },
+        cwd=px4_autopilot_dir,
         output='screen'
     )
 
@@ -85,5 +100,6 @@ def generate_launch_description():
         declare_world_arg,
         #gazebo_cmd,
         spawn_peg_node,
-        # TimerAction(period=10.0, actions=[spin_propellers_cmd])
+        # Lanciamo PX4 per il peg-drone 5s dopo lo spawn per dare tempo a Gazebo
+        TimerAction(period=5.0, actions=[launch_px4_peg]),
     ])

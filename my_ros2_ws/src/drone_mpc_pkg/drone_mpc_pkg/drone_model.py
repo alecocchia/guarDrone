@@ -32,12 +32,6 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset, camera_rpy) -> A
     wx, wy, wz = ca.SX.sym('wx'), ca.SX.sym('wy'), ca.SX.sym('wz')
     w = ca.vertcat(wx, wy, wz)
 
-    # Integral states (position error in camera frame)
-    ix = ca.SX.sym('ix')
-    iy = ca.SX.sym('iy')
-    iz = ca.SX.sym('iz')
-    xi = ca.vertcat(ix, iy, iz)
-
     # Inputs (generalized forces) in body frame
     Fz = ca.SX.sym('Fz')
     tau_x = ca.SX.sym('tau_x')
@@ -61,7 +55,7 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset, camera_rpy) -> A
     cam_off = ca.DM(camera_offset).reshape((3,1))
     R_cam_body = RPY_to_R(camera_rpy[0], camera_rpy[1], camera_rpy[2])
 
-    # Camera projection inside the model for integral action
+    # Camera projection inside the model 
     p_cam = p + Rb @ cam_off
     p_rel_world = p_obj_sym - p_cam
     P_c = R_cam_body.T @ Rb.T @ p_rel_world
@@ -72,14 +66,11 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset, camera_rpy) -> A
     q_dot = 0.5 * ca.mtimes(omega_matrix(w), q)
     J_inv = ca.inv(J)
     w_dot = ca.mtimes(J_inv, (ca.vertcat(tau_x, tau_y, tau_z) - ca.cross(w, ca.mtimes(J, w))))
-    # Integrator: xi_dot = error
-    xi_dot = (P_c - visual_ref_sym) 
-
     # Compose state and xdot
-    x = ca.vertcat(p, v, q, w, xi)
+    x = ca.vertcat(p, v, q, w)
     xdot = ca.SX.sym('xdot', x.shape)
 
-    f_expl = ca.vertcat(p_dot, v_dot, q_dot, w_dot, xi_dot)
+    f_expl = ca.vertcat(p_dot, v_dot, q_dot, w_dot)
     f_impl = xdot - f_expl
 
     # Define model
@@ -101,8 +92,7 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset, camera_rpy) -> A
         r'$x$', r'$y$', r'$z$',
         r'$v_x$', r'$v_y$', r'$v_z$',
         r'$q_w$', r'$q_x$', r'$q_y$', r'$q_z$',
-        r'$\omega_x$', r'$\omega_y$', r'$\omega_z$',
-        r'$i_x$', r'$i_y$', r'$i_z$'
+        r'$\omega_x$', r'$\omega_y$', r'$\omega_z$'
     ]
     model.u_labels = [r'$F_z$', r'$\tau_x$', r'$\tau_y$', r'$\tau_z$']
     model.t_label = '$t$ [s]'

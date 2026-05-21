@@ -36,7 +36,7 @@ class HumanGoalNode(Node):
         self.joy_ref_pub = self.create_publisher(Float64MultiArray, '/joy_ref', 1)
 
         # FIX 1: Inizializzato con coordinate PoV: [Xc, Yc, Zc, Pan_mutuo]
-        self.current_pov_ref = [2.0, 0.0, 0.0, 0.0]  
+        self.current_pov_ref = [4.0, 0.0, 0.0, 0.0]  
         self.joy_active = False
         self.axes = [0.0] * 8
         self.buttons = [0] * 15
@@ -61,6 +61,7 @@ class HumanGoalNode(Node):
     def keyboard_ref_cb(self, msg: Float64MultiArray):
         if not self.joy_active and len(msg.data) >= 4:
             self.current_pov_ref = [msg.data[0], msg.data[1], msg.data[2], msg.data[3]]
+            self.publish_goal()
 
     def actual_pov_cb(self, msg: Float64MultiArray):
         # Memorizziamo la posa reale attuale
@@ -94,8 +95,7 @@ class HumanGoalNode(Node):
         self.last_joy_active = self.joy_active
 
         if not self.joy_active:
-            # Se il joypad non è attivo, pubblichiamo solo il target autonomo su /pov_target
-            self.publish_goal()
+            # Se il joypad non è attivo, non pubblichiamo nulla!
             return
 
         # Toggle Task Phase with button 0 (es. 'A' o 'Cross')
@@ -110,9 +110,11 @@ class HumanGoalNode(Node):
                     self.get_logger().info("Task Phase INACTIVE: Framing centrato")
                     self.current_pov_ref[1] = 0.0
                     self.current_pov_ref[0] = 2.0
+                self.publish_goal()
             self.last_button_state = self.buttons[0]
 
         # Comandi Joypad (velocità desiderate)
+        print_axes_or_something = False # non usato
         pan_vel  = self.axes[0] * self.v_pan_max
         zc_vel   = self.axes[1] * self.v_zc_max
         xc_vel   = self.axes[3] * self.v_xc_max
@@ -140,9 +142,6 @@ class HumanGoalNode(Node):
             float(self.joy_pov_dot[0]), float(self.joy_pov_dot[1]), float(self.joy_pov_dot[2]), float(self.joy_pov_dot[3])
         ]
         self.joy_ref_pub.publish(joy_msg)
-
-        # Continuiamo a pubblicare l'autonomo su /pov_target
-        self.publish_goal()
 
     def publish_goal(self):
         msg = Float64MultiArray()

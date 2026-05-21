@@ -17,8 +17,8 @@ public:
   : Node("fd_haptic_joy_node")
   {
     // Parametri molla aptica
-    this->declare_parameter("k_spring", 50.0);    // Aumentato per un ritorno più deciso (da 40)
-    this->declare_parameter("b_damping", 5.0);    // Coefficiente di smorzamento viscoso virtuale
+    this->declare_parameter("k_spring", 50.0);    // Aumentato per un ritorno più forte (da 40)
+    this->declare_parameter("b_damping", 10.0);    // Coefficiente di smorzamento viscoso virtuale
     this->declare_parameter("max_force", 15.0);    // Limite hardware
     this->declare_parameter("deadband", 0.005);    
     this->declare_parameter("joy_scale", 15.0);    
@@ -33,8 +33,8 @@ public:
     this->declare_parameter("fov_h", 80.0);         
     this->declare_parameter("fov_v", 60.0);         
     this->declare_parameter("x_min_safety", 1.5);   
-    this->declare_parameter("k_repulsive", 1.0); // costante elastica del campo repulsivo
-    this->declare_parameter("alpha", 0.1); // esponente del campo repulsivo che definisce la forma dell'esponenziale
+    this->declare_parameter("k_repulsive", 10.0); // costante elastica del campo repulsivo
+    this->declare_parameter("alpha", 0.1 ); // esponente del campo repulsivo che definisce la forma dell'esponenziale
     this->declare_parameter("activation_ratio", 0.1); // Inizia a sentirsi prima (act_ratio%)
     this->declare_parameter("max_repulsive_force", 15.0); // Aumentato limite repulsione
 
@@ -142,6 +142,7 @@ private:
   void control_loop()
   {
     double k = this->get_parameter("k_spring").as_double();
+    double alpha = this->get_parameter("alpha").as_double();
     double b = this->get_parameter("b_damping").as_double();
     double max_f = this->get_parameter("max_force").as_double();
     double deadband = this->get_parameter("deadband").as_double();

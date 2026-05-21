@@ -257,7 +257,11 @@ def launch_setup(context, *args, **kwargs):
 
     peg_planner = Node(
         package='drone_mpc_pkg', executable='peg_planner_node.py', name='peg_planner_node',
-        parameters=[{'use_sim_time': True, 'peg_start_x': peg_x, 'peg_start_y': peg_y, 'peg_start_z': peg_z}],
+        parameters=[{
+            'use_sim_time': True,
+            'peg_start_x': peg_x, 'peg_start_y': peg_y, 'peg_start_z': peg_z,
+            'px4_ns': 'px4_peg',
+        }],
         condition=IfCondition(PythonExpression([f"'{planner_mode}' in ['1', '2']"]))
     )
 
