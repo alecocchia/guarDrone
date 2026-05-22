@@ -495,14 +495,14 @@ class MpcPlannerNode(Node):
 
         PesoVis = 100
         PesoPan = PesoVis
-        PesoRot = PesoVis / 100
+        PesoRot = PesoVis / 200
         PesoVel = PesoVis / 2
-        PesoAngVel = PesoVel /2
-        PesoAcc = PesoVel 
-        PesoAngAcc = PesoAngVel 
-        PesoJerk = PesoAcc / 2
-        PesoSnap = PesoJerk / 2
-        PesoForce = PesoVis / 500
+        PesoAngVel = PesoVel
+        PesoAcc = PesoVel / 5
+        PesoAngAcc = PesoAngVel /2
+        PesoJerk = PesoAcc / 5
+        PesoSnap = PesoJerk 
+        PesoForce = PesoVis / 1000
         PesoTorque = PesoForce * 2
 
         Q_pan = np.diag([PesoPan]) / PAN**2

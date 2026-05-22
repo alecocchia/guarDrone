@@ -61,7 +61,7 @@ tmux send-keys -t $SESSION_NAME:0.3 "source install/setup.bash" C-m
 tmux send-keys -t $SESSION_NAME:0.3 "clear" C-m
 
 # 5. BILANCIAMENTO E ATTACCO
-# Forza i 4 quadranti a essere uguali
+# Bilancia il layout per 3 riquadri
 tmux select-layout -t $SESSION_NAME:0 tiled
 # Entra nella sessione
 tmux attach-session -t $SESSION_NAME
