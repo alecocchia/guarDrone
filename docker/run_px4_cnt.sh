@@ -28,9 +28,21 @@ GZ_ENVIRONMENT_PKG=gz_env_pkg	# cambiare se cambia il nome del package per il se
 
 echo "---------------------------------------------------"
 
+# === INIZIO BLOCCO CONTROLLO INTELLIGENTE GPU ===
+GPU_FLAGS=""
+if command -v nvidia-smi &> /dev/null; then
+    echo "[INFO] GPU NVIDIA rilevata. Abilito il supporto hardware in Docker."
+    GPU_FLAGS="--gpus all --env=NVIDIA_VISIBLE_DEVICES=all --env=NVIDIA_DRIVER_CAPABILITIES=all"
+else
+    echo "[INFO] Nessuna GPU NVIDIA rilevata o driver mancanti. Avvio in modalità CPU."
+fi
+# === FINE BLOCCO CONTROLLO INTELLIGENTE GPU ===
+
+echo "---------------------------------------------------"
+
 # Run docker and open bash shell
 docker run --rm -it --privileged \
---gpus all \
+$GPU_FLAGS \
 -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
 -v "/dev:/dev" \
 -v "${HOST_GUARDRONE_DIR}/.git:/root/.git:ro" \
@@ -38,8 +50,6 @@ docker run --rm -it --privileged \
 -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/src:/root/my_ros2_ws/src:rw" \
 -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/SimulationScripts:/root/my_ros2_ws/SimulationScripts:rw" \
 --env="DISPLAY=$DISPLAY" \
---env="NVIDIA_VISIBLE_DEVICES=all" \
---env="NVIDIA_DRIVER_CAPABILITIES=all" \
 -e ROS_DOMAIN_ID=14 \
 -e XDG_RUNTIME_DIR="/tmp/runtime-root" \
 -e PX4_GZ_MODELS="/root/PX4-Autopilot/Tools/simulation/gz/models" \
