@@ -32,6 +32,12 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset, camera_rpy) -> A
     wx, wy, wz = ca.SX.sym('wx'), ca.SX.sym('wy'), ca.SX.sym('wz')
     w = ca.vertcat(wx, wy, wz)
 
+    # Disturbance state: unmodeled acceleration in world frame [m/s^2]
+    # d absorbs: camera weight error, drag, wind, any constant force / mass
+    # Estimated online by the Luenberger observer in MPC_planner_node.py
+    dx, dy, dz = ca.SX.sym('dx'), ca.SX.sym('dy'), ca.SX.sym('dz')
+    d = ca.vertcat(dx, dy, dz)
+
     # Inputs (generalized forces) in body frame
     Fz = ca.SX.sym('Fz')
     tau_x = ca.SX.sym('tau_x')
@@ -62,15 +68,18 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset, camera_rpy) -> A
 
     # Equations of motion (ODEs)
     p_dot = v
-    v_dot = (1/m) * (ca.mtimes(Rb, ca.vertcat(0, 0, Fz))) - g
+    # v_dot: nominal thrust + gravity + disturbance (estimated by Luenberger observer)
+    v_dot = (1/m) * (ca.mtimes(Rb, ca.vertcat(0, 0, Fz))) - g + d
     q_dot = 0.5 * ca.mtimes(omega_matrix(w), q)
     J_inv = ca.inv(J)
     w_dot = ca.mtimes(J_inv, (ca.vertcat(tau_x, tau_y, tau_z) - ca.cross(w, ca.mtimes(J, w))))
-    # Compose state and xdot
-    x = ca.vertcat(p, v, q, w)
+    # Disturbance dynamics: assumed constant over prediction horizon
+    d_dot = ca.SX.zeros(3)
+    # Compose augmented state [p, v, q, w, d] (16 states)
+    x = ca.vertcat(p, v, q, w, d)
     xdot = ca.SX.sym('xdot', x.shape)
 
-    f_expl = ca.vertcat(p_dot, v_dot, q_dot, w_dot)
+    f_expl = ca.vertcat(p_dot, v_dot, q_dot, w_dot, d_dot)
     f_impl = xdot - f_expl
 
     # Define model
@@ -92,7 +101,8 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset, camera_rpy) -> A
         r'$x$', r'$y$', r'$z$',
         r'$v_x$', r'$v_y$', r'$v_z$',
         r'$q_w$', r'$q_x$', r'$q_y$', r'$q_z$',
-        r'$\omega_x$', r'$\omega_y$', r'$\omega_z$'
+        r'$\omega_x$', r'$\omega_y$', r'$\omega_z$',
+        r'$d_x$', r'$d_y$', r'$d_z$',          # disturbance states
     ]
     model.u_labels = [r'$F_z$', r'$\tau_x$', r'$\tau_y$', r'$\tau_z$']
     model.t_label = '$t$ [s]'

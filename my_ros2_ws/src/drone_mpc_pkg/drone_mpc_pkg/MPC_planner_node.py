@@ -125,9 +125,17 @@ class MpcPlannerNode(Node):
         self.u_prev = None
         self.x_prev = None
         self.last_u0 = None
+        self.last_u0_applied = None  # Controllo effettivamente inviato al drone al passo precedente
         self.px4_odom_timestamp_us = 0   # Timestamp corrente dall'odometria PX4 (µs)
         self.last_odom_timestamp_us = 0  # Ultimo timestamp processato dal control loop (µs)
         self.armed_counter = 0           # Contatore per attendere il decollo effettivo
+
+        # === Osservatore di Luenberger per la stima del disturbo ===
+        # d_hat: stima corrente dell'accelerazione non modellata [m/s^2] nel frame world (ENU)
+        # Esempi di disturbi catturati: peso camera non modellato, drag, vento costante
+        self.d_hat = np.zeros(3)
+        self.v_prev = np.zeros(3)     # velocità al passo precedente per calcolo a_meas
+        self.observer_gain = 0.05     # L: guadagno osservatore (~0.5 Hz bandwidth a 100 Hz)
 
         self.current_obj_pos = np.zeros(3)
         self.current_obj_vel = np.zeros(3)
@@ -326,7 +334,8 @@ class MpcPlannerNode(Node):
                     self.current_position[0], self.current_position[1], self.current_position[2],
                     self.current_raw_vel[0],  self.current_raw_vel[1],  self.current_raw_vel[2],
                     q_w, q_x, q_y, q_z,
-                    self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2]
+                    self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
+                    0.0, 0.0, 0.0  # d = [0,0,0] iniziale (disturbo non ancora stimato)
                 ])
                 self.x0_rpy = np.array([
                     self.current_position[0], self.current_position[1], self.current_position[2],
@@ -334,6 +343,7 @@ class MpcPlannerNode(Node):
                     self.current_rpy[0],      self.current_rpy[1],      self.current_rpy[2],
                     self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2]
                 ])
+                self.v_prev = self.current_raw_vel.copy()  # Inizializziamo v_prev
                 self.get_logger().info(f"Posa iniziale inizializzata da odometria: {self.current_position}")
                 self.first_odom_received = True 
 
@@ -472,6 +482,57 @@ class MpcPlannerNode(Node):
 
         return visual_ref, pan_target, vel_ref
 
+    # ==================== Osservatore di Luenberger ====================
+
+    def update_disturbance_observer(self):
+        """
+        Stima l'accelerazione di disturbo non modellata d_hat ∈ R³ [m/s²] nel frame ENU.
+
+        Principio:
+          a_meas  = (v_k - v_{k-1}) / ts            (accelerazione misurata)
+          a_pred  = R @ [0,0,Fz] / m - [0,0,g]      (accelerazione predetta dal modello)
+          innovation = a_meas - a_pred               (residuo: forza non spiegata)
+          d_hat  ← (1-L)*d_hat + L*innovation       (filtro passa-basso / Luenberger)
+
+        Nota: il guadagno L controlla la bandwidth:
+          - L piccolo (0.02): convergenza lenta, robusto al rumore di velocità
+          - L grande (0.1):   convergenza rapida, sensibile al rumore di velocità
+        """
+        # Sicurezza: senza controllo precedente noto, non aggiorniamo
+        if self.last_u0_applied is None:
+            self.v_prev = self.current_vel.copy()
+            return
+
+        # 1) Accelerazione misurata (derivata numerica della velocità)
+        a_meas = (self.current_vel - self.v_prev) / self.ts
+
+        # 2) Accelerazione predetta dal modello nominale
+        #    Usiamo la rotazione corrente (errore trascurabile a 100 Hz)
+        R = Rotation.from_quat([
+            self.current_quat[1], self.current_quat[2],
+            self.current_quat[3], self.current_quat[0]   # scipy: [x,y,z,w]
+        ]).as_matrix()
+        Fz_prev = self.last_u0_applied[0]
+        a_pred = R @ np.array([0.0, 0.0, Fz_prev]) / self.mass - np.array([0.0, 0.0, g0])
+
+        # 3) Aggiornamento Luenberger (filtro IIR del primo ordine)
+        innovation = a_meas - a_pred
+        L = self.observer_gain
+        self.d_hat = (1.0 - L) * self.d_hat + L * innovation
+
+        # 4) Limita il disturbo a valori fisicamente plausibili
+        D_MAX = 5.0  # [m/s^2] — coerente con il bound nel solver
+        self.d_hat = np.clip(self.d_hat, -D_MAX, D_MAX)
+
+        # 5) Aggiorna la velocità precedente per il prossimo step
+        self.v_prev = self.current_vel.copy()
+
+        self.get_logger().debug(
+            f"[DObs] d_hat=[{self.d_hat[0]:.3f},{self.d_hat[1]:.3f},{self.d_hat[2]:.3f}] m/s² "
+            f"| inno=[{innovation[0]:.3f},{innovation[1]:.3f},{innovation[2]:.3f}]",
+            throttle_duration_sec=1.0
+        )
+
     def configure_mpc(self):
 
         # g0 importato da common.py
@@ -495,7 +556,7 @@ class MpcPlannerNode(Node):
 
         PesoVis = 100
         PesoPan = PesoVis
-        PesoRot = PesoVis / 200
+        PesoRot = PesoVis / 50
         PesoVel = PesoVis / 2
         PesoAngVel = PesoVel
         PesoAcc = PesoVel / 5
@@ -652,11 +713,18 @@ class MpcPlannerNode(Node):
             
             self.R = Rotation.from_euler('xyz',self.current_rpy).as_matrix()
             self.current_vel[:] = self.current_raw_vel[:]
+
+            # === Aggiornamento osservatore di Luenberger ===
+            # Deve essere chiamato PRIMA di costruire xk per usare la stima aggiornata
+            self.update_disturbance_observer()
+
+            # Costruzione dello stato aumentato [p, v, q, w, d] (16 componenti)
             xk = np.array([
                 self.current_position[0], self.current_position[1], self.current_position[2],
                 self.current_vel[0], self.current_vel[1], self.current_vel[2],
                 self.current_quat[0], self.current_quat[1], self.current_quat[2], self.current_quat[3],
-                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2]
+                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
+                self.d_hat[0], self.d_hat[1], self.d_hat[2]  # stima disturbo (Luenberger)
             ])
             # Calcolo dei riferimenti (disaccoppiato dal solver)
             online_visual_ref, pan_target, vel_ref = self.get_current_ref(xk)
@@ -813,6 +881,9 @@ class MpcPlannerNode(Node):
         self.single_twist_pub.publish(twist_msg)
 
     def publish_optimal_wrench(self, u0) :
+        # Aggiorna il controllo applicato per l'osservatore di Luenberger
+        self.last_u0_applied = np.array(u0, dtype=float)
+
         # FIX LOGGER: Pubblichiamo sempre il wrench calcolato per passarlo al logger
         wrench_msg = Wrench()
         wrench_msg.force.z = float(u0[0])

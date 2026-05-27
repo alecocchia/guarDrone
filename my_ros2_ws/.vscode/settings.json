@@ -36,5 +36,6 @@
         "/home/usainbot/IsaacLab/_isaac_sim/exts/omni.pip.cloud/pip_prebundle",
         "/home/usainbot/Desktop/vittcammarota/isaac_drone_racer",
         "/home/usainbot/Desktop/vittcammarota/isaac_drone_racer"
-    ]
+    ],
+    "ROS2.distro": "noetic"
 }
