@@ -104,7 +104,7 @@ class MpcPlannerNode(Node):
         self.x0, self.x0_rpy = setup_initial_conditions(start_x,start_y,start_z,start_roll,start_pitch,start_yaw)
         # === Tempo/Orizzonte ===
         self.ts = 0.01             # 100 Hz
-        self.N_horiz = 50          # Orizzonte di predizione (numero di campioni)
+        self.N_horiz = 80          # Orizzonte di predizione (numero di campioni)
         self.Tp = self.N_horiz * self.ts  # Tempo totale dell'orizzonte 
         self.ts_peg = 0.005
 
@@ -148,7 +148,9 @@ class MpcPlannerNode(Node):
         self.haptic_transition_duration = self.get_parameter('haptic_transition_duration').value
 
         # Target visivo di default (PoV: Xc, Yc, Zc, Pan)
-        self.pov_target = np.array([2.0, 0.0, 0.0, np.pi/2])
+        self.pan_target = np.pi/2
+        self.radius_target = 3.0
+        self.pov_target = np.array([self.radius_target, 0.0, 0.0, self.pan_target])
         xc_hand = 0.5
         yc_hand = -0.3
         zc_hand = -0.5
@@ -157,6 +159,9 @@ class MpcPlannerNode(Node):
 
         self.declare_parameter('control_flag',  1)  
         self.control_flag_val = self.get_parameter('control_flag').get_parameter_value().integer_value
+
+        self.declare_parameter('use_disturbance_observer', True)
+        self.use_disturbance_observer = self.get_parameter('use_disturbance_observer').get_parameter_value().bool_value
         
         # --- PUBLISHERS COMANDI E PX4 INTEGRATION ---
         self.is_armed = False      
@@ -537,10 +542,10 @@ class MpcPlannerNode(Node):
 
         # g0 importato da common.py
 
-        X = 3; Y = 2; Z = 2; V = np.array([4.0, 4.0, 10.0]); PAN = ca.pi/2
-        RP_ANG = ca.pi/3; ANG_DOT = np.array([ca.pi/2, ca.pi/2, ca.pi])
-        ACC = np.array([5.0,5.0,2.0]); ACC_ANG = np.array([5.0,5.0,2.0])     
-        JERK = 20.0; SNAP = 200.0
+        X = 1; Y = 3; Z = 3; V = np.array([1, 1, 1.5]); PAN = ca.pi/3
+        RP_ANG = 0.1; ANG_DOT = np.array([0.5, 0.5, 1.5])
+        ACC = np.array([2.0, 2.0, 4.0]); ACC_ANG = np.array([2.0,2.0,8.0])     
+        JERK = 10.0; SNAP = 200.0
         
         
         f_max = self.get_parameter('f_max').value
@@ -556,20 +561,20 @@ class MpcPlannerNode(Node):
 
         PesoVis = 100
         PesoPan = PesoVis
-        PesoRot = PesoVis / 50
-        PesoVel = PesoVis / 2
-        PesoAngVel = PesoVel
+        #PesoRot = PesoVis / 500
+        PesoVel = PesoVis / 3
+        PesoAngVel = PesoVel / 2
         PesoAcc = PesoVel / 5
-        PesoAngAcc = PesoAngVel /2
-        PesoJerk = PesoAcc / 5
-        PesoSnap = PesoJerk 
+        PesoAngAcc = PesoAngVel / 2
+        PesoJerk = PesoAcc / 50
+        PesoSnap = PesoJerk / 2
         PesoForce = PesoVis / 1000
         PesoTorque = PesoForce * 2
 
         Q_pan = np.diag([PesoPan]) / PAN**2
         Q_visual = np.diag([PesoVis,PesoVis,PesoVis]) / np.array([X,Y,Z])**2 
         Q_vel = np.diag([PesoVel, PesoVel, PesoVel]) / V**2
-        Q_rot = np.diag([PesoRot, PesoRot]) / RP_ANG**2  
+        #Q_rot = np.diag([PesoRot, PesoRot]) / RP_ANG**2  
         
         Q_ang_dot = np.diag([PesoAngVel, PesoAngVel, PesoAngVel]) / ANG_DOT**2
         Q_acc = np.diag([PesoAcc, PesoAcc, PesoAcc]) / ACC**2
@@ -581,14 +586,18 @@ class MpcPlannerNode(Node):
         R_tau = ca.diagcat(PesoTorque / self.U_TAU_X**2, PesoTorque / self.U_TAU_Y**2, PesoTorque / self.U_TAU_Z**2)
         
         R = ca.diagcat(R_f, R_tau)
-        Q = ca.diagcat(Q_pan, Q_visual, Q_vel, Q_rot, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
+        Q = ca.diagcat(Q_pan, Q_visual, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
+        Q_visual_e = np.diag([2*PesoVis,2*PesoVis,2*PesoVis]) / np.array([X,Y,Z])**2 
+        Q_pan_e = np.diag([2*PesoPan]) / PAN**2
+
+        Q_e = ca.diagcat(Q_pan_e, Q_visual_e, 2*Q_vel, 2*Q_ang_dot, 2*Q_acc, 2*Q_acc_ang)
 
         # Definiamo i limiti fisici reali da passare al solver
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
         u_max = np.array([self.U_F, self.U_TAU_X, self.U_TAU_Y, self.U_TAU_Z]) 
 
         W   = ca.diagcat(Q, R).full()
-        W_e = 5 * Q.full()
+        W_e = Q_e.full()
 
         rp_limit_rad = self.get_parameter('rp_limit').value * np.pi / 180.0
 
@@ -716,7 +725,11 @@ class MpcPlannerNode(Node):
 
             # === Aggiornamento osservatore di Luenberger ===
             # Deve essere chiamato PRIMA di costruire xk per usare la stima aggiornata
-            self.update_disturbance_observer()
+            if self.use_disturbance_observer:
+                self.update_disturbance_observer()
+            else:
+                self.d_hat = np.zeros(3)  # osservatore disattivato: disturbo forzato a zero
+                self.v_prev = self.current_vel.copy()  # aggiorna v_prev per non accumulare errori se riattivato
 
             # Costruzione dello stato aumentato [p, v, q, w, d] (16 componenti)
             xk = np.array([
@@ -724,7 +737,7 @@ class MpcPlannerNode(Node):
                 self.current_vel[0], self.current_vel[1], self.current_vel[2],
                 self.current_quat[0], self.current_quat[1], self.current_quat[2], self.current_quat[3],
                 self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
-                self.d_hat[0], self.d_hat[1], self.d_hat[2]  # stima disturbo (Luenberger)
+                self.d_hat[0], self.d_hat[1], self.d_hat[2]  # stima disturbo (Luenberger o zero)
             ])
             # Calcolo dei riferimenti (disaccoppiato dal solver)
             online_visual_ref, pan_target, vel_ref = self.get_current_ref(xk)
@@ -825,7 +838,7 @@ class MpcPlannerNode(Node):
     def publish_vehicle_command(self, command, param1=0.0, param2=0.0):
         msg = VehicleCommand()
         msg.command = command
-        msg.param1 = float(param1)
+        msg.param1 = float(param1)  
         msg.param2 = float(param2)
         msg.target_system = 1
         msg.target_component = 1

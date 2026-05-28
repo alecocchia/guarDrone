@@ -153,6 +153,20 @@ def main():
         myPlot(t, fig9_data, ["Force X (Zoom) [N]", "Force Y (Pan) [N]", "Force Z (Altitude) [N]"], 
                "Haptic Feedback Forces Transmitted to Joystick", ncols=3, use_tex=args.tex, block=block, fignum=9)
 
+    # --- FIGURE 10: Individual Linear and Angular Accelerations ---
+    fig10_data = [
+        {'sim': data['acc'][:, 0], 'ref': 0.0},
+        {'sim': data['acc'][:, 1], 'ref': 0.0},
+        {'sim': data['acc'][:, 2], 'ref': 0.0},
+        {'sim': data['ang_acc'][:, 0], 'ref': 0.0},
+        {'sim': data['ang_acc'][:, 1], 'ref': 0.0},
+        {'sim': data['ang_acc'][:, 2], 'ref': 0.0}
+    ]
+    myPlot(t, fig10_data, 
+           ["Linear Acc X [m/s^2]", "Linear Acc Y [m/s^2]", "Linear Acc Z [m/s^2]", 
+            "Angular Acc X [rad/s^2]", "Angular Acc Y [rad/s^2]", "Angular Acc Z [rad/s^2]"], 
+           "Drone Linear and Angular Accelerations", ncols=3, use_tex=args.tex, block=block, fignum=10)
+
     if args.save:
         for i in plt.get_fignums():
             plt.figure(i).savefig(f"plot_fig_{i}.png")

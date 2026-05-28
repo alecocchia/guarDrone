@@ -14,7 +14,7 @@ def build_yref_online(y_idx, visual_ref, vel_ref, u_ref=np.zeros(4)):
     yref = np.zeros(y_idx["u"].stop) 
     yref[y_idx["pan"]]     = 0.0                    # Errore di pan centrato in 0 (gestito da min_angle nel modello)
     yref[y_idx["vel"]]     = vel_ref
-    yref[y_idx["rp"]]      = np.array([0,0])        # X_c, Y_c (posizione dell'oggetto rispetto alla camera, nella terna camera)
+    #yref[y_idx["rp"]]      = np.array([0,0])        # X_c, Y_c (posizione dell'oggetto rispetto alla camera, nella terna camera)
     yref[y_idx["visual"]]  = visual_ref
     yref[y_idx["ang_vel"]] = np.array([0,0,0])
     yref[y_idx["acc"]]     = np.array([0,0,0])
@@ -166,6 +166,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     #########################################################################################################
     
     u_hovering = ca.DM([m*g0, 0, 0, 0])
+    #u_hovering = ca.DM.zeros(4, 1)
     acc_hover = ca.substitute(acc_expr, model.u, u_hovering)
     acc_ang_hover = ca.substitute(acc_ang_expr, model.u, u_hovering)
     j_hover = ca.substitute(j_expr, model.u, u_hovering)
@@ -229,7 +230,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     # [Visx4, dist_sicurezza, roll, pitch]
     penalty_L1 = 1e-2
     penalty_L2 = 1e-1
-    weights_costs = np.array([1, 1, 1, 1, 1e2, 1, 1])
+    weights_costs = np.array([1, 1, 1, 1, 1e4, 1e0, 1e0])
 
     ocp.cost.Zl = penalty_L2 * weights_costs
     ocp.cost.Zu = penalty_L2 * weights_costs
@@ -248,8 +249,8 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
         Y_c,                            # Posizione Y dell'oggetto rispetto alla camera
         Z_c,                            # Posizione Z dell'oggetto rispetto alla camera
         v_expr,                         # velocity
-        roll,                           # Roll
-        pitch,                          # Pitch
+        #roll,                           # Roll
+        #pitch,                          # Pitch
         ang_vel,                        # Euler rates (non è vero, ora sono velocità angolari)
         acc_expr,                       # acceleration
         acc_ang_expr,                   # angular acceleration
@@ -265,13 +266,13 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
         Y_c,
         Z_c,
         v_expr,                         # velocity
-        roll,
-        pitch,                         
+        #roll,
+        #pitch,                         
         ang_vel,                        # Euler rates
         acc_hover,                      # acceleration
         acc_ang_hover,
-        j_hover,                        # jerk
-        s_hover,                        # snap
+        #j_hover,                        # jerk
+        #s_hover,                        # snap
     )
     
     ocp.cost.cost_type = 'NONLINEAR_LS'
@@ -295,7 +296,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     '''
     
     # Definition of constant references
-    rp_ref = np.array([0,0]) #roll and pitch refs
+    #rp_ref = np.array([0,0]) #roll and pitch refs
     ang_vel_ref = np.array([0,0,0])
     acc_ref=np.array([0,0,0])
     acc_ang_ref = np.array([0,0,0])
@@ -308,8 +309,8 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     pan_ind = slice(0,1) # pan
     visual_ind = slice(pan_ind.stop,pan_ind.stop+3) # X_c, Y_c, Z_c
     vel_ind = slice(visual_ind.stop, visual_ind.stop+3)
-    rp_ind = slice(vel_ind.stop, vel_ind.stop+2)
-    ang_vel_ind = slice(rp_ind.stop,rp_ind.stop+3)
+    #rp_ind = slice(vel_ind.stop, vel_ind.stop+2)
+    ang_vel_ind = slice(vel_ind.stop,vel_ind.stop+3)
     acc_ind = slice(ang_vel_ind.stop,ang_vel_ind.stop+3)
     acc_ang_ind = slice(acc_ind.stop,acc_ind.stop+3)
     jerk_ind = slice(acc_ang_ind.stop,acc_ang_ind.stop+3)   
@@ -320,7 +321,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
         "pan": pan_ind,
         "visual": visual_ind,
         "vel": vel_ind,
-        "rp": rp_ind,
+        #"rp": rp_ind,
         "ang_vel": ang_vel_ind,
         "acc": acc_ind,
         "acc_ang": acc_ang_ind,
@@ -328,8 +329,8 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
         "snap": snap_ind,
         "u": u_ind,
     }
-    ny   = y_idx["u"].stop   
-    ny_e = y_idx["u"].start  
+    ny   = y_expr.numel  
+    ny_e = y_expr_e.numel()  # dimensione effettiva del vettore terminale
     
     yref = np.zeros(y_expr.numel())
     yref_e = np.zeros(y_expr_e.numel())
@@ -338,7 +339,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     yref[pan_ind]= 0.0                  # L'errore di pan è già gestito nel modello (distanza minima da p[9])
     yref[visual_ind]=visual_ref
     yref[vel_ind]=vel_ref
-    yref[rp_ind]= rp_ref
+    #yref[rp_ind]= rp_ref
     yref[ang_vel_ind]= ang_vel_ref
     yref[acc_ind]=acc_ref
     yref[acc_ang_ind]=acc_ang_ref
