@@ -54,8 +54,7 @@ def setup_initial_conditions(start_x,start_y,start_z,start_phi,start_theta,start
     wy=0
     wz=0
 
-    x0 = np.array([xx,y,z,vx,vy,vz,qw,qx,qy,qz,wx,wy,wz,
-                    0.0, 0.0, 0.0])  # d = [0,0,0] iniziale (16 stati totali)
+    x0 = np.array([xx,y,z,vx,vy,vz,qw,qx,qy,qz,wx,wy,wz])  # 13 stati totali
     x0_rpy=np.array([xx,y,z,vx,vy,vz,roll,pitch,yaw,wx,wy,wz])
     return x0,x0_rpy
 
@@ -181,12 +180,9 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     
     # Vincoli sullo stato:
     # - Z (hard): idx 2 → drone non va sotto il suolo
-    # - d (box fisico): idx 13,14,15 → max disturbo = ±5 m/s² (~0.5g)
-    #   Questo evita che il solver ottimizzi su valori di disturbo non fisici
-    D_MAX = 5.0  # [m/s^2]
-    ocp.constraints.idxbx = np.array([2, 13, 14, 15])
-    ocp.constraints.lbx = np.array([-1.0, -D_MAX, -D_MAX, -D_MAX])
-    ocp.constraints.ubx = np.array([100.0,  D_MAX,  D_MAX,  D_MAX])
+    ocp.constraints.idxbx = np.array([2])
+    ocp.constraints.lbx = np.array([-1.0])
+    ocp.constraints.ubx = np.array([100.0])
 
     # Vincoli sugli ingressi (Spinta e Coppie)
     # Ora usiamo i parametri passati dinamicamente dal nodo per coerenza fisica

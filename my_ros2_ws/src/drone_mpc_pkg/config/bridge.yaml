@@ -1,24 +1,70 @@
-# Il peg-drone è ora controllato direttamente da PX4 via DDS.
-# Non serve più il bridge ROS→GZ per /peg_pose.
+# Configurazione Bridge ROS 2 <-> Gazebo per Simulazione Multi-Drone (Ispezione ed Interazione)
 
-# 1. CLOCK (Fondamentale per sincronizzare ROS 2 con il tempo della simulazione)
+# ==========================================
+# 1. CLOCK (Sincronizzazione temporale globale)
+# ==========================================
 - ros_topic_name: "/clock"
   gz_topic_name: "/clock"
   ros_type_name: "rosgraph_msgs/msg/Clock"
   gz_type_name: "gz.msgs.Clock"
   direction: GZ_TO_ROS
 
-# 2. SENSORI ESTERNI (Camera drone - Non gestita dal flight controller)
+# ==========================================
+# 2. DRONE 1: x500_depth (Controllato con MPC - Camera)
+# ==========================================
+# Camera Info
 - ros_topic_name: "/camera/camera_info"
-  gz_topic_name: "/world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/camera_info"
+  gz_topic_name: "/world/bridge_inspection_gazebo/model/x500_depth_0/link/camera_link/sensor/IMX214/camera_info"
   ros_type_name: "sensor_msgs/msg/CameraInfo"
   gz_type_name: "gz.msgs.CameraInfo"
   direction: GZ_TO_ROS
   qos_profile: SENSOR_DATA
 
+# Camera Image
 - ros_topic_name: "/camera/image"
-  gz_topic_name: "/world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image"
+  gz_topic_name: "/world/bridge_inspection_gazebo/model/x500_depth_0/link/camera_link/sensor/IMX214/image"
   ros_type_name: "sensor_msgs/msg/Image"
   gz_type_name: "gz.msgs.Image"
   direction: GZ_TO_ROS
   qos_profile: SENSOR_DATA
+
+# ==========================================
+# 3. DRONE 2: x500_interaction (PX4 Position Control)
+# ==========================================
+# Configurato sia per l'istanza _0 che _1 per prevenire errori legati all'ordine di spawn!
+
+# --- Sensore di Contatto ---
+# Se spawnato per primo (x500_interaction_0)
+- ros_topic_name: "/world/interaction/model/x500_interaction_0/link/end_eff_sens/sensor/contact_tl/contact"
+  gz_topic_name: "/world/bridge_inspection_gazebo/model/x500_interaction_0/link/end_eff_sens/sensor/contact_tl/contact"
+  ros_type_name: "ros_gz_interfaces/msg/Contacts"
+  gz_type_name: "gz.msgs.Contacts"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/world/interaction/model/x500_interaction_0/link/end_eff_sens/sensor/contact_tl/contact"
+  gz_topic_name: "/world/interaction/model/x500_interaction_0/link/end_eff_sens/sensor/contact_tl/contact"
+  ros_type_name: "ros_gz_interfaces/msg/Contacts"
+  gz_type_name: "gz.msgs.Contacts"
+  direction: GZ_TO_ROS
+
+# Se spawnato per secondo (x500_interaction_1)
+- ros_topic_name: "/world/interaction/model/x500_interaction_1/link/end_eff_sens/sensor/contact_tl/contact"
+  gz_topic_name: "/world/bridge_inspection_gazebo/model/x500_interaction_1/link/end_eff_sens/sensor/contact_tl/contact"
+  ros_type_name: "ros_gz_interfaces/msg/Contacts"
+  gz_type_name: "gz.msgs.Contacts"
+  direction: GZ_TO_ROS
+
+# --- Sensore Force/Torque (Wrench) ---
+# Se spawnato per primo (x500_interaction_0)
+- ros_topic_name: "/world/interaction/model/x500_interaction_0/joint/end_eff_sens_joint/force_torque"
+  gz_topic_name: "/world/interaction/model/x500_interaction_0/joint/end_eff_sens_joint/force_torque"
+  ros_type_name: "geometry_msgs/msg/Wrench"
+  gz_type_name: "gz.msgs.Wrench"
+  direction: GZ_TO_ROS
+
+# Se spawnato per secondo (x500_interaction_1)
+- ros_topic_name: "/world/interaction/model/x500_interaction_1/joint/end_eff_sens_joint/force_torque"
+  gz_topic_name: "/world/interaction/model/x500_interaction_1/joint/end_eff_sens_joint/force_torque"
+  ros_type_name: "geometry_msgs/msg/Wrench"
+  gz_type_name: "gz.msgs.Wrench"
+  direction: GZ_TO_ROS

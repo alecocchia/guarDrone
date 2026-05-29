@@ -260,7 +260,7 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{
             'use_sim_time': True,
             'peg_start_x': peg_x, 'peg_start_y': peg_y, 'peg_start_z': peg_z,
-            'px4_ns': 'px4_peg',
+            'px4_ns': 'px4_1',  # Namespace DDS del drone x500_interaction (UXRCE_DDS_NS=px4_1)
         }],
         condition=IfCondition(PythonExpression([f"'{planner_mode}' in ['1', '2']"]))
     )
@@ -290,11 +290,14 @@ def launch_setup(context, *args, **kwargs):
     ]
 
 def generate_launch_description():
-    env_pkg_dir = get_package_share_directory('gz_env_pkg')
-    
+    # NOTA: il mondo Gazebo e il drone x500_interaction vengono lanciati
+    # separatamente tramite run_my_sim.sh (make px4_sitl), NON da qui.
+    # Questo launch si occupa solo dei nodi ROS 2.
     declared_arguments = [
-        DeclareLaunchArgument('model', default_value='x500'),
-        DeclareLaunchArgument('planner_mode', default_value='1'),
+        DeclareLaunchArgument('model', default_value='x500_depth',
+                              description='Modello Gazebo del drone MPC (es. x500_depth)'),
+        DeclareLaunchArgument('planner_mode', default_value='1',
+                              description='1: MPC+planner, 2: solo planner (PX4 position control)'),
         DeclareLaunchArgument('MPC_controller', default_value='1'),
         DeclareLaunchArgument('controller', default_value='2'),
         DeclareLaunchArgument('enable_rviz', default_value='true'),
@@ -303,29 +306,14 @@ def generate_launch_description():
         DeclareLaunchArgument('drone_y', default_value='0.0'),
         DeclareLaunchArgument('drone_z', default_value='0.0'),
         DeclareLaunchArgument('drone_yaw', default_value='1.5708'),
+        # Posa target per il drone di interazione (passata a peg_planner_node)
         DeclareLaunchArgument('peg_x', default_value='3.0'),
         DeclareLaunchArgument('peg_y', default_value='3.0'),
         DeclareLaunchArgument('peg_z', default_value='0.2'),
         DeclareLaunchArgument('cf', default_value='8.0e-4'),
         DeclareLaunchArgument('ct', default_value='1.0e-5'),
-        DeclareLaunchArgument('world', default_value='default.sdf', description='Nome del mondo SDF da caricare'),
     ]
 
-    peg_x = LaunchConfiguration('peg_x')
-    peg_y = LaunchConfiguration('peg_y')
-    peg_z = LaunchConfiguration('peg_z')
-
-    spawn_environment = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(env_pkg_dir, 'launch', 'px4_gz.launch.py')),
-        launch_arguments={
-            'world': LaunchConfiguration('world'),
-            'peg_x': peg_x,
-            'peg_y': peg_y,
-            'peg_z': peg_z
-        }.items()
-    )
-
     return LaunchDescription(declared_arguments + [
-        spawn_environment,
         OpaqueFunction(function=launch_setup)
     ])
