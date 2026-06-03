@@ -61,6 +61,9 @@ class MpcPlannerNode(Node):
         self.declare_parameter('start_roll', 0.0)
         self.declare_parameter('start_pitch', 0.0)
         self.declare_parameter('start_yaw', 0.0)
+        self.declare_parameter('peg_x', 0.0)
+        self.declare_parameter('peg_y', 0.0)
+        self.declare_parameter('peg_z', 0.0)
         self.declare_parameter('cam_x',0.0)
         self.declare_parameter('cam_y',0.0)
         self.declare_parameter('cam_z',0.0)
@@ -84,6 +87,11 @@ class MpcPlannerNode(Node):
         start_roll = self.get_parameter('start_roll').value
         start_pitch = self.get_parameter('start_pitch').value
         start_yaw = self.get_parameter('start_yaw').value
+        self.peg_offset = np.array([
+            self.get_parameter('peg_x').value,
+            self.get_parameter('peg_y').value,
+            self.get_parameter('peg_z').value
+        ])
         cam_x = self.get_parameter('cam_x').value
         cam_y = self.get_parameter('cam_y').value
         cam_z = self.get_parameter('cam_z').value
@@ -181,7 +189,6 @@ class MpcPlannerNode(Node):
             self.thrust_pub = self.create_publisher(VehicleThrustSetpoint, '/fmu/in/vehicle_thrust_setpoint', 1)
             self.torque_pub = self.create_publisher(VehicleTorqueSetpoint, '/fmu/in/vehicle_torque_setpoint', 1)
             self.offboard_control_mode_publisher = self.create_publisher(OffboardControlMode, '/fmu/in/offboard_control_mode', 1)
-            self.vehicle_command_publisher = self.create_publisher(VehicleCommand, '/fmu/in/vehicle_command', 1)
         else:
             self.get_logger().info("MPC pubblica Wrench standard su: /optimal_wrench")
 
@@ -202,7 +209,7 @@ class MpcPlannerNode(Node):
         self.optimal_path_pub = self.create_publisher(Path, '/optimal_drone_path', qos_latched)
 
         self.peg_odom_subscription = self.create_subscription(
-            Odometry, '/peg_odom', self.peg_odom_callback, qos_latched, callback_group=self.callback_group)
+            VehicleOdometry, '/px4_1/fmu/out/vehicle_odometry', self.peg_odom_callback, px4_qos_profile, callback_group=self.callback_group)
         
 
         self.odom_subscription = self.create_subscription(
@@ -211,6 +218,7 @@ class MpcPlannerNode(Node):
 
         self.single_pose_pub  = self.create_publisher(PoseStamped,  '/optimal_drone_pose',  1)
         self.drone_pose_pub   = self.create_publisher(PoseStamped,  '/drone_pose',          1) # <--- Per RViz
+        self.peg_pose_pub     = self.create_publisher(PoseStamped,  '/peg_pose',            1) # <--- Per RViz (Peg)
         self.single_twist_pub = self.create_publisher(TwistStamped, '/optimal_drone_twist', 1)
         self.vel_ref_pub      = self.create_publisher(TwistStamped, '/velocity_reference',  1)
         self.tf_broadcaster   = tf2_ros.TransformBroadcaster(self)
@@ -242,14 +250,34 @@ class MpcPlannerNode(Node):
             Bool, '/mpc_task/start', self.bt_start_callback, 10, callback_group=self.callback_group)
         self.bt_status_pub = self.create_publisher(String, '/mpc_task/status', 10)
 
+        self.thrust_out_sub = self.create_subscription(
+            VehicleThrustSetpoint,
+            '/fmu/out/vehicle_thrust_setpoint',
+            self.thrust_out_cb,
+            px4_qos_profile,
+            callback_group=self.callback_group
+        )
+        self.torque_out_sub = self.create_subscription(
+            VehicleTorqueSetpoint,
+            '/fmu/out/vehicle_torque_setpoint',
+            self.torque_out_cb,
+            px4_qos_profile,
+            callback_group=self.callback_group
+        )
+
+        self.current_px4_thrust = np.zeros(3)
+        self.current_px4_torque = np.zeros(3)
+        self.safety_switch_passed = False
+
         self.get_logger().info("MPC Node avviato. In attesa...")
 
     # ==================== Callbacks I/O ====================
 
     def bt_start_callback(self, msg: Bool):
         if msg.data == True:
-            self.get_logger().info("Ricevuto comando dal Behavior Tree: Inizio MPC Task!")
+            self.get_logger().info("Ricevuto comando dal Behavior Tree / Supervisor: Inizio MPC Task!")
             self.bt_task_running = True
+            self.task_started = True
             self.planner_configure()
 
     def control_mode_callback(self, msg: VehicleControlMode):
@@ -257,14 +285,56 @@ class MpcPlannerNode(Node):
             self.is_armed = msg.flag_armed
             self.is_offboard = msg.flag_control_offboard_enabled
 
-    def peg_odom_callback(self, msg: Odometry):
+    def peg_odom_callback(self, msg: VehicleOdometry):
+        # Quaternione PX4: rappresenta R_frd2ned (body FRD → world NED)
+        q_scipy = [msg.q[1], msg.q[2], msg.q[3], msg.q[0]] 
+        R_frd2ned = Rotation.from_quat(q_scipy).as_matrix()
+
+        # Matrici fisse di conversione frame
+        M_ned2enu = np.array([[0.0, 1.0, 0.0], 
+                              [1.0, 0.0, 0.0], 
+                              [0.0, 0.0, -1.0]])
+                              
+        M_frd2flu = np.array([[1.0, 0.0, 0.0], 
+                              [0.0, -1.0, 0.0], 
+                              [0.0, 0.0, -1.0]])
+
+        R_flu2enu = M_ned2enu @ R_frd2ned @ M_frd2flu
+        rot_flu2enu = Rotation.from_matrix(R_flu2enu)
+        
         with self.state_lock:
-            self.current_obj_pos = np.array([msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z])
-            self.current_obj_vel = np.array([msg.twist.twist.linear.x, msg.twist.twist.linear.y, msg.twist.twist.linear.z])
-            self.current_obj_ang_vel = np.array([msg.twist.twist.angular.x, msg.twist.twist.angular.y, msg.twist.twist.angular.z])
-            q = msg.pose.pose.orientation
-            self.current_obj_rpy = np.squeeze(np.array(quat_to_RPY([q.w, q.x, q.y, q.z])))
+            # Posizione: NED → ENU con offset
+            pos_enu = M_ned2enu @ np.array([msg.position[0], msg.position[1], msg.position[2]])
+            self.current_obj_pos = pos_enu + self.peg_offset
+            
+            # Velocità: NED → ENU
+            self.current_obj_vel[:] = M_ned2enu @ np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]])
+            
+            # Velocità angolare: FRD → FLU
+            self.current_obj_ang_vel[:] = M_frd2flu @ np.array([msg.angular_velocity[0], msg.angular_velocity[1], msg.angular_velocity[2]])
+            
+            # Orientamento in RPY
+            self.current_obj_rpy[:] = rot_flu2enu.as_euler('xyz')
+            
             self.obj_state_received = True
+
+        # --- Pubblica /peg_pose per RViz ---
+        peg_pose_msg = PoseStamped()
+        peg_pose_msg.header.stamp = self.get_clock().now().to_msg()
+        peg_pose_msg.header.frame_id = 'world'
+        peg_pose_msg.pose.position.x = float(self.current_obj_pos[0])
+        peg_pose_msg.pose.position.y = float(self.current_obj_pos[1])
+        peg_pose_msg.pose.position.z = float(self.current_obj_pos[2])
+        
+        # Scipy quaternion to msg orientation (w is at index 3 in as_quat, but as_quat returns x,y,z,w?)
+        # rot_flu2enu.as_quat() restituisce [x, y, z, w]
+        q_flu = rot_flu2enu.as_quat()
+        peg_pose_msg.pose.orientation.x = float(q_flu[0])
+        peg_pose_msg.pose.orientation.y = float(q_flu[1])
+        peg_pose_msg.pose.orientation.z = float(q_flu[2])
+        peg_pose_msg.pose.orientation.w = float(q_flu[3])
+        
+        self.peg_pose_pub.publish(peg_pose_msg)
 
 
     def planner_configure(self):
@@ -275,8 +345,7 @@ class MpcPlannerNode(Node):
             # prima configurazione dell' MPC
             self.configure_mpc()
             
-            # se questo nodo viene usato solo come planner allora è pronto e può partire già
-            if self.control_flag_val != 1 and not self.planner_ready_published:
+            if not self.planner_ready_published:
                 self.ready_publisher.publish(Bool(data=True))
                 self.planner_ready_published = True
 
@@ -293,6 +362,17 @@ class MpcPlannerNode(Node):
         # Il timer è già stato avviato in peg_path_callback
         self.destroy_subscription(self.start_subscription)
 
+
+    def thrust_out_cb(self, msg):
+        # I valori in uscita da PX4 sono normalizzati [-1, 1]. In NED, Z=-1 significa full thrust verso l'alto.
+        self.current_px4_thrust[0] = msg.xyz[0] * self.U_F
+        self.current_px4_thrust[1] = msg.xyz[1] * self.U_F
+        self.current_px4_thrust[2] = -msg.xyz[2] * self.U_F
+
+    def torque_out_cb(self, msg):
+        self.current_px4_torque[0] = msg.xyz[0] * self.U_TAU_X
+        self.current_px4_torque[1] = msg.xyz[1] * self.U_TAU_Y
+        self.current_px4_torque[2] = msg.xyz[2] * self.U_TAU_Z
 
     def odom_callback(self, msg: VehicleOdometry):
         # Quaternione PX4: rappresenta R_frd2ned (body FRD → world NED)
@@ -319,6 +399,10 @@ class MpcPlannerNode(Node):
         with self.state_lock:
             # Posizione: NED → ENU (M_ned2enu @ [N,E,D] = [E,N,-D])
             self.current_position[:] = M_ned2enu @ np.array([msg.position[0], msg.position[1], msg.position[2]])
+            # Aggiungiamo lo spawn offset per posizionare il drone globalmente (fix RViz e Planner)
+            self.current_position[0] += self.get_parameter('start_x').value
+            self.current_position[1] += self.get_parameter('start_y').value
+            self.current_position[2] += self.get_parameter('start_z').value
 
             # Assegnazione all'MPC (che si aspetta [w, x, y, z])
             q_w = q_flu2enu[3]
@@ -652,11 +736,22 @@ class MpcPlannerNode(Node):
             ready = self.acados_solver_ready
 
         if not ready:
+            self.get_logger().info("Compilazione MPC in corso...", throttle_duration_sec=5.0)
             self.planner_configure()
+            return
+
+        # Il decollo è gestito da offboard_trajectory_planner.
+        # L'MPC aspetta silente finché il supervisor non pubblica /mpc_task/start
+        if not getattr(self, 'task_started', False):
             return
 
         # --- LOGICA HOLD AND SHIFT ---
         with self.state_lock:
+            if not getattr(self, 'safety_switch_passed', False):
+                # Eseguiamo un solve fittizio per calcolare u0 senza applicarlo
+                pass # prosegue sotto, ma lo intercettiamo prima del publish
+
+
             if self.solver_is_running:
                 if hasattr(self, 'u_plan') and len(self.u_plan) > 1:
                     self.u_plan = np.roll(self.u_plan, -1, axis=0)
@@ -731,6 +826,22 @@ class MpcPlannerNode(Node):
                 next_x = self.x_plan[1]
                 self.solver_is_running = False
 
+            # Safe Switch Check
+            if not getattr(self, 'safety_switch_passed', False):
+                u_px4 = np.array([self.current_px4_thrust[2], self.current_px4_torque[0], self.current_px4_torque[1], self.current_px4_torque[2]])
+                
+                # Se non riceviamo dati da PX4, usiamo hover come fallback
+                if self.current_px4_thrust[2] == 0.0:
+                    u_px4 = self.u_hover
+                    
+                err_u = np.linalg.norm(u0 - u_px4)
+                if err_u < 5.0: # Soglia tolleranza Newton/Nm
+                    self.get_logger().info(f"Safe Switch OK! (err_u = {err_u:.2f}). L'MPC prende il controllo di PX4!")
+                    self.safety_switch_passed = True
+                else:
+                    self.get_logger().warn(f"Safe Switch FALLITO. (err_u = {err_u:.2f} > 5.0). Attendo convergenza MPC...", throttle_duration_sec=1.0)
+                    return
+
             self.publish_optimal_wrench(u0)
             self.publish_pose_and_twist(next_x)
 
@@ -778,36 +889,7 @@ class MpcPlannerNode(Node):
         msg.timestamp = 0  # PX4 auto-compila con hrt_absolute_time()
         self.offboard_control_mode_publisher.publish(msg)
 
-    def publish_vehicle_command(self, command, param1=0.0, param2=0.0):
-        msg = VehicleCommand()
-        msg.command = command
-        msg.param1 = float(param1)  
-        msg.param2 = float(param2)
-        msg.target_system = 1
-        msg.target_component = 1
-        msg.source_system = 1
-        msg.source_component = 1
-        msg.from_external = True
-        msg.timestamp = 0  # PX4 auto-compila con hrt_absolute_time()
-        self.vehicle_command_publisher.publish(msg)
-
-    def manage_offboard_state(self):
-        self.startup_counter += 1
-        if self.startup_counter < 200:
-            return
-            
-        if self.startup_counter % 10 == 0:
-            if not self.is_offboard:
-                self.get_logger().info("Setpoints stabili! Richiesta Offboard a PX4...")
-                self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
-            elif not self.is_armed:
-                self.get_logger().info("Siamo in Offboard! Armamento motori...")
-                self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
-            else:
-                if not self.planner_ready_published:
-                    self.get_logger().info("Decollo completato e quota raggiunta! Inizio inseguimento dinamico.")
-                    self.ready_publisher.publish(Bool(data=True))
-                    self.planner_ready_published = True
+    # (manage_offboard_state rimosso perché delegato al supervisor)
 
     # ==================== Pubblicazione ====================
 
@@ -886,9 +968,6 @@ class MpcPlannerNode(Node):
             torque_msg.xyz[1] = -float(np.clip((u0[2]/self.U_TAU_Y),-1.0, 1.0))
             torque_msg.xyz[2] = -float(np.clip((u0[3]/self.U_TAU_Z),-1.0, 1.0))
             self.torque_pub.publish(torque_msg)
-
-            self.manage_offboard_state()
-            
         else:
             self.single_wrench_pub.publish(wrench_msg)
 

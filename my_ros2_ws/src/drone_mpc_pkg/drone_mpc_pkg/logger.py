@@ -41,6 +41,9 @@ class Logger(Node):
         self.declare_parameter('cam_x', 0.0)
         self.declare_parameter('cam_y', 0.0)
         self.declare_parameter('cam_z', 0.0)
+        self.declare_parameter('start_x', 0.0)
+        self.declare_parameter('start_y', 0.0)
+        self.declare_parameter('start_z', 0.0)
 
         self.save_path = self.get_parameter('save_path').value
         self.log_hz    = float(self.get_parameter('log_hz').value)
@@ -52,6 +55,11 @@ class Logger(Node):
             self.get_parameter('cam_x').value,
             self.get_parameter('cam_y').value,
             self.get_parameter('cam_z').value
+        ])
+        self.start_offset = np.array([
+            self.get_parameter('start_x').value,
+            self.get_parameter('start_y').value,
+            self.get_parameter('start_z').value
         ])
 
         self.logging_enabled = False
@@ -184,7 +192,7 @@ class Logger(Node):
         M_frd2flu = np.array([[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, -1.0]])
 
         # Posizione e Velocità: ENU = M_ned2enu @ NED
-        pos = (M_ned2enu @ raw_pos.T).T
+        pos = (M_ned2enu @ raw_pos.T).T + self.start_offset
         v = (M_ned2enu @ raw_v.T).T
         omega = (M_frd2flu @ raw_omega.T).T
 

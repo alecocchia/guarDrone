@@ -27,11 +27,11 @@ ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   ${PROJECT_NAME}/human_goal_node.py
   ${PROJECT_NAME}/MPC_planner_node.py
-  ${PROJECT_NAME}/peg_planner_node.py
+  ${PROJECT_NAME}/offboard_trajectory_planner.py
   ${PROJECT_NAME}/logger.py
   ${PROJECT_NAME}/geometric_controller.py
   ${PROJECT_NAME}/PID_controller.py
-  # Se hai altri file che lanci come nodi (es. logger.py), aggiungili qui
+  ${PROJECT_NAME}/supervisor.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

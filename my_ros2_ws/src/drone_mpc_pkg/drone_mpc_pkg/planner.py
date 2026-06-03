@@ -3,78 +3,74 @@ import casadi as ca
 import numpy as np
 
 
-def generate_trapezoidal_trajectory(x0, x_ref, t0, tf, dt, v_max=1.0, a_max=1.0):
+def generate_trapezoidal_trajectory(x0, x_ref, dt, v_max=1.0, a_max=2.0):
     """
-    Genera una traiettoria p(t), rpy(t) con profilo trapezoidale lungo p_f - p_in e interpolazione lineare in rpy.
+    Genera una traiettoria p(t), rpy(t) con profilo trapezoidale lungo la distanza L.
+    Il tempo totale T è calcolato in base alla cinematica (v_max, a_max).
     
     Args:
-        p_in: posizione iniziale (3,)
-        p_f: posizione finale (3,)
-        rpy_in: rotazione iniziale in RPY (3,)
-        rpy_f: rotazione finale in RPY (3,)
-        t0: tempo iniziale
-        tf: tempo finale
-        dt: passo di campionamento
-        v_max: velocità massima normalizzata lungo la curvilinea s
-        a_max: accelerazione massima normalizzata lungo s
+        x0: stato iniziale [x, y, z, roll, pitch, yaw]
+        x_ref: stato finale [x, y, z, roll, pitch, yaw]
+        dt: passo di campionamento (es. 0.02s per 50Hz)
+        v_max: velocità massima [m/s]
+        a_max: accelerazione massima [m/s^2]
         
     Returns:
-        Trajectory: oggetto contenente t_vec, p_func(t), rpy_func(t)
+        t_vec: array dei tempi
+        p_vals: array delle posizioni (N, 3)
+        rpy_vals: array degli angoli di eulero (N, 3)
     """
+    p_in = np.array(x0[0:3])
+    rpy_in = np.array(x0[3:6])
+    p_f = np.array(x_ref[0:3])
+    rpy_f = np.array(x_ref[3:6])
 
-    p_in=x0[0:3]
-    rpy_in=x0[3:6]
-    p_f=x_ref[0:3]
-    rpy_f=x_ref[3:6]
-
-    dp = np.array(p_f) - np.array(p_in)
+    dp = p_f - p_in
     L = np.linalg.norm(dp)
-    if L == 0:
-        raise ValueError("Punti iniziale e finale coincidenti.")
+    
+    # Se i punti sono troppo vicini, ritorna solo il punto finale
+    if L < 1e-4:
+        return np.array([0.0]), np.array([p_f]), np.array([rpy_f])
 
-    # Tempo
-    t_vec = np.arange(t0, tf + dt, dt)
-    T = tf - t0
-    t_sym = ca.SX.sym('t')
-
-    # Trapezoidal profile s(t)
+    # Calcolo tempi cinematici
     t_ramp = v_max / a_max
-    if T < 2 * t_ramp:
-        t_ramp = T / 2
+    d_ramp = 0.5 * a_max * t_ramp**2
+
+    if L >= 2 * d_ramp:
+        # Profilo Trapezoidale (raggiunge v_max)
+        t_coast = (L - 2 * d_ramp) / v_max
+        T = 2 * t_ramp + t_coast
+    else:
+        # Profilo Triangolare (non raggiunge v_max)
+        t_ramp = np.sqrt(L / a_max)
         v_max = a_max * t_ramp
+        t_coast = 0.0
+        T = 2 * t_ramp
 
-    def s_trapezoid_expr(t):
-        s1 = 0.5 * a_max * t_ramp**2
-        t2 = T - t_ramp
-        s2 = s1 + v_max * (t2 - t_ramp)
+    t_vec = np.arange(0, T + dt, dt)
+    s_vals = np.zeros_like(t_vec)
 
-        s = ca.if_else(
-            t < t_ramp,
-            0.5 * a_max * t**2,
-            ca.if_else(
-                t < t2,
-                s1 + v_max * (t - t_ramp),
-                s2 + v_max * (t - t2) - 0.5 * a_max * (t - t2)**2
-            )
-        )
-        s_total = s2 + v_max * t_ramp - 0.5 * a_max * t_ramp**2  # = L in teoria
-        s_norm = ca.fmin(s / s_total, 1.0)  # Clamp a 1.0 per sicurezza
-        return s_norm
+    for i, t in enumerate(t_vec):
+        if t < t_ramp:
+            s_vals[i] = 0.5 * a_max * t**2
+        elif t < t_ramp + t_coast:
+            s_vals[i] = d_ramp + v_max * (t - t_ramp)
+        elif t <= T:
+            dt_dec = t - (t_ramp + t_coast)
+            s_vals[i] = (d_ramp + v_max * t_coast) + v_max * dt_dec - 0.5 * a_max * dt_dec**2
+        else:
+            s_vals[i] = L
+            
+    # Normalizza s in [0, 1]
+    s_norm = np.clip(s_vals / L, 0.0, 1.0)
 
+    p_vals = p_in + s_norm[:, np.newaxis] * dp
+    
+    # Interpolazione lineare (con attenzione allo sfasamento degli angoli se necessario, ma qui lineare va bene per rpy)
+    drpy = rpy_f - rpy_in
+    # Gestione rotazioni brevi su yaw
+    drpy[2] = (drpy[2] + np.pi) % (2 * np.pi) - np.pi
+    
+    rpy_vals = rpy_in + s_norm[:, np.newaxis] * drpy
 
-    s_expr = s_trapezoid_expr(t_sym - t0)
-    s_func = ca.Function('s', [t_sym], [s_expr])
-
-    # Posizione
-    p_expr = ca.vertcat(*[p_in[i] + s_expr * (p_f[i] - p_in[i]) for i in range(3)])
-    p_func = ca.Function('p_t', [t_sym], [p_expr])
-
-    # Rotazione (RPY)
-    rpy_expr = ca.vertcat(*[rpy_in[i] + s_expr * (rpy_f[i] - rpy_in[i]) for i in range(3)])
-    rpy_func = ca.Function('rpy_t', [t_sym], [rpy_expr])
-
-    p_vals = np.array([p_func(t).full().flatten() for t in t_vec])
-    rpy_vals = np.array([rpy_func(t).full().flatten() for t in t_vec])
-    return (t_vec, p_vals, rpy_vals)
-
-
+    return t_vec, p_vals, rpy_vals
