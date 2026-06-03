@@ -226,7 +226,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     # [Visx4, dist_sicurezza, roll, pitch]
     penalty_L1 = 1e-2
     penalty_L2 = 1e-1
-    weights_costs = np.array([1, 1, 1, 1, 1e4, 1e0, 1e0])
+    weights_costs = np.array([1, 1, 1, 1, 1e4, 1e2, 1e2])
 
     ocp.cost.Zl = penalty_L2 * weights_costs
     ocp.cost.Zu = penalty_L2 * weights_costs

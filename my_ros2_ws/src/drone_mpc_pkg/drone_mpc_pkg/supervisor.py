@@ -8,6 +8,8 @@
 # Inoltre sarà lui a gestire tutte le richieste di offboard ed i check di sicurezza
 
 import rclpy
+import math
+from scipy.spatial.transform import Rotation as R
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from px4_msgs.msg import VehicleControlMode, VehicleCommand, VehicleLocalPosition
@@ -227,9 +229,23 @@ class SupervisorNode(Node):
                 self.state = 'EMERGENCY'
             elif not self.task_goal_pose_received and self.task_started:
                 msg_peg_target = PoseStamped()
-                msg_peg_target.pose.position.x = float(self.drone2_local_pos.x + 3)
-                msg_peg_target.pose.position.y = float(self.drone2_local_pos.y + 3)
-                msg_peg_target.pose.position.z = float(-self.drone2_local_pos.z)
+                msg_peg_target.pose.position.x = float(-4)
+                msg_peg_target.pose.position.y = float(-55)
+                msg_peg_target.pose.position.z = float(10)
+                
+                # Impostazione del target di yaw desiderato (in radianti)
+                # Esempio: rotazione di 90 gradi rispetto all'asse Z
+                target_yaw = -math.pi/2 
+                
+                # Utilizziamo scipy.spatial.transform.Rotation per convertire Roll-Pitch-Yaw in Quaternioni
+                rot = R.from_euler('xyz', [0.0, 0.0, target_yaw])
+                quat = rot.as_quat() # Restituisce un array [x, y, z, w]
+                
+                msg_peg_target.pose.orientation.x = float(quat[0])
+                msg_peg_target.pose.orientation.y = float(quat[1])
+                msg_peg_target.pose.orientation.z = float(quat[2])
+                msg_peg_target.pose.orientation.w = float(quat[3])
+                
                 self.peg_target_pub.publish(msg_peg_target)
                 self.task_goal_pose_received = True
 

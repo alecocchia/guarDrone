@@ -112,7 +112,7 @@ class MpcPlannerNode(Node):
         self.x0, self.x0_rpy = setup_initial_conditions(start_x,start_y,start_z,start_roll,start_pitch,start_yaw)
         # === Tempo/Orizzonte ===
         self.ts = 0.01             # 100 Hz
-        self.N_horiz = 80          # Orizzonte di predizione (numero di campioni)
+        self.N_horiz = 50          # Orizzonte di predizione (numero di campioni)
         self.Tp = self.N_horiz * self.ts  # Tempo totale dell'orizzonte 
         self.ts_peg = 0.005
 
@@ -578,9 +578,9 @@ class MpcPlannerNode(Node):
 
         # g0 importato da common.py
 
-        X = 1; Y = 2; Z = 2; V = np.array([1, 1, 1.5]); PAN = ca.pi/3
-        RP_ANG = 0.1; ANG_DOT = np.array([0.5, 0.5, 1.5])
-        ACC = np.array([2.0, 2.0, 4.0]); ACC_ANG = np.array([2.0,2.0,8.0])     
+        X = 1; Y = 1; Z = 1; V = np.array([1, 1, 0.5]); PAN = ca.pi/2
+        RP_ANG = 0.1; ANG_DOT = np.array([0.1, 0.1, 1.5])
+        ACC = np.array([1.0, 1.0, 4.0]); ACC_ANG = np.array([1.0,1.0,5.0])     
         JERK = 10.0; SNAP = 200.0
         
         
@@ -598,15 +598,15 @@ class MpcPlannerNode(Node):
         PesoVis = 100
         PesoPan = PesoVis
         #PesoRot = PesoVis / 500
-        PesoVel = PesoVis / 2
-        PesoAngVel = PesoVel / 5
-        PesoAcc = PesoVel / 5
-        PesoAngAcc = PesoAngVel / 5
+        PesoVel = PesoVis / 10
+        PesoAngVel = PesoVel 
+        PesoAcc = PesoVel / 2
+        PesoAngAcc = PesoAngVel 
         PesoJerk = PesoAcc / 20
         PesoSnap = PesoJerk / 2
         PesoForce = PesoVis / 1000
-        PesoTorque = PesoForce * 2
-
+        PesoTorque = PesoForce *2
+        
         Q_pan = np.diag([PesoPan]) / PAN**2
         Q_visual = np.diag([PesoVis,PesoVis,PesoVis]) / np.array([X,Y,Z])**2 
         Q_vel = np.diag([PesoVel, PesoVel, PesoVel]) / V**2
