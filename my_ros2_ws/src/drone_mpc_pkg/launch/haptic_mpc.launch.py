@@ -17,7 +17,15 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(os.path.join(mpc_pkg_dir, 'launch', 'mpc_sim.launch.py')),
         launch_arguments={
             'enable_joy': 'false', # Disabilitiamo il joystick standard
-            'enable_rviz': 'true'
+            'enable_rviz': 'true',
+            'model': LaunchConfiguration('model'),
+            'drone_x': LaunchConfiguration('drone_x'),
+            'drone_y': LaunchConfiguration('drone_y'),
+            'drone_z': LaunchConfiguration('drone_z'),
+            'drone_yaw': LaunchConfiguration('drone_yaw'),
+            'peg_x': LaunchConfiguration('peg_x'),
+            'peg_y': LaunchConfiguration('peg_y'),
+            'peg_z': LaunchConfiguration('peg_z')
         }.items()
     )
 
@@ -43,6 +51,14 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        DeclareLaunchArgument('model', default_value='x500_depth'),
+        DeclareLaunchArgument('drone_x', default_value='-17.0'),
+        DeclareLaunchArgument('drone_y', default_value='-35.0'),
+        DeclareLaunchArgument('drone_z', default_value='0.0'),
+        DeclareLaunchArgument('drone_yaw', default_value='0.0'),
+        DeclareLaunchArgument('peg_x', default_value='-15.0'),
+        DeclareLaunchArgument('peg_y', default_value='-37.0'),
+        DeclareLaunchArgument('peg_z', default_value='0.0'),
         mpc_sim_launch,
         fd_launch,
         haptic_joy_node

@@ -61,14 +61,14 @@ class SupervisorNode(Node):
         self.create_subscription(VehicleControlMode, '/px4_1/fmu/out/vehicle_control_mode', self.mode2_cb, qos_profile)
 
         # Parameters
-        self.declare_parameter('takeoff_alt_1', -3.0) # z is negative up in NED
-        self.declare_parameter('takeoff_alt_2', -3.0) # Peg takeoff is 10m in ENU -> -10m in NED, we wait for -8m
+        self.declare_parameter('takeoff_alt_1', 4.52+3.0) # Camera takeoff in ENU
+        self.declare_parameter('takeoff_alt_2', 4.52+3.0) # Peg takeoff in ENU
         self.declare_parameter('cam_start_x', 0.0)
         self.declare_parameter('cam_start_y', 0.0)
-        self.declare_parameter('cam_start_z', 0.0)
+        self.declare_parameter('cam_start_z', 4.52)
         self.declare_parameter('peg_start_x', 3.0)
         self.declare_parameter('peg_start_y', 0.0)
-        self.declare_parameter('peg_start_z', 0.2)
+        self.declare_parameter('peg_start_z', 4.52)
 
         self.takeoff_alt_1 = self.get_parameter('takeoff_alt_1').value
         self.takeoff_alt_2 = self.get_parameter('takeoff_alt_2').value
@@ -153,7 +153,7 @@ class SupervisorNode(Node):
                 cam_pose.header.frame_id = 'world'
                 cam_pose.pose.position.x = float(self.cam_start_x)
                 cam_pose.pose.position.y = float(self.cam_start_y)
-                cam_pose.pose.position.z = float(-self.takeoff_alt_1) # ENU
+                cam_pose.pose.position.z = float(self.takeoff_alt_1) # ENU
                 self.get_logger().info(f"Posizione di decollo al camera drone: {cam_pose.pose.position.x}, {cam_pose.pose.position.y}, {cam_pose.pose.position.z}")
                 self.cam_target_pub.publish(cam_pose)
 
@@ -162,7 +162,7 @@ class SupervisorNode(Node):
                 peg_pose.header.frame_id = 'world'
                 peg_pose.pose.position.x = float(self.peg_start_x)
                 peg_pose.pose.position.y = float(self.peg_start_y)
-                peg_pose.pose.position.z = float(-self.takeoff_alt_2) # ENU
+                peg_pose.pose.position.z = float(self.takeoff_alt_2) # ENU
                 self.get_logger().info(f"Posizione di decollo al peg drone: {peg_pose.pose.position.x}, {peg_pose.pose.position.y}, {peg_pose.pose.position.z}")
                 self.peg_target_pub.publish(peg_pose)
                 
@@ -193,8 +193,8 @@ class SupervisorNode(Node):
 
         elif self.state == 'TAKEOFF_MONITOR':
             # Check altitudes (z is negative upwards)
-            d1_up = abs(self.drone1_local_pos.z - (self.takeoff_alt_1 + self.cam_start_z)) < 0.5
-            d2_up = abs(self.drone2_local_pos.z - (self.takeoff_alt_2 + self.peg_start_z)) < 0.5
+            d1_up = abs(-self.drone1_local_pos.z - (self.takeoff_alt_1 - self.cam_start_z)) < 0.1
+            d2_up = abs(-self.drone2_local_pos.z - (self.takeoff_alt_2 - self.peg_start_z)) < 0.1
             self.get_logger().info(f"d1_up: {self.drone1_local_pos.z}")
             self.get_logger().info(f"d2_up: {self.drone2_local_pos.z}")
 
@@ -229,9 +229,9 @@ class SupervisorNode(Node):
                 self.state = 'EMERGENCY'
             elif not self.task_goal_pose_received and self.task_started:
                 msg_peg_target = PoseStamped()
-                msg_peg_target.pose.position.x = float(-4)
-                msg_peg_target.pose.position.y = float(-55)
-                msg_peg_target.pose.position.z = float(10)
+                msg_peg_target.pose.position.x = float(-1.0)
+                msg_peg_target.pose.position.y = float(-56.2)   #-55.91 for contact with wall;-14 for testing teleoperation with cube, -1.91
+                msg_peg_target.pose.position.z = float(10.0)
                 
                 # Impostazione del target di yaw desiderato (in radianti)
                 # Esempio: rotazione di 90 gradi rispetto all'asse Z

@@ -2,7 +2,7 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-from geometry_msgs.msg import PoseStamped, TwistStamped, Wrench
+from geometry_msgs.msg import PoseStamped, TwistStamped, Wrench, Vector3Stamped
 from std_msgs.msg import Float64MultiArray
 import numpy as np
 from math import atan2
@@ -44,6 +44,7 @@ class Logger(Node):
         self.declare_parameter('start_x', 0.0)
         self.declare_parameter('start_y', 0.0)
         self.declare_parameter('start_z', 0.0)
+        self.declare_parameter('ft_topic', '/world/interaction/model/x500_interaction_0/joint/end_eff_sens_joint/force_torque')
 
         self.save_path = self.get_parameter('save_path').value
         self.log_hz    = float(self.get_parameter('log_hz').value)
@@ -61,6 +62,7 @@ class Logger(Node):
             self.get_parameter('start_y').value,
             self.get_parameter('start_z').value
         ])
+        self.ft_topic = self.get_parameter('ft_topic').value
 
         self.logging_enabled = False
         self.last_log_time = None
@@ -72,6 +74,8 @@ class Logger(Node):
         self.pref_pos, self.pref_rpy, self.pref_q, self.vref, self.omegaref = [], [], [], [], []
         self.wrench_cmd, self.wrench_ref, self.wrench_target, self.t_ref = [], [], [], []
         self.peg_pos, self.online_ref, self.online_visual_ref = [], [], []
+        self.peg_ext_force = []
+        self.delta_p = []
 
         self.last_peg_pos = [0.0, 0.0, 0.0]
         self.last_online_ref = [0.0] * 6
@@ -85,6 +89,9 @@ class Logger(Node):
         
         self.haptic_force = []
         self.last_haptic_force = [0.0, 0.0, 0.0]
+        
+        self.last_peg_ext_force = [0.0, 0.0, 0.0]
+        self.last_delta_p = [0.0, 0.0, 0.0]
 
         px4_qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -103,6 +110,8 @@ class Logger(Node):
         self.create_subscription(Wrench, '/wrench_cmd', self.cb_wrench_cmd, 10)
         self.create_subscription(Float64MultiArray, '/fd/fd_controller/commands', self.cb_haptic_force, 10)
         self.create_subscription(VehicleOdometry, '/fmu/out/vehicle_odometry', self.cb_px4_odom, px4_qos_profile)
+        self.create_subscription(Wrench, self.ft_topic, self.cb_peg_ft, 10)
+        self.create_subscription(Vector3Stamped, '/delta_p', self.cb_delta_p, 10)
         
         self.get_logger().info(f'Logger ottimizzato avviato | Salva in: {self.save_path}')
 
@@ -121,6 +130,13 @@ class Logger(Node):
     def cb_haptic_force(self, msg: Float64MultiArray):
         if len(msg.data) >= 3:
             self.last_haptic_force = [msg.data[0], msg.data[1], msg.data[2]]
+
+    def cb_peg_ft(self, msg: Wrench):
+        # Logghiamo le 3 componenti lineari (puoi anche loggare i torque aggiungendo elementi all'array)
+        self.last_peg_ext_force = [msg.force.x, msg.force.y, msg.force.z]
+
+    def cb_delta_p(self, msg: Vector3Stamped):
+        self.last_delta_p = [msg.vector.x, msg.vector.y, msg.vector.z]
 
     def cb_ref_pose(self, msg: PoseStamped):
         p = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z], dtype=float)
@@ -163,6 +179,8 @@ class Logger(Node):
         self.online_ref.append(self.last_online_ref)
         self.online_visual_ref.append(self.last_online_visual_ref) 
         self.haptic_force.append(self.last_haptic_force.copy())
+        self.peg_ext_force.append(self.last_peg_ext_force.copy())
+        self.delta_p.append(self.last_delta_p.copy())
 
         self.last_log_time = t_now
 
@@ -209,6 +227,7 @@ class Logger(Node):
         peg_pos = np.asarray(self.peg_pos)
         online_visual_ref = np.asarray(self.online_visual_ref)
         online_ref = np.asarray(self.online_ref)
+        peg_ext_force = np.asarray(self.peg_ext_force)
 
         # 1. Calcolo derivate numeriche
         acc = np.zeros_like(v)
@@ -248,6 +267,8 @@ class Logger(Node):
             haptic_force=np.asarray(self.haptic_force),
             peg_pos=peg_pos, online_ref=online_ref,
             online_visual_ref=online_visual_ref,
+            peg_ext_force=peg_ext_force,
+            delta_p=np.asarray(self.delta_p),
             acc=acc, ang_acc=ang_acc, jerk=jerk, snap=snap,
             p_cam=p_cam, Xc=Xc, Yc=Yc, Zc=Zc, 
             radius_real=radius, pan_real=pan, tilt_real=tilt,

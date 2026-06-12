@@ -1,9 +1,0 @@
-<root BTCPP_format="4">
-    <BehaviorTree ID="MainTree">
-        <Sequence name="drone_sequence">
-            <TakeOffAction name="takeoff"/>
-            <CbfAction name="cbf"/>
-            <RunMPCOffboardTask name="run_mpc_task"/>
-        </Sequence>
-    </BehaviorTree>
-</root>

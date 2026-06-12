@@ -150,7 +150,7 @@ class MpcPlannerNode(Node):
         self.haptic_transition_duration = self.get_parameter('haptic_transition_duration').value
 
         # Target visivo di default (PoV: Xc, Yc, Zc, Pan)
-        self.pan_target = np.pi/2
+        self.pan_target = 0.2
         self.radius_target = 3.0
         self.pov_target = np.array([self.radius_target, 0.0, 0.0, self.pan_target])
         xc_hand = 0.5
@@ -244,11 +244,11 @@ class MpcPlannerNode(Node):
         self.declare_parameter('joy_transition_duration', 3.0)
         self.joy_transition_duration = self.get_parameter('joy_transition_duration').value
 
-        # === Integrazione Behavior Tree ===
-        self.bt_task_running = False
-        self.bt_start_sub = self.create_subscription(
-            Bool, '/mpc_task/start', self.bt_start_callback, 10, callback_group=self.callback_group)
-        self.bt_status_pub = self.create_publisher(String, '/mpc_task/status', 10)
+        # === Integrazione con Supervisor ===
+        self.supervisor_task_running = False
+        self.supervisor_start_sub = self.create_subscription(
+            Bool, '/mpc_task/start', self.supervisor_start_callback, 10, callback_group=self.callback_group)
+        self.supervisor_status_pub = self.create_publisher(String, '/mpc_task/status', 10)
 
         self.thrust_out_sub = self.create_subscription(
             VehicleThrustSetpoint,
@@ -273,9 +273,9 @@ class MpcPlannerNode(Node):
 
     # ==================== Callbacks I/O ====================
 
-    def bt_start_callback(self, msg: Bool):
+    def supervisor_start_callback(self, msg: Bool):
         if msg.data == True:
-            self.get_logger().info("Ricevuto comando dal Behavior Tree / Supervisor: Inizio MPC Task!")
+            self.get_logger().info("Ricevuto comando dal Supervisor: Inizio MPC Task!")
             self.bt_task_running = True
             self.task_started = True
             self.planner_configure()
@@ -549,10 +549,12 @@ class MpcPlannerNode(Node):
         # normalizzo angoli di pan (caso manuale e autonomo) in [-pi, pi]
         diff_m = (manual_pov[3] - current_pan + np.pi) % (2 * np.pi) - np.pi
         diff_a = (auto_pan_target - current_pan + np.pi) % (2 * np.pi) - np.pi
+        
+        # time derivative for velocity ref
+        d_pov = (1 - alpha) * manual_d_pov
 
         # Interpolazione su pan e velocità relative comandate
         pan_target = current_pan + (1 - alpha) * diff_m + alpha * diff_a
-        d_pov = (1 - alpha) * manual_d_pov
 
         # Componente lineare (Xc, Yc, Zc) trasformata in mondo
         R_body_world = Rotation.from_quat([xk[7], xk[8], xk[9], xk[6]]).as_matrix() # x,y,z,w
@@ -578,9 +580,9 @@ class MpcPlannerNode(Node):
 
         # g0 importato da common.py
 
-        X = 1; Y = 1; Z = 1; V = np.array([1, 1, 0.5]); PAN = ca.pi/2
-        RP_ANG = 0.1; ANG_DOT = np.array([0.1, 0.1, 1.5])
-        ACC = np.array([1.0, 1.0, 4.0]); ACC_ANG = np.array([1.0,1.0,5.0])     
+        X = 2; Y = 1; Z = 1; V = np.array([0.5, 0.5, 0.5]); PAN = ca.pi/2
+        RP_ANG = 0.1; ANG_DOT = np.array([0.3, 0.3,1.5])
+        ACC = np.array([1.0, 1.0, 2.0]); ACC_ANG = np.array([2.0,2.0,4.0])     
         JERK = 10.0; SNAP = 200.0
         
         
@@ -594,18 +596,19 @@ class MpcPlannerNode(Node):
         self.U_TAU_Y = arm_l_x * f_max / 2.0
         self.U_TAU_Z = moment_const * f_max
 
+        #tarare meglio velocità angolari: cambiando da 0.3 a 0.5 su rp va una merda
 
         PesoVis = 100
         PesoPan = PesoVis
         #PesoRot = PesoVis / 500
-        PesoVel = PesoVis / 10
-        PesoAngVel = PesoVel 
-        PesoAcc = PesoVel / 2
-        PesoAngAcc = PesoAngVel 
-        PesoJerk = PesoAcc / 20
+        PesoVel = PesoVis / 100
+        PesoAngVel = PesoVis / 10
+        PesoAcc = PesoVis / 40
+        PesoAngAcc = PesoVis / 10
+        PesoJerk = PesoAcc / 2
         PesoSnap = PesoJerk / 2
-        PesoForce = PesoVis / 1000
-        PesoTorque = PesoForce *2
+        PesoForce = PesoVis / 500
+        PesoTorque = PesoForce * 2
         
         Q_pan = np.diag([PesoPan]) / PAN**2
         Q_visual = np.diag([PesoVis,PesoVis,PesoVis]) / np.array([X,Y,Z])**2 
@@ -615,8 +618,8 @@ class MpcPlannerNode(Node):
         Q_ang_dot = np.diag([PesoAngVel, PesoAngVel, PesoAngVel]) / ANG_DOT**2
         Q_acc = np.diag([PesoAcc, PesoAcc, PesoAcc]) / ACC**2
         Q_acc_ang = np.diag([PesoAngAcc, PesoAngAcc, PesoAngAcc]) / ACC_ANG**2
-        Q_jerk = np.diag([PesoJerk, PesoJerk, PesoJerk]) / JERK**2
-        Q_snap = np.diag([PesoSnap, PesoSnap, PesoSnap]) / SNAP**2
+        Q_jerk = np.diag([PesoJerk, PesoJerk, PesoJerk/5]) / JERK**2
+        Q_snap = np.diag([PesoSnap, PesoSnap, PesoSnap/5]) / SNAP**2
         
         R_f = np.diag([PesoForce]) / self.U_F**2
         R_tau = ca.diagcat(PesoTorque / self.U_TAU_X**2, PesoTorque / self.U_TAU_Y**2, PesoTorque / self.U_TAU_Z**2)

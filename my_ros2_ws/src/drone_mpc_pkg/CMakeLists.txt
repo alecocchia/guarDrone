@@ -28,10 +28,12 @@ install(PROGRAMS
   ${PROJECT_NAME}/human_goal_node.py
   ${PROJECT_NAME}/MPC_planner_node.py
   ${PROJECT_NAME}/offboard_trajectory_planner.py
+  ${PROJECT_NAME}/offboard_admittance_planner.py
   ${PROJECT_NAME}/logger.py
   ${PROJECT_NAME}/geometric_controller.py
   ${PROJECT_NAME}/PID_controller.py
   ${PROJECT_NAME}/supervisor.py
+  ${PROJECT_NAME}/teleop_peg.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -94,18 +94,29 @@ def launch_setup(context, *args, **kwargs):
             'save_path': '/tmp/pid_run.npz',
             'mass': auto_mass,
             'cam_x': auto_cam[0], 'cam_y': auto_cam[1], 'cam_z': auto_cam[2], # AUTOMATICO
-            'start_x': drone_x, 'start_y': drone_y, 'start_z': drone_z
+            'start_x': drone_x, 'start_y': drone_y, 'start_z': drone_z,
+            'ft_topic': LaunchConfiguration('peg_ft_topic')
         }],
     )
 
     peg_planner = Node(
-        package='drone_mpc_pkg', executable='offboard_trajectory_planner.py', name='peg_trajectory_planner',
+        package='drone_mpc_pkg', executable='offboard_admittance_planner.py', name='peg_trajectory_planner',
         parameters=[{
             'use_sim_time': True,
             'start_x': peg_x, 'start_y': peg_y, 'start_z': peg_z,
-            'v_max': 1.0,
-            'a_max': 2.0,
-            'px4_ns': 'px4_1',  # Namespace DDS del drone x500_interaction (UXRCE_DDS_NS=px4_1)
+            'v_max': 0.5,
+            'a_max': 1.0,
+            'dt': 0.02,           # 50 Hz
+            'px4_ns': 'px4_1',   # Namespace DDS del drone x500_interaction (UXRCE_DDS_NS=px4_1)
+            # -- Ammettenza --
+            'F_threshold':   LaunchConfiguration('peg_F_threshold'),
+            #'adm_mass':      LaunchConfiguration('peg_adm_mass'),
+            #'adm_damping':   LaunchConfiguration('peg_adm_damping'),
+            #'adm_stiffness': LaunchConfiguration('peg_adm_stiffness'),
+            'adm_max_delta': LaunchConfiguration('peg_adm_max_delta'),
+            # Topic sensore FT: cambia con l'ordine di spawn (_0 se primo, _1 se secondo).
+            # Di default assumiamo x500_interaction_1 perché è il secondo drone spawnato.
+            'ft_topic': LaunchConfiguration('peg_ft_topic'),
         }],
         remappings=[
             ('target_pose', '/peg_target_pose'),
@@ -151,6 +162,8 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
         parameters=[{
             'use_sim_time': True,
+            'takeoff_alt_1': 4.52+3.0,   # [m] ENU: quota di decollo camera drone
+            'takeoff_alt_2': 4.52+3.0,   # [m] ENU: quota di decollo peg drone
             'cam_start_x': drone_x,
             'cam_start_y': drone_y,
             'cam_start_z': drone_z,
@@ -161,14 +174,14 @@ def launch_setup(context, *args, **kwargs):
     )
 
     return [
-        ros_gz_bridge,
         supervisor_node,
         peg_planner,
         camera_planner,
-        TimerAction(period=2.0, actions=[mpc_planner_node]),
+        ros_gz_bridge,
+        TimerAction(period=10.0, actions=[mpc_planner_node]),
         data_logger,
         human_goal_node,
-        Node(package='rviz2', executable='rviz2', arguments=['-d', rviz_config_file], condition=IfCondition(LaunchConfiguration('enable_rviz'))),
+        TimerAction(period=5.0, actions=[Node(package='rviz2', executable='rviz2', arguments=['-d', rviz_config_file], condition=IfCondition(LaunchConfiguration('enable_rviz')))]),
         Node(package='joy', executable='joy_node', parameters=[{'autorepeat_rate': 50.0}], condition=IfCondition(LaunchConfiguration('enable_joy')))
     ]
 
@@ -187,14 +200,28 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_joy', default_value='true'),
         DeclareLaunchArgument('drone_x', default_value='0.0'),
         DeclareLaunchArgument('drone_y', default_value='0.0'),
-        DeclareLaunchArgument('drone_z', default_value='0.0'),
+        DeclareLaunchArgument('drone_z', default_value='4.52'),
         DeclareLaunchArgument('drone_yaw', default_value='1.5708'),
         # Posa target per il drone di interazione (passata a peg_planner_node)
         DeclareLaunchArgument('peg_x', default_value='3.0'),
         DeclareLaunchArgument('peg_y', default_value='3.0'),
-        DeclareLaunchArgument('peg_z', default_value='0.2'),
+        DeclareLaunchArgument('peg_z', default_value='4.52'),
         DeclareLaunchArgument('cf', default_value='8.0e-4'),
         DeclareLaunchArgument('ct', default_value='1.0e-5'),
+        # -- Parametri ammettenza peg --
+        DeclareLaunchArgument('peg_F_threshold',   default_value='0.08',
+                              description='[N] Soglia forza per attivare ammettenza'),
+        #DeclareLaunchArgument('peg_adm_mass',      default_value='2.0',
+        #                      description='[kg] Massa virtuale ammettenza'),
+        #DeclareLaunchArgument('peg_adm_damping',   default_value='5.0',
+        #                      description='Smorzamento virtuale ammettenza'),
+        #DeclareLaunchArgument('peg_adm_stiffness', default_value='80',
+        #                      description='Rigidezza virtuale ammettenza (0=puro ammortizzatore)'),
+        DeclareLaunchArgument('peg_adm_max_delta', default_value='5.0',
+                              description='[m] Saturazione spostamento di ammettenza'),
+        DeclareLaunchArgument('peg_ft_topic',
+                              default_value='/world/interaction/model/x500_interaction_0/joint/end_eff_sens_joint/force_torque',
+                              description='Topic Gazebo del sensore FT sull\'end-effector del peg'),
     ]
 
     return LaunchDescription(declared_arguments + [

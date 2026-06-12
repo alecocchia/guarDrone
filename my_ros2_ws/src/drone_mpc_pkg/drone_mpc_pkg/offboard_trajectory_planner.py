@@ -94,8 +94,8 @@ class OffboardTrajectoryPlanner(Node):
         self.current_pos[2] = z_enu + self.get_parameter('start_z').value
         
         # Quaternione NED -> rpy NED -> rpy ENU (yaw_enu = -yaw_ned + pi/2)
-        r, p, y_ned = quaternion_to_euler(msg.q[0], msg.q[1], msg.q[2], msg.q[3])
-        self.current_rpy[2] = -y_ned + np.pi/2.0
+        r, p, yaw_ned = quaternion_to_euler(msg.q[0], msg.q[1], msg.q[2], msg.q[3])
+        self.current_rpy[2] = -yaw_ned + np.pi/2.0
         
         self.has_odom = True
 

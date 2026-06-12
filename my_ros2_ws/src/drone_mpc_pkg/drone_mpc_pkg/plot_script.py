@@ -167,6 +167,59 @@ def main():
             "Angular Acc X [rad/s^2]", "Angular Acc Y [rad/s^2]", "Angular Acc Z [rad/s^2]"], 
            "Drone Linear and Angular Accelerations", ncols=3, use_tex=args.tex, block=block, fignum=10)
 
+    # --- FIGURE 11: Peg External Forces ---
+    if 'peg_ext_force' in data.files:
+        fig11_data = [
+            {'sim': data['peg_ext_force'][:, 0], 'ref': 0.0},
+            {'sim': data['peg_ext_force'][:, 1], 'ref': 0.0},
+            {'sim': data['peg_ext_force'][:, 2], 'ref': 0.0}
+        ]
+        myPlot(t, fig11_data, 
+               ["Force X (Sensor) [N]", "Force Y (Sensor) [N]", "Force Z (Sensor) [N]"], 
+               "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=11)
+
+    # --- FIGURE 12: Admittance delta_p (spostamento di ammettenza) ---
+    if 'delta_p' in data.files:
+        dp = data['delta_p']
+        dp_norm = np.linalg.norm(dp, axis=1)
+        fig12_data = [
+            {'sim': dp[:, 0], 'ref': 0.0},
+            {'sim': dp[:, 1], 'ref': 0.0},
+            {'sim': dp[:, 2], 'ref': 0.0},
+            {'sim': dp_norm,  'ref': 0.0}
+        ]
+        myPlot(t, fig12_data,
+               [r"$\Delta p_x$ [m]", r"$\Delta p_y$ [m]", r"$\Delta p_z$ [m]",
+                r"$\|\Delta p\|$ [m]"],
+               "Admittance Displacement $\\Delta p$ (ENU)",
+               ncols=2, use_tex=args.tex, block=block, fignum=12)
+
+    # --- FIGURE 13: Confronto ||delta_p|| vs ||F_ext|| ---
+    if 'delta_p' in data.files and 'peg_ext_force' in data.files:
+        dp_norm  = np.linalg.norm(data['delta_p'], axis=1)
+        fext_norm = np.linalg.norm(data['peg_ext_force'], axis=1)
+        fig13, ax13 = plt.subplots(2, 1, figsize=(12, 6), sharex=True,
+                                   num=13)
+        try:
+            fig13.canvas.manager.set_window_title("Figure 13: Admittance vs Contact Force")
+        except Exception:
+            pass
+        ax13[0].plot(t, fext_norm, 'r-', linewidth=1.5, label=r'$\|F_{ext}\|$ [N]')
+        ax13[0].set_ylabel(r'$\|F_{ext}\|$ [N]')
+        ax13[0].legend(loc='upper right')
+        ax13[0].grid(True, alpha=0.3)
+        ax13[0].set_title("Contact Force Norm")
+        ax13[1].plot(t, dp_norm, 'b-', linewidth=1.5, label=r'$\|\Delta p\|$ [m]')
+        ax13[1].set_xlabel('Time [s]')
+        ax13[1].set_ylabel(r'$\|\Delta p\|$ [m]')
+        ax13[1].legend(loc='upper right')
+        ax13[1].grid(True, alpha=0.3)
+        ax13[1].set_title("Admittance Displacement Norm")
+        fig13.suptitle("Admittance Effect: Contact Force vs Position Deviation", fontsize=14)
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        if block:
+            plt.show()
+
     if args.save:
         for i in plt.get_fignums():
             plt.figure(i).savefig(f"plot_fig_{i}.png")
