@@ -3,7 +3,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from geometry_msgs.msg import PoseStamped, TwistStamped, Wrench, Vector3Stamped
-from std_msgs.msg import Float64MultiArray
+from std_msgs.msg import Float64MultiArray, Bool
 import numpy as np
 from math import atan2
 from drone_mpc_pkg.common import quat_to_R
@@ -32,7 +32,7 @@ class Logger(Node):
     def __init__(self):
         super().__init__('logger')
 
-        self.declare_parameter('save_path', '/tmp/pid_run.npz')
+        self.declare_parameter('save_path', '/tmp/sim_run.npz')
         self.declare_parameter('log_hz', 50.0) 
         self.declare_parameter('save_ref_flag', True)
         
@@ -45,6 +45,10 @@ class Logger(Node):
         self.declare_parameter('start_y', 0.0)
         self.declare_parameter('start_z', 0.0)
         self.declare_parameter('ft_topic', '/world/interaction/model/x500_interaction_0/joint/end_eff_sens_joint/force_torque')
+        self.declare_parameter('peg_px4_ns', 'px4_1')
+        self.declare_parameter('peg_start_x', 0.0)
+        self.declare_parameter('peg_start_y', 0.0)
+        self.declare_parameter('peg_start_z', 0.0)
 
         self.save_path = self.get_parameter('save_path').value
         self.log_hz    = float(self.get_parameter('log_hz').value)
@@ -63,6 +67,13 @@ class Logger(Node):
             self.get_parameter('start_z').value
         ])
         self.ft_topic = self.get_parameter('ft_topic').value
+        peg_ns = self.get_parameter('peg_px4_ns').value
+        self.peg_ns_prefix = f'/{peg_ns}' if peg_ns else ''
+        self.peg_start_offset = np.array([
+            self.get_parameter('peg_start_x').value,
+            self.get_parameter('peg_start_y').value,
+            self.get_parameter('peg_start_z').value
+        ])
 
         self.logging_enabled = False
         self.last_log_time = None
@@ -76,9 +87,13 @@ class Logger(Node):
         self.peg_pos, self.online_ref, self.online_visual_ref = [], [], []
         self.peg_ext_force = []
         self.delta_p = []
+        
+        # Drone di interazione (peg): posizione attuale e riferimento in ENU
+        self.peg_actual_pos = []  # posizione attuale drone interazione (ENU)
+        self.peg_ref_pos = []     # riferimento nominale planner ammettenza (ENU)
 
         self.last_peg_pos = [0.0, 0.0, 0.0]
-        self.last_online_ref = [0.0] * 6
+        self.last_online_ref = [0.0] * 3
         self.last_online_visual_ref = [0.0, 0.0, 0.0]
         self.last_pref_pos, self.last_pref_rpy, self.last_pref_q = [0.0]*3, [0.0]*3, [1.0, 0.0, 0.0, 0.0]
         self.last_vref, self.last_omegaref = [0.0]*3, [0.0]*3
@@ -92,6 +107,24 @@ class Logger(Node):
         
         self.last_peg_ext_force = [0.0, 0.0, 0.0]
         self.last_delta_p = [0.0, 0.0, 0.0]
+        
+        # Ultimi valori drone di interazione
+        self.last_peg_actual_pos = [0.0, 0.0, 0.0]
+        self.last_peg_ref_pos = [0.0, 0.0, 0.0]
+        self.peg_actual_yaw = []       # yaw ENU drone di interazione
+        self.last_peg_actual_yaw = 0.0
+        self.peg_ref_yaw = []          # yaw ENU riferimento planner ammettenza
+        self.last_peg_ref_yaw = 0.0
+        self.peg_actual_vel = []       # velocità ENU drone interazione [vx, vy, vz]
+        self.last_peg_actual_vel = [0.0, 0.0, 0.0]
+        self.peg_actual_yaw_rate = []  # velocità angolare yaw FLU drone interazione [rad/s]
+        self.last_peg_actual_yaw_rate = 0.0
+        self.peg_ref_vel = []          # velocità ref ENU planner ammettenza
+        self.last_peg_ref_vel = [0.0, 0.0, 0.0]
+        self.peg_ref_yaw_rate = []     # yaw rate ref planner ammettenza
+        self.last_peg_ref_yaw_rate = 0.0
+
+        self.task_start_time = None    # timestamp di inizio missione (secondi)
 
         px4_qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -104,6 +137,7 @@ class Logger(Node):
         self.create_subscription(Float64MultiArray, '/online_spherical_ref', self.cb_online_ref, 10)
         self.create_subscription(Float64MultiArray, '/online_visual_ref', self.cb_online_visual_ref, 10)
         self.create_subscription(PoseStamped,  '/optimal_drone_pose',  self.cb_ref_pose,   10)
+        self.create_subscription(PoseStamped,  '/camera_ref_pose',     self.cb_ref_pose,   10)
         self.create_subscription(TwistStamped, '/velocity_reference', self.cb_ref_twist,  10)
         self.create_subscription(Wrench, '/optimal_wrench', self.cb_wrench_ref, 10)
         self.create_subscription(Wrench, '/wrench_reference', self.cb_wrench_target, 10)
@@ -112,6 +146,20 @@ class Logger(Node):
         self.create_subscription(VehicleOdometry, '/fmu/out/vehicle_odometry', self.cb_px4_odom, px4_qos_profile)
         self.create_subscription(Wrench, self.ft_topic, self.cb_peg_ft, 10)
         self.create_subscription(Vector3Stamped, '/delta_p', self.cb_delta_p, 10)
+        # Drone di interazione: odometria attuale, riferimento nominale e velocità di riferimento
+        peg_odom_topic = f'{self.peg_ns_prefix}/fmu/out/vehicle_odometry'
+        self.create_subscription(VehicleOdometry, peg_odom_topic, self.cb_peg_odom, px4_qos_profile)
+        self.create_subscription(PoseStamped, '/peg_ref_pose', self.cb_peg_ref_pose, 10)
+        self.create_subscription(TwistStamped, '/peg_ref_twist', self.cb_peg_ref_twist, 10)
+        # Trigger avvio logging: segnale dal supervisor al momento dell'arm+offboard
+        qos_latched = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+        self.create_subscription(Bool, '/logging/start', self.cb_logging_start, qos_latched)
+        self.create_subscription(Bool, '/mpc_task/start', self.cb_task_start, qos_latched)
         
         self.get_logger().info(f'Logger ottimizzato avviato | Salva in: {self.save_path}')
 
@@ -145,8 +193,16 @@ class Logger(Node):
         self.last_pref_rpy = quat_to_rpy(qw, qx, qy, qz)
         self.last_pref_q   = np.array([qw, qx, qy, qz], dtype=float)
         self.t_ref.append(self.now_sec())
-        if not self.logging_enabled:
+
+    def cb_logging_start(self, msg: Bool):
+        if msg.data and not self.logging_enabled:
             self.logging_enabled = True
+            self.get_logger().info('Logging AVVIATO (segnale /logging/start ricevuto).')
+
+    def cb_task_start(self, msg: Bool):
+        if msg.data and self.task_start_time is None:
+            self.task_start_time = self.now_sec()
+            self.get_logger().info('Ricevuto start task, salvo timestamp.')
 
     def cb_ref_twist(self, msg: TwistStamped):
         self.last_vref = np.array([msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z], dtype=float)
@@ -181,6 +237,14 @@ class Logger(Node):
         self.haptic_force.append(self.last_haptic_force.copy())
         self.peg_ext_force.append(self.last_peg_ext_force.copy())
         self.delta_p.append(self.last_delta_p.copy())
+        self.peg_actual_pos.append(list(self.last_peg_actual_pos))
+        self.peg_ref_pos.append(list(self.last_peg_ref_pos))
+        self.peg_actual_yaw.append(self.last_peg_actual_yaw)
+        self.peg_ref_yaw.append(self.last_peg_ref_yaw)
+        self.peg_actual_vel.append(list(self.last_peg_actual_vel))
+        self.peg_actual_yaw_rate.append(self.last_peg_actual_yaw_rate)
+        self.peg_ref_vel.append(list(self.last_peg_ref_vel))
+        self.peg_ref_yaw_rate.append(self.last_peg_ref_yaw_rate)
 
         self.last_log_time = t_now
 
@@ -191,7 +255,40 @@ class Logger(Node):
         self.last_online_ref = list(msg.data)    
 
     def cb_online_visual_ref(self, msg: Float64MultiArray):
-        self.last_online_visual_ref = list(msg.data)   
+        self.last_online_visual_ref = list(msg.data)
+
+    def cb_peg_odom(self, msg: VehicleOdometry):
+        """Odometria del drone di interazione (px4_1) - converte NED→ENU con spawn offset."""
+        M_ned2enu = np.array([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]])
+        M_frd2flu = np.array([[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, -1.0]])
+        # Posizione: NED → ENU + spawn offset
+        pos_ned = np.array([msg.position[0], msg.position[1], msg.position[2]])
+        pos_enu = M_ned2enu @ pos_ned + self.peg_start_offset
+        self.last_peg_actual_pos = pos_enu.tolist()
+        # Velocità: NED → ENU
+        vel_ned = np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]])
+        self.last_peg_actual_vel = (M_ned2enu @ vel_ned).tolist()
+        # Yaw ENU: stessa pipeline del drone principale
+        q_scipy = [msg.q[1], msg.q[2], msg.q[3], msg.q[0]]  # [qx, qy, qz, qw]
+        R_frd2ned = Rot.from_quat(q_scipy).as_matrix()
+        R_flu2enu = M_ned2enu @ R_frd2ned @ M_frd2flu
+        self.last_peg_actual_yaw = float(Rot.from_matrix(R_flu2enu).as_euler('xyz')[2])
+        # Yaw rate: FRD → FLU (omega_z_flu = -omega_z_frd)
+        self.last_peg_actual_yaw_rate = float(-msg.angular_velocity[2])
+
+    def cb_peg_ref_pose(self, msg: PoseStamped):
+        """Posizione + yaw nominale di riferimento del peg planner (già in ENU)."""
+        self.last_peg_ref_pos = [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]
+        # Estrai yaw dal quaternione ENU codificato dal planner
+        ox, oy, oz, ow = (msg.pose.orientation.x, msg.pose.orientation.y,
+                          msg.pose.orientation.z, msg.pose.orientation.w)
+        if abs(ox) + abs(oy) + abs(oz) + abs(ow) > 1e-6:  # quaternione valido
+            self.last_peg_ref_yaw = float(Rot.from_quat([ox, oy, oz, ow]).as_euler('xyz')[2])
+
+    def cb_peg_ref_twist(self, msg: TwistStamped):
+        """Velocità + yaw rate nominali di riferimento del peg planner (ENU)."""
+        self.last_peg_ref_vel = [msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z]
+        self.last_peg_ref_yaw_rate = float(msg.twist.angular.z)
     
     def save(self):
         T = np.asarray(self.t)
@@ -199,6 +296,8 @@ class Logger(Node):
             self.get_logger().warn("Nessun dato loggato, salvataggio annullato.")
             return
         T_rel = T - T[0]
+
+        t_start_rel = (self.task_start_time - T[0]) if self.task_start_time else -1.0
 
         # --- TRASFORMAZIONI DI COORDINATE (NED -> ENU, FRD -> FLU) ---
         raw_pos = np.asarray(self.raw_pos)
@@ -269,10 +368,19 @@ class Logger(Node):
             online_visual_ref=online_visual_ref,
             peg_ext_force=peg_ext_force,
             delta_p=np.asarray(self.delta_p),
+            peg_actual_pos=np.asarray(self.peg_actual_pos),
+            peg_ref_pos=np.asarray(self.peg_ref_pos),
+            peg_actual_yaw=np.asarray(self.peg_actual_yaw),
+            peg_ref_yaw=np.asarray(self.peg_ref_yaw),
+            peg_actual_vel=np.asarray(self.peg_actual_vel),
+            peg_actual_yaw_rate=np.asarray(self.peg_actual_yaw_rate),
+            peg_ref_vel=np.asarray(self.peg_ref_vel),
+            peg_ref_yaw_rate=np.asarray(self.peg_ref_yaw_rate),
             acc=acc, ang_acc=ang_acc, jerk=jerk, snap=snap,
             p_cam=p_cam, Xc=Xc, Yc=Yc, Zc=Zc, 
             radius_real=radius, pan_real=pan, tilt_real=tilt,
-            mass=self.mass, cam_offset=self.cam_offset
+            mass=self.mass, cam_offset=self.cam_offset,
+            task_start_time=np.array([t_start_rel])
         )
 
         np.savez(self.save_path, **out)

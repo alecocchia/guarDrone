@@ -63,6 +63,7 @@ def generate_trapezoidal_trajectory(x0, x_ref, dt, v_max=1.0, a_max=2.0):
             
     # Normalizza s in [0, 1]
     s_norm = np.clip(s_vals / L, 0.0, 1.0)
+    s_rpy_norm = np.clip(t_vec / (T/4), 0.0, 1.0)
 
     p_vals = p_in + s_norm[:, np.newaxis] * dp
     
@@ -71,6 +72,6 @@ def generate_trapezoidal_trajectory(x0, x_ref, dt, v_max=1.0, a_max=2.0):
     # Gestione rotazioni brevi su yaw
     drpy[2] = (drpy[2] + np.pi) % (2 * np.pi) - np.pi
     
-    rpy_vals = rpy_in + s_norm[:, np.newaxis] * drpy
+    rpy_vals = rpy_in + s_rpy_norm[:, np.newaxis] * drpy
 
     return t_vec, p_vals, rpy_vals

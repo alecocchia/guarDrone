@@ -91,11 +91,14 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
         parameters=[{
             'use_sim_time': True, 
-            'save_path': '/tmp/pid_run.npz',
+            'save_path': '/tmp/sim_run.npz',
             'mass': auto_mass,
-            'cam_x': auto_cam[0], 'cam_y': auto_cam[1], 'cam_z': auto_cam[2], # AUTOMATICO
+            'cam_x': auto_cam[0], 'cam_y': auto_cam[1], 'cam_z': auto_cam[2],
             'start_x': drone_x, 'start_y': drone_y, 'start_z': drone_z,
-            'ft_topic': LaunchConfiguration('peg_ft_topic')
+            'ft_topic': LaunchConfiguration('peg_ft_topic'),
+            # Drone di interazione: namespace PX4 e spawn offset per conversione NED→ENU
+            'peg_px4_ns': 'px4_1',
+            'peg_start_x': peg_x, 'peg_start_y': peg_y, 'peg_start_z': peg_z,
         }],
     )
 
@@ -130,8 +133,9 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{
             'use_sim_time': True,
             'start_x': drone_x, 'start_y': drone_y, 'start_z': drone_z,
-            'v_max': 1.0,
-            'a_max': 2.0,
+            'dt': 0.02,           # 50 Hz
+            'v_max': 0.5,
+            'a_max': 1.0,
             'px4_ns': '',  # Namespace di root
         }],
         remappings=[
@@ -209,7 +213,7 @@ def generate_launch_description():
         DeclareLaunchArgument('cf', default_value='8.0e-4'),
         DeclareLaunchArgument('ct', default_value='1.0e-5'),
         # -- Parametri ammettenza peg --
-        DeclareLaunchArgument('peg_F_threshold',   default_value='0.08',
+        DeclareLaunchArgument('peg_F_threshold',   default_value='0.2',
                               description='[N] Soglia forza per attivare ammettenza'),
         #DeclareLaunchArgument('peg_adm_mass',      default_value='2.0',
         #                      description='[kg] Massa virtuale ammettenza'),
@@ -217,7 +221,7 @@ def generate_launch_description():
         #                      description='Smorzamento virtuale ammettenza'),
         #DeclareLaunchArgument('peg_adm_stiffness', default_value='80',
         #                      description='Rigidezza virtuale ammettenza (0=puro ammortizzatore)'),
-        DeclareLaunchArgument('peg_adm_max_delta', default_value='5.0',
+        DeclareLaunchArgument('peg_adm_max_delta', default_value='0.75',
                               description='[m] Saturazione spostamento di ammettenza'),
         DeclareLaunchArgument('peg_ft_topic',
                               default_value='/world/interaction/model/x500_interaction_0/joint/end_eff_sens_joint/force_torque',

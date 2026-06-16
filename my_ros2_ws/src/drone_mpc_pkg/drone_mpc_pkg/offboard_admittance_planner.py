@@ -33,7 +33,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from std_msgs.msg import Bool
-from geometry_msgs.msg import PoseStamped, Wrench, Vector3Stamped
+from geometry_msgs.msg import PoseStamped, Wrench, Vector3Stamped, TwistStamped
 from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint, VehicleOdometry
 import numpy as np
 import math
@@ -46,12 +46,10 @@ from drone_mpc_pkg.planner import generate_trapezoidal_trajectory
 # end_eff_sens ha pitch = -π/2 rispetto al frame modello (ENU-aligned quando yaw=0)
 # Gz FT default: misure nel frame child, verso parent (convenzione: forza che il
 # contatto esercita sull'end-effector, nel frame child = sensore).
-# Per portare in body FLU: ruotiamo di -π/2 attorno a Y (preso dall' SDF).
+# Per portare in sensor da body FLU: ruotiamo di π/2 attorno a Y (preso dall' SDF).
 
-
-################### VERIFICARE ROTAZIONI E SEGNI
-_R_SENSOR_TO_BODY = Rotation.from_euler('y', -np.pi / 2.0).as_matrix()
-
+_R_BODY_TO_SENSOR = Rotation.from_euler('y', np.pi / 2.0).as_matrix()
+_R_SENSOR_TO_BODY = _R_BODY_TO_SENSOR.T
 # ── Conversione NED → ENU (stessa usata in offboard_trajectory_planner) ──────
 _M_NED2ENU = np.array([[0., 1., 0 ],
                         [1., 0., 0.],
@@ -82,7 +80,7 @@ class OffboardAdmittancePlanner(Node):
 
     In free-flight (|F_ext| < F_threshold) si comporta come OffboardTrajectoryPlanner.
     In contatto (|F_ext| >= F_threshold) integra una dinamica virtuale di ammettenza
-    per modificare il target di posizione e velocità inviato a PX4.
+    per modificare il target di posizione inviato a PX4.
     """
 
     def __init__(self):
@@ -95,14 +93,14 @@ class OffboardAdmittancePlanner(Node):
         self.declare_parameter('start_z', 0.0)
         self.declare_parameter('v_max', 1.0)
         self.declare_parameter('a_max', 2.0)
-        self.declare_parameter('dt', 0.02)   # 50 Hz (più alto di prima per l'ammettenza)
+        self.declare_parameter('dt', 0.01)   # 100 Hz (più alto di prima per l'ammettenza)
 
         # -- Parametri ammettenza --
-        self.declare_parameter('F_threshold', 0.02)    # [N] soglia attivazione
+        self.declare_parameter('F_threshold', 0.2)    # [N] soglia attivazione
         #self.declare_parameter('adm_mass', 1.0)       # [kg] massa virtuale
         #self.declare_parameter('adm_damping', 8.0)    # smorzamento virtuale
         #self.declare_parameter('adm_stiffness', 0.0)  # rigidezza virtuale (0 = ammortizzatore puro)
-        self.declare_parameter('adm_max_delta', 5.0)  # [m] saturazione spostamento
+        self.declare_parameter('adm_max_delta', 0.75)  # [m] saturazione spostamento
 
         # -- Topic FT sensor --
         # Il topic cambia con l'ordine di spawn (_0 o _1).
@@ -128,23 +126,23 @@ class OffboardAdmittancePlanner(Node):
         
         # Ora adm_K, adm_M, adm_D sono array numpy (1 per asse nel frame SENSOR)
         # Es: Kx=50 (laterale), Ky=50 (laterale), Kz=50 (assiale al peg)
-        F_max_x = 2.0
-        F_max_y = 2.0
-        F_max_z = 8.0
+        F_max_x = 2.0/10
+        F_max_y = 2.0/10
+        F_max_z = 8.0/10
 
         delta_x_max = 0.05
         delta_y_max = 0.05
-        delta_z_max = 0.1
+        delta_z_max = 0.4
 
         adm_K_x = F_max_x/delta_x_max
         adm_K_y = F_max_y/delta_y_max
         adm_K_z = F_max_z/delta_z_max
 
         self.adm_K = np.array([adm_K_x, adm_K_y, adm_K_z])
-        self.Ta = np.array([1,1,1])
-        self.wn = 4.7 / self.Ta
+        self.Ta = np.array([5,5,5])
+        self.wn = 4 / self.Ta
         self.adm_M = self.adm_K / (self.wn**2)
-        self.adm_D = 2 * np.sqrt(self.adm_K * self.adm_M)*np.array([1.2,1.2,1.4])
+        self.adm_D = 2 * np.sqrt(self.adm_K * self.adm_M)*np.array([1.5,1.5,1.2])
         self.adm_max_delta = self.get_parameter('adm_max_delta').get_parameter_value().double_value
 
         ft_topic = self.get_parameter('ft_topic').get_parameter_value().string_value
@@ -171,6 +169,8 @@ class OffboardAdmittancePlanner(Node):
         self.setpoint_pub = self.create_publisher(
             TrajectorySetpoint, f'{prefix}/fmu/in/trajectory_setpoint', 1)
         self.delta_p_pub = self.create_publisher(Vector3Stamped, 'delta_p', 10)
+        self.peg_ref_pub = self.create_publisher(PoseStamped, '/peg_ref_pose', 10)
+        self.peg_ref_twist_pub = self.create_publisher(TwistStamped, '/peg_ref_twist', 10)
 
         # -- Subscribers --
         self.odom_sub = self.create_subscription(
@@ -185,7 +185,6 @@ class OffboardAdmittancePlanner(Node):
 
         # -- Stato interno (traiettoria) --
         self.current_pos = np.zeros(3)   # ENU + spawn offset
-        self.current_vel = np.zeros(3)   # ENU
         self.current_rpy = np.zeros(3)
         self.R_flu2enu = np.eye(3)       # rotazione corrente body FLU → ENU
         self.has_odom = False
@@ -228,10 +227,6 @@ class OffboardAdmittancePlanner(Node):
         self.current_pos[1] = pos_enu[1] + self.get_parameter('start_y').value
         self.current_pos[2] = pos_enu[2] + self.get_parameter('start_z').value
 
-        # Velocità: NED → ENU
-        vel_ned = np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]])
-        self.current_vel[:] = _M_NED2ENU @ vel_ned
-
         # Orientamento
         rot_flu2enu = Rotation.from_matrix(R_flu2enu)
         self.current_rpy[:] = rot_flu2enu.as_euler('xyz')
@@ -265,6 +260,7 @@ class OffboardAdmittancePlanner(Node):
 
         # Se l'ammettenza NON deve agire (es. siamo a terra o forza debole), azzeriamo l'input.
         # In questo modo l'integrazione, se delta_p > 0, lo riporterà a zero dolcemente (K>0)
+        
         if self.admittance_active:
             self.F_ext_sens = F_sensor.copy()
         else:
@@ -339,7 +335,7 @@ class OffboardAdmittancePlanner(Node):
         # -- Pubblica sempre OffboardControlMode --
         ocm = OffboardControlMode()
         ocm.position = True
-        ocm.velocity = True   # Abilita anche la componente velocity per il feedforward
+        ocm.velocity = True    # feedforward velocità abilitato
         ocm.acceleration = False
         ocm.attitude = False
         ocm.body_rate = False
@@ -349,13 +345,20 @@ class OffboardAdmittancePlanner(Node):
         if self.traj_p is None:
             # Nessun target: tieni la posizione corrente
             if self.has_odom:
-                self.publish_setpoint(self.current_pos, np.zeros(3), self.current_rpy[2])
+                self.publish_setpoint(self.current_pos, self.current_rpy[2])
             return
 
-        # -- Posizione nominale dalla traiettoria --
+        # -- Posizione e velocità nominali dalla traiettoria --
         idx = min(self.current_index, len(self.traj_p) - 1)
         p_nom = self.traj_p[idx]
         yaw_nom = self.traj_rpy[idx][2]
+        # Velocità nominale: differenza finita in ENU
+        idx_next = min(idx + 1, len(self.traj_p) - 1)
+        v_nom = (self.traj_p[idx_next] - p_nom) / self.dt          # [m/s] ENU
+        dyaw = self.traj_rpy[idx_next][2] - yaw_nom
+        if dyaw >  np.pi: dyaw -= 2 * np.pi
+        if dyaw < -np.pi: dyaw += 2 * np.pi
+        yaw_rate_nom = dyaw / self.dt                               # [rad/s]
 
         # -- Aggiornamento ammettenza --
         # Integriamo SEMPRE l'equazione. Se non c'è contatto (admittance_active=False), 
@@ -364,22 +367,47 @@ class OffboardAdmittancePlanner(Node):
 
         # -- Composizione setpoint finale --
         # Ruotiamo delta_p e delta_v dal frame SENSOR al frame ENU
-        R_sensor2enu = self.R_flu2enu @ _R_SENSOR_TO_BODY
+        R_sensor2enu =  self.R_flu2enu @ _R_SENSOR_TO_BODY
         delta_p_enu = R_sensor2enu @ self.delta_p
         delta_v_enu = R_sensor2enu @ self.delta_v
 
         p_cmd = p_nom + delta_p_enu
-        v_cmd = delta_v_enu  # Feedforward: solo la componente di ammettenza
+        v_cmd = v_nom + delta_v_enu   # velocità totale (nominale + contributo ammettenza)
 
-        self.publish_setpoint(p_cmd, v_cmd, yaw_nom)
+        self.publish_setpoint(p_cmd, yaw_nom, v_cmd)
 
         # -- Pubblica delta_p_enu (per logging e RViz) --
         dp_msg = Vector3Stamped()
         dp_msg.header.stamp = self.get_clock().now().to_msg()
-        dp_msg.vector.x = float(delta_p_enu[0])
-        dp_msg.vector.y = float(delta_p_enu[1])
-        dp_msg.vector.z = float(delta_p_enu[2])
+        dp_msg.vector.x = float(self.delta_p[0])
+        dp_msg.vector.y = float(self.delta_p[1])
+        dp_msg.vector.z = float(self.delta_p[2])
         self.delta_p_pub.publish(dp_msg)
+
+        # -- Pubblica posizione + yaw di riferimento nominale peg in ENU (per logger) --
+        ref_msg = PoseStamped()
+        ref_msg.header.stamp = self.get_clock().now().to_msg()
+        ref_msg.header.frame_id = 'map'
+        ref_msg.pose.position.x = float(p_nom[0])
+        ref_msg.pose.position.y = float(p_nom[1])
+        ref_msg.pose.position.z = float(p_nom[2])
+        # Codifica yaw_nom come quaternione Rz(yaw_nom) [ENU]
+        q_yaw = Rotation.from_euler('z', yaw_nom).as_quat()  # [qx, qy, qz, qw]
+        ref_msg.pose.orientation.x = float(q_yaw[0])
+        ref_msg.pose.orientation.y = float(q_yaw[1])
+        ref_msg.pose.orientation.z = float(q_yaw[2])
+        ref_msg.pose.orientation.w = float(q_yaw[3])
+        self.peg_ref_pub.publish(ref_msg)
+
+        # -- Pubblica velocità + yaw rate nominali (per logger) --
+        twist_msg = TwistStamped()
+        twist_msg.header.stamp = self.get_clock().now().to_msg()
+        twist_msg.header.frame_id = 'map'
+        twist_msg.twist.linear.x  = float(v_nom[0])
+        twist_msg.twist.linear.y  = float(v_nom[1])
+        twist_msg.twist.linear.z  = float(v_nom[2])
+        twist_msg.twist.angular.z = float(yaw_rate_nom)
+        self.peg_ref_twist_pub.publish(twist_msg)
 
         # Avanza l'indice della traiettoria nominale
         if self.current_index < len(self.traj_p):
@@ -397,7 +425,8 @@ class OffboardAdmittancePlanner(Node):
 
         # Accelerazione virtuale nel frame SENSOR
         delta_a = (F - self.adm_D * self.delta_v - self.adm_K * self.delta_p) / self.adm_M
-
+        #delta_a[0] = 0.0
+        #delta_a[1] = 0.0
         # Integrazione Eulero
         self.delta_v += delta_a * self.dt
         self.delta_p += self.delta_v * self.dt
@@ -407,46 +436,32 @@ class OffboardAdmittancePlanner(Node):
         if delta_norm > self.adm_max_delta:
             self.delta_p = self.delta_p / delta_norm * self.adm_max_delta
 
-    def _decay_admittance(self):
-        """
-        Quando il contatto cessa, lascia che lo smorzamento virtuale riporti
-        Δp → 0 naturalmente (senza forza esterna, F=0 nella dinamica). Questo vale
-        solo se k!=0; se k=0 il drone resta dov'è quando il contatto cessa.
-        """
-
-        decay_D = self.adm_D / 10
-        decay_K = 0.1
-        decay_M = 2
-
-        if np.linalg.norm(self.delta_p) < 1e-4 and np.linalg.norm(self.delta_v) < 1e-4:
-            self.delta_p[:] = 0.0
-            self.delta_v[:] = 0.0
-            return
-
-        delta_a = (-decay_D * self.delta_v - decay_K * self.delta_p) / decay_M
-        self.delta_v += delta_a * self.dt
-        self.delta_p += self.delta_v * self.dt
 
     # ── Pubblicazione setpoint ────────────────────────────────────────────────
 
-    def publish_setpoint(self, pos_enu: np.ndarray, vel_enu: np.ndarray, yaw_enu: float):
+    def publish_setpoint(self, pos_enu: np.ndarray, yaw_enu: float,
+                         vel_enu: np.ndarray = None):
         """
         Converte da ENU (con spawn offset) a NED locale (frame PX4) e pubblica.
+        vel_enu [m/s]: se fornito, viene inviato come feedforward di velocità.
         """
         # Rimuovi spawn offset per tornare alle coordinate locali PX4
-        lx = pos_enu[0] - self.get_parameter('start_x').value
-        ly = pos_enu[1] - self.get_parameter('start_y').value
-        lz = pos_enu[2] - self.get_parameter('start_z').value
+        lx = float(pos_enu[0] - self.get_parameter('start_x').value)
+        ly = float(pos_enu[1] - self.get_parameter('start_y').value)
+        lz = float(pos_enu[2] - self.get_parameter('start_z').value)
 
         msg = TrajectorySetpoint()
         # ENU → NED: [E, N, U] → [N, E, -U]
-        msg.position = [float(ly), float(lx), float(-lz)]
+        pose_ned = _M_NED2ENU.T @ np.array([lx, ly, lz])
+        msg.position = [float(pose_ned[0]), float(pose_ned[1]), float(pose_ned[2])]
 
-        # Velocità feedforward (se non zero, PX4 la usa nel blending)
-        msg.velocity = [float(vel_enu[1]), float(vel_enu[0]), float(-vel_enu[2])]
+        # Feedforward velocità (ENU → NED)
+        if vel_enu is not None:
+            vel_ned = _M_NED2ENU.T @ vel_enu
+            msg.velocity = [float(vel_ned[0]), float(vel_ned[1]), float(vel_ned[2])]
 
         # Yaw: ENU → NED convention
-        msg.yaw = float(-yaw_enu + np.pi / 2.0)
+        msg.yaw = float(-yaw_enu + np.pi / 2)
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.setpoint_pub.publish(msg)
 

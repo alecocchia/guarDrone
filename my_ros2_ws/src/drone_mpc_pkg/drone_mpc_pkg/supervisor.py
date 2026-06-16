@@ -39,6 +39,8 @@ class SupervisorNode(Node):
 
         # Publisher for Task Start
         self.task_start_pub = self.create_publisher(Bool, '/mpc_task/start', qos_latched)
+        # Publisher per segnale di avvio logging (al momento dell'arming+offboard)
+        self.logging_start_pub = self.create_publisher(Bool, '/logging/start', qos_latched)
 
         # Publisher per i nodi trajectory_planner
         self.cam_target_pub = self.create_publisher(PoseStamped, '/camera_target_pose', 10)
@@ -173,6 +175,11 @@ class SupervisorNode(Node):
                 self.peg_traj_enabled_pub.publish(msg)
 
                 self.state = 'ARM_OFFBOARD'
+                # Segnala al logger di iniziare a registrare
+                log_start_msg = Bool()
+                log_start_msg.data = True
+                self.logging_start_pub.publish(log_start_msg)
+                self.get_logger().info("Segnale /logging/start pubblicato.")
 
         elif self.state == 'ARM_OFFBOARD':
             self.get_logger().info(f"Stato droni -> D1(offboard:{self.drone1_mode.flag_control_offboard_enabled}, arm:{self.drone1_mode.flag_armed}) | D2(offboard:{self.drone2_mode.flag_control_offboard_enabled}, arm:{self.drone2_mode.flag_armed})")
@@ -235,7 +242,7 @@ class SupervisorNode(Node):
                 
                 # Impostazione del target di yaw desiderato (in radianti)
                 # Esempio: rotazione di 90 gradi rispetto all'asse Z
-                target_yaw = -math.pi/2 
+                target_yaw = -math.pi/2 +0.2 
                 
                 # Utilizziamo scipy.spatial.transform.Rotation per convertire Roll-Pitch-Yaw in Quaternioni
                 rot = R.from_euler('xyz', [0.0, 0.0, target_yaw])

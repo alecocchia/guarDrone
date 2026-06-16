@@ -2,7 +2,7 @@
 import argparse, numpy as np
 import matplotlib.pyplot as plt
 
-def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, fignum=None):
+def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, fignum=None, task_start=-1.0):
     plt.rcParams.update({"text.usetex": use_tex, "font.family": "serif"})
     n = len(data_list)
     nrows = int(np.ceil(n / ncols))
@@ -26,6 +26,8 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
                 axes[i].axhline(y=ref_data, color='r', linestyle='--', label='Ref')
             else:
                 axes[i].plot(time_plot, ref_data[:len(time_plot)], 'r--', label='Reference', linewidth=1.2)
+        if task_start > 0:
+            axes[i].axvline(x=task_start, color='k', linestyle='--', linewidth=1.5, label='Mission Start')
         
         axes[i].set_title(labels[i])
         axes[i].grid(True, alpha=0.3)
@@ -43,10 +45,12 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--log", type=str, default="/tmp/pid_run.npz")
+    ap.add_argument("--log", type=str, default="/tmp/sim_run.npz")
     ap.add_argument("--tex", action="store_true")
     ap.add_argument("--save", action="store_true")
     ap.add_argument("--all", action="store_true", help="Show all figures at once (default is sequential)")
+    ap.add_argument("--task-start", type=float, default=None,
+                    help="[s] Tempo (relativo) inizio task: disegna linea verticale (sovrascrive il log)")
     args = ap.parse_args()
 
     try:
@@ -59,6 +63,10 @@ def main():
     mass = data['mass'] if 'mass' in data.files else 2.0
     g = 9.80665
     block = not args.all and not args.save # Se vogliamo sequenziale, block=True a ogni plot
+    task_start = float(data['task_start_time'][0]) if 'task_start_time' in data.files else -1.0
+    if args.task_start is not None:   # argomento CLI sovrascrive il valore del log
+        task_start = args.task_start
+    print(f"[DEBUG] task_start_time in files: {'task_start_time' in data.files}, value used: {task_start:.3f} s")
 
     # --- FIGURE 1: Position (ENU) ---
     fig_pos_data = [
@@ -67,7 +75,7 @@ def main():
         {'sim': data['pos'][:, 2], 'ref': data['pref_pos'][:, 2]}
     ]
     myPlot(t, fig_pos_data, ["Position X [m]", "Position Y [m]", "Position Z [m]"], 
-           "Drone Position vs MPC Reference", ncols=3, use_tex=args.tex, block=block, fignum=1)
+           "Drone Position vs MPC Reference", ncols=3, use_tex=args.tex, block=block, fignum=1, task_start=task_start)
 
     # --- FIGURE 2: Orientation (RPY) ---
     fig_rpy_data = [
@@ -75,7 +83,7 @@ def main():
         {'sim': data['rpy'][:, 1], 'ref': data['pref_rpy'][:, 1]}
     ]
     myPlot(t, fig_rpy_data, ["Roll [rad]", "Pitch [rad]"], 
-           "Drone Orientation (Roll/Pitch) vs MPC Reference", ncols=2, use_tex=args.tex, block=block, fignum=2)
+           "Drone Orientation (Roll/Pitch) vs MPC Reference", ncols=2, use_tex=args.tex, block=block, fignum=2, task_start=task_start)
 
     # --- FIGURE 3: Velocities ---
     fig_vel_data = [
@@ -88,7 +96,7 @@ def main():
     ]
     myPlot(t, fig_vel_data, ["Vel X [m/s]", "Vel Y [m/s]", "Vel Z [m/s]", 
                   "Omega X [rad/s]", "Omega Y [rad/s]", "Omega Z [rad/s]"], 
-           "Drone Velocities vs MPC Reference", ncols=3, use_tex=args.tex, block=block, fignum=3)
+           "Drone Velocities vs MPC Reference", ncols=3, use_tex=args.tex, block=block, fignum=3, task_start=task_start)
 
     # --- FIGURE 4: PoV Orbiting & Orientation ---
     fig4_data = [
@@ -96,7 +104,7 @@ def main():
         {'sim': data['radius_real'], 'ref': data['online_ref'][:, 0]}
     ]
     myPlot(t, fig4_data, ["Pan Mutuo (Orbit) [rad]", "Mutual Distance (Xc) [m]"], 
-           "PoV Orbiting and Distance Tracking", ncols=2, use_tex=args.tex, block=block, fignum=4)
+           "PoV Orbiting and Distance Tracking", ncols=2, use_tex=args.tex, block=block, fignum=4, task_start=task_start)
 
     # --- FIGURE 5: Visual Servoing (Camera Frame) ---
     fig5_data = [
@@ -105,7 +113,7 @@ def main():
         {'sim': data['Zc'], 'ref': data['online_visual_ref'][:, 2]}
     ]
     myPlot(t, fig5_data, ["Xc (Depth/Zoom) [m]", "Yc (Horizontal Offset) [m]", "Zc (Vertical Offset) [m]"], 
-           "Visual Servoing: Target Position in Camera Frame", ncols=3, use_tex=args.tex, block=block, fignum=5)
+           "Visual Servoing: Target Position in Camera Frame", ncols=3, use_tex=args.tex, block=block, fignum=5, task_start=task_start)
 
     # --- FIGURE 6: Primary Tracking Errors (Position, Visual, Orientation) ---
     err_pos = np.linalg.norm(data['pos'][:, :2] - data['pref_pos'][:, :2], axis=1)
@@ -116,7 +124,7 @@ def main():
         {'sim': err_pos, 'ref': 0}, {'sim': err_vis, 'ref': 0}, {'sim': err_rp, 'ref': 0}
     ]
     myPlot(t, fig6_data, ["Norm Pos Error [m]", "Norm Visual Error [m]", "Norm Roll/Pitch Error"], 
-           "Primary Tracking Errors", ncols=3, use_tex=args.tex, block=block, fignum=6)
+           "Primary Tracking Errors", ncols=3, use_tex=args.tex, block=block, fignum=6, task_start=task_start)
 
     # --- FIGURE 7: Dynamic States Errors & Derivatives ---
     err_vel = np.linalg.norm(data['v'] - data['vref'], axis=1)
@@ -131,7 +139,7 @@ def main():
     ]
     myPlot(t, fig7_data, ["Norm Vel Error [m/s]", "Norm Omega Error [rad/s]", "Norm Acc [m/s^2]",
                "Norm AngAcc [rad/s^2]", "Norm Jerk [m/s^3]", "Norm Snap [m/s^4]"], 
-           "Dynamic States Errors and Derivatives", ncols=3, use_tex=args.tex, block=block, fignum=7)
+           "Dynamic States Errors and Derivatives", ncols=3, use_tex=args.tex, block=block, fignum=7, task_start=task_start)
 
     # --- FIGURE 8: Wrench ---
     fig8_data = [
@@ -141,7 +149,7 @@ def main():
         {'sim': data['wrench_cmd'][:, 3], 'ref': data['wrench_target'][:, 3]}
     ]
     myPlot(t, fig8_data, ["Force Z (Thrust) [N]", "Torque X [Nm]", "Torque Y [Nm]", "Torque Z [Nm]"], 
-           f"Control Wrench (Hover Force = {mass*g:.2f}N)", ncols=2, use_tex=args.tex, block=block, fignum=8)
+           f"Control Wrench (Hover Force = {mass*g:.2f}N)", ncols=2, use_tex=args.tex, block=block, fignum=8, task_start=task_start)
 
     # --- FIGURE 9: Haptic Forces ---
     if 'haptic_force' in data.files:
@@ -151,7 +159,7 @@ def main():
             {'sim': data['haptic_force'][:, 2], 'ref': 0.0}
         ]
         myPlot(t, fig9_data, ["Force X (Zoom) [N]", "Force Y (Pan) [N]", "Force Z (Altitude) [N]"], 
-               "Haptic Feedback Forces Transmitted to Joystick", ncols=3, use_tex=args.tex, block=block, fignum=9)
+               "Haptic Feedback Forces Transmitted to haptic device", ncols=3, use_tex=args.tex, block=block, fignum=9, task_start=task_start)
 
     # --- FIGURE 10: Individual Linear and Angular Accelerations ---
     fig10_data = [
@@ -165,7 +173,7 @@ def main():
     myPlot(t, fig10_data, 
            ["Linear Acc X [m/s^2]", "Linear Acc Y [m/s^2]", "Linear Acc Z [m/s^2]", 
             "Angular Acc X [rad/s^2]", "Angular Acc Y [rad/s^2]", "Angular Acc Z [rad/s^2]"], 
-           "Drone Linear and Angular Accelerations", ncols=3, use_tex=args.tex, block=block, fignum=10)
+           "Drone Linear and Angular Accelerations", ncols=3, use_tex=args.tex, block=block, fignum=10, task_start=task_start)
 
     # --- FIGURE 11: Peg External Forces ---
     if 'peg_ext_force' in data.files:
@@ -176,7 +184,7 @@ def main():
         ]
         myPlot(t, fig11_data, 
                ["Force X (Sensor) [N]", "Force Y (Sensor) [N]", "Force Z (Sensor) [N]"], 
-               "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=11)
+               "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=11, task_start=task_start)
 
     # --- FIGURE 12: Admittance delta_p (spostamento di ammettenza) ---
     if 'delta_p' in data.files:
@@ -191,8 +199,8 @@ def main():
         myPlot(t, fig12_data,
                [r"$\Delta p_x$ [m]", r"$\Delta p_y$ [m]", r"$\Delta p_z$ [m]",
                 r"$\|\Delta p\|$ [m]"],
-               "Admittance Displacement $\\Delta p$ (ENU)",
-               ncols=2, use_tex=args.tex, block=block, fignum=12)
+               "Admittance Displacement $\\Delta p$ (Sensor Frame)",
+               ncols=2, use_tex=args.tex, block=block, fignum=12, task_start=task_start)
 
     # --- FIGURE 13: Confronto ||delta_p|| vs ||F_ext|| ---
     if 'delta_p' in data.files and 'peg_ext_force' in data.files:
@@ -219,6 +227,49 @@ def main():
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         if block:
             plt.show()
+
+    # --- FIGURE 14: Interaction Drone Position ENU (Actual vs Reference) + Yaw ---
+    has_peg_actual = 'peg_actual_pos' in data.files
+    has_peg_ref    = 'peg_ref_pos'    in data.files
+    has_peg_yaw    = 'peg_actual_yaw' in data.files
+    if has_peg_actual or has_peg_ref:
+        peg_act = data['peg_actual_pos'] if has_peg_actual else np.zeros((len(t), 3))
+        peg_ref = data['peg_ref_pos']    if has_peg_ref    else None
+
+        fig14_data = [
+            {'sim': peg_act[:, 0], 'ref': peg_ref[:, 0] if peg_ref is not None else None},
+            {'sim': peg_act[:, 1], 'ref': peg_ref[:, 1] if peg_ref is not None else None},
+            {'sim': peg_act[:, 2], 'ref': peg_ref[:, 2] if peg_ref is not None else None},
+        ]
+        if has_peg_yaw:
+            peg_ref_yaw = data['peg_ref_yaw'] if 'peg_ref_yaw' in data.files else None
+            fig14_data.append({'sim': data['peg_actual_yaw'], 'ref': peg_ref_yaw})
+        myPlot(t, fig14_data,
+               ["Peg X [m]", "Peg Y [m]", "Peg Z [m]"] + (["Peg Yaw [rad]"] if has_peg_yaw else []),
+               "Interaction Drone Position ENU (Actual vs Planner Reference)",
+               ncols=2, use_tex=args.tex, block=block, fignum=14, task_start=task_start)
+
+    # --- FIGURE 15: Interaction Drone Velocities (ENU) + Yaw Rate ---
+    has_peg_vel      = 'peg_actual_vel'      in data.files
+    has_peg_yaw_rate = 'peg_actual_yaw_rate' in data.files
+    if has_peg_vel or has_peg_yaw_rate:
+        fig15_data, labels15 = [], []
+        peg_ref_vel      = data['peg_ref_vel']      if 'peg_ref_vel'      in data.files else None
+        peg_ref_yaw_rate = data['peg_ref_yaw_rate'] if 'peg_ref_yaw_rate' in data.files else None
+        if has_peg_vel:
+            peg_vel = data['peg_actual_vel']
+            fig15_data += [
+                {'sim': peg_vel[:, 0], 'ref': peg_ref_vel[:, 0] if peg_ref_vel is not None else None},
+                {'sim': peg_vel[:, 1], 'ref': peg_ref_vel[:, 1] if peg_ref_vel is not None else None},
+                {'sim': peg_vel[:, 2], 'ref': peg_ref_vel[:, 2] if peg_ref_vel is not None else None},
+            ]
+            labels15 += ["Vel X [m/s]", "Vel Y [m/s]", "Vel Z [m/s]"]
+        if has_peg_yaw_rate:
+            fig15_data.append({'sim': data['peg_actual_yaw_rate'], 'ref': peg_ref_yaw_rate})
+            labels15.append("Yaw Rate [rad/s]")
+        myPlot(t, fig15_data, labels15,
+               "Interaction Drone Velocities (ENU) and Yaw Rate",
+               ncols=2, use_tex=args.tex, block=block, fignum=15, task_start=task_start)
 
     if args.save:
         for i in plt.get_fignums():

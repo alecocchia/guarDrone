@@ -17,7 +17,7 @@ DRONE1_Z=${DRONE1_Z:-4.52}
 DRONE1_YAW=${DRONE1_YAW:-0.0}
 
 # --- Configurazione Posa Iniziale Drone di Interazione ---
-DRONE2_X=${DRONE2_X:--2.0}
+DRONE2_X=${DRONE2_X:--1.0}
 DRONE2_Y=${DRONE2_Y:--54.0}
 DRONE2_Z=${DRONE2_Z:-4.52}
 DRONE2_YAW=${DRONE2_YAW:-0.0}
@@ -88,7 +88,7 @@ tmux send-keys -t $SESSION_NAME:0.3 "sleep 10 && ros2 launch drone_mpc_pkg mpc_s
 
 # --- Riquadro 4: Terminale Libero (full width, in fondo) ---
 tmux select-pane -T '4: Spare Terminal' -t $SESSION_NAME:0.4
-tmux send-keys -t $SESSION_NAME:0.4 "cd /root/my_ros2_ws && colcon build && source /opt/ros/humble/setup.bash && source install/setup.bash && alias aaa='tmux list-panes -s -F \"#{pane_id}\" | grep -v \$(tmux display-message -p \"#{pane_id}\") | xargs -I {} tmux send-keys -t {} C-c && echo \"Attendendo 5 secondi per la chiusura pulita di Gazebo e ROS...\" && sleep 3 && tmux kill-server' && clear" C-m
+tmux send-keys -t $SESSION_NAME:0.4 "cd /root/my_ros2_ws && colcon build && source /opt/ros/humble/setup.bash && source install/setup.bash && alias aaa='tmux list-panes -s -F \"#{pane_id}\" | grep -v \$(tmux display-message -p \"#{pane_id}\") | xargs -I {} tmux send-keys -t {} C-c && echo \"Attendendo 5 secondi per la chiusura pulita di Gazebo e ROS...\" && sleep 5 && tmux kill-server' && clear" C-m
 
 # 5. ATTACCO ALLA SESSIONE
 tmux attach-session -t $SESSION_NAME\
