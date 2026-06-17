@@ -43,9 +43,9 @@ def generate_launch_description():
         parameters=[{
             'k_spring': 50.0,
             'b_damping': 10.0,
-            'v_pan_max': 0.5,
+            'v_pan_max': 1.0,
             'v_zc_max': 0.5,
-            'v_xc_max': 0.8,
+            'v_xc_max': 1.5,
             'deadband': 0.005
         }]
     )

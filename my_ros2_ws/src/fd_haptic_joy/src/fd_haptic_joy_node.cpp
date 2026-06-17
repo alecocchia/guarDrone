@@ -33,9 +33,10 @@ public:
     this->declare_parameter("fov_h", 80.0);         
     this->declare_parameter("fov_v", 60.0);         
     this->declare_parameter("x_min_safety", 1.5);   
-    this->declare_parameter("k_repulsive", 10.0); // costante elastica del campo repulsivo
-    this->declare_parameter("alpha", 0.1 ); // esponente del campo repulsivo che definisce la forma dell'esponenziale
-    this->declare_parameter("activation_ratio", 0.1); // Inizia a sentirsi prima (act_ratio%)
+    this->declare_parameter("k_repulsive", 1.0); // costante elastica del campo repulsivo
+    this->declare_parameter("alpha", 1.2); // esponente del campo repulsivo che definisce la forma dell'esponenziale
+    this->declare_parameter("activation_ratio", 1.0); // Inizia a sentirsi prima (act_ratio%)
+    this->declare_parameter("activation_ratio_cam", 1.0); // Inizia a sentirsi prima (act_ratio%)
     this->declare_parameter("max_repulsive_force", 15.0); // Aumentato limite repulsione
 
     // Subscribers
@@ -153,6 +154,7 @@ private:
       for (int i = 0; i < 3; ++i) {
         double raw_vel = (falcon_pos_[i] - prev_falcon_pos_[i]) / dt;
         falcon_vel_[i] = 0.8 * falcon_vel_[i] + 0.2 * raw_vel; // Filtro passa-basso di 1° ordine
+        //falcon_vel_[i] = raw_vel;
         prev_falcon_pos_[i] = falcon_pos_[i];
       }
     }
@@ -163,6 +165,7 @@ private:
     double x_min = this->get_parameter("x_min_safety").as_double();
     double k_rep = this->get_parameter("k_repulsive").as_double();
     double act_ratio = this->get_parameter("activation_ratio").as_double();
+    double act_ratio_cam = this->get_parameter("activation_ratio_cam").as_double();
     double max_rep = this->get_parameter("max_repulsive_force").as_double();
 
     double T_h = std::tan(fov_h_deg * M_PI / 360.0); // tan(fov_h/2)
@@ -198,15 +201,15 @@ private:
     // Forza sull'asse Y del Falcon (comanda Pan/Orbit):
     //   - Bordo destro violato -> forza che spinge Falcon Y verso sinistra (negativa)
     //   - Bordo sinistro violato -> forza che spinge Falcon Y verso destra (positiva)
-    double f_rep_right = repulsive_force(dist_right, half_width, act_ratio, k_rep, alpha, max_rep);
-    double f_rep_left  = repulsive_force(dist_left,  half_width, act_ratio, k_rep, alpha, max_rep);
-    double f_rep_y = -f_rep_right + f_rep_left; // Netto su asse Y Falcon
+    double f_rep_right = repulsive_force(dist_right, half_width, act_ratio_cam, k_rep, alpha, max_rep);
+    double f_rep_left  = repulsive_force(dist_left,  half_width, act_ratio_cam, k_rep, alpha, max_rep);
+    double f_rep_y = -f_rep_right + f_rep_left; // Forza netta su asse Y Falcon
 
     // Forza sull'asse Z del Falcon (comanda Zc/Altezza):
     //   - Bordo alto violato -> forza che spinge Falcon Z verso l'alto (positiva)
     //   - Bordo basso violato -> forza che spinge Falcon Z verso il basso (negativa)
-    double f_rep_top    = repulsive_force(dist_top,    half_height, act_ratio, k_rep, alpha, max_rep);
-    double f_rep_bottom = repulsive_force(dist_bottom, half_height, act_ratio, k_rep, alpha, max_rep);
+    double f_rep_top    = repulsive_force(dist_top,    half_height, act_ratio_cam, k_rep, alpha*2, max_rep);
+    double f_rep_bottom = repulsive_force(dist_bottom, half_height, act_ratio_cam, k_rep, alpha*2, max_rep);
     double f_rep_z = f_rep_top - f_rep_bottom; // Netto su asse Z Falcon
 
     // Forza sull'asse X del Falcon (comanda Xc/Zoom):
@@ -231,7 +234,7 @@ private:
       forces[2] += f_rep_z;
     }
 
-    // Saturazione per sicurezza
+    // Saturazione di sicurezza
     for (int i = 0; i < 3; ++i) {
       forces[i] = std::max(-max_f, std::min(max_f, forces[i]));
     }
@@ -257,7 +260,7 @@ private:
       double v_zc_max  = this->get_parameter("v_zc_max").as_double();
       double v_xc_max  = this->get_parameter("v_xc_max").as_double();
 
-      // Calcolo velocità di riferimento
+      // Calcolo velocità di riferimento (interpreto posizione haptic come velocità)
       current_pov_vel_[0] = xc_cmd  * v_xc_max;
       current_pov_vel_[1] = 0.0; // Yc non comandata direttamente
       current_pov_vel_[2] = zc_cmd  * v_zc_max;

@@ -132,7 +132,7 @@ class OffboardAdmittancePlanner(Node):
 
         delta_x_max = 0.05
         delta_y_max = 0.05
-        delta_z_max = 0.4
+        delta_z_max = 0.6
 
         adm_K_x = F_max_x/delta_x_max
         adm_K_y = F_max_y/delta_y_max
@@ -142,7 +142,7 @@ class OffboardAdmittancePlanner(Node):
         self.Ta = np.array([5,5,5])
         self.wn = 4 / self.Ta
         self.adm_M = self.adm_K / (self.wn**2)
-        self.adm_D = 2 * np.sqrt(self.adm_K * self.adm_M)*np.array([1.5,1.5,1.2])
+        self.adm_D = 2 * np.sqrt(self.adm_K * self.adm_M)*np.array([1.5,1.5,1.5])
         self.adm_max_delta = self.get_parameter('adm_max_delta').get_parameter_value().double_value
 
         ft_topic = self.get_parameter('ft_topic').get_parameter_value().string_value

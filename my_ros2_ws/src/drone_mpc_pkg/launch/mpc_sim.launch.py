@@ -221,7 +221,7 @@ def generate_launch_description():
         #                      description='Smorzamento virtuale ammettenza'),
         #DeclareLaunchArgument('peg_adm_stiffness', default_value='80',
         #                      description='Rigidezza virtuale ammettenza (0=puro ammortizzatore)'),
-        DeclareLaunchArgument('peg_adm_max_delta', default_value='0.75',
+        DeclareLaunchArgument('peg_adm_max_delta', default_value='10.0',
                               description='[m] Saturazione spostamento di ammettenza'),
         DeclareLaunchArgument('peg_ft_topic',
                               default_value='/world/interaction/model/x500_interaction_0/joint/end_eff_sens_joint/force_torque',

@@ -11,15 +11,15 @@ if [[ "$1" == "--headless" ]]; then
 fi
 
 # --- Configurazione Posa Iniziale Drone MPC ---
-DRONE1_X=${DRONE1_X:--17.0}
-DRONE1_Y=${DRONE1_Y:--35.0}
-DRONE1_Z=${DRONE1_Z:-0.0}
+DRONE1_X=${DRONE1_X:--4.0}
+DRONE1_Y=${DRONE1_Y:--52.0}
+DRONE1_Z=${DRONE1_Z:-4.52}
 DRONE1_YAW=${DRONE1_YAW:-0.0}
 
 # --- Configurazione Posa Iniziale Drone di Interazione ---
-DRONE2_X=${DRONE2_X:--15.0}
-DRONE2_Y=${DRONE2_Y:--37.0}
-DRONE2_Z=${DRONE2_Z:-0.0}
+DRONE2_X=${DRONE2_X:--1.0}
+DRONE2_Y=${DRONE2_Y:--54.0}
+DRONE2_Z=${DRONE2_Z:-4.52}
 DRONE2_YAW=${DRONE2_YAW:-0.0}
 
 WORLD_NAME=${WORLD_NAME:-"bridge_inspection_gazebo"}
@@ -78,17 +78,17 @@ tmux send-keys -t $SESSION_NAME:0.1 "sleep 2 &&PX4_GZ_WORLD=${WORLD_NAME} PX4_GZ
 tmux select-pane -T '2: PX4 Drone2 (Interaction)' -t $SESSION_NAME:0.2
 tmux send-keys -t $SESSION_NAME:0.2 "cd /root/PX4-Autopilot" C-m
 tmux send-keys -t $SESSION_NAME:0.2 "source /opt/ros/humble/setup.bash && [ -f /root/my_ros2_ws/install/setup.bash ] && source /root/my_ros2_ws/install/setup.bash" C-m
-tmux send-keys -t $SESSION_NAME:0.2 "echo 'Aspetto 5s per Gazebo e Drone1...' && sleep 5 && PX4_SIM_MODEL=gz_${DRONE2_MODEL_NAME} PX4_GZ_STANDALONE=1 PX4_GZ_WORLD=${WORLD_NAME} PX4_GZ_MODEL_POSE='${DRONE2_X},${DRONE2_Y},${DRONE2_Z},0,0,${DRONE2_YAW}' build/px4_sitl_default/bin/px4 -i 1 " C-m
+tmux send-keys -t $SESSION_NAME:0.2 "echo 'Aspetto 10s per Gazebo e Drone1...' && sleep 10 && PX4_SIM_MODEL=gz_${DRONE2_MODEL_NAME} PX4_GZ_STANDALONE=1 PX4_GZ_WORLD=${WORLD_NAME} PX4_GZ_MODEL_POSE='${DRONE2_X},${DRONE2_Y},${DRONE2_Z},0,0,${DRONE2_YAW}' build/px4_sitl_default/bin/px4 -i 1 " C-m
 
 # --- Riquadro 3: ROS 2 Launch (Bridge + MPC Planner + peg_planner + RViz) ---
 tmux select-pane -T '3: ROS2 Nodes' -t $SESSION_NAME:0.3
 tmux send-keys -t $SESSION_NAME:0.3 "cd /root/my_ros2_ws" C-m
 tmux send-keys -t $SESSION_NAME:0.3 "colcon build && source /opt/ros/humble/setup.bash && source install/setup.bash" C-m
-tmux send-keys -t $SESSION_NAME:0.3 "sleep 5 && ros2 launch drone_mpc_pkg haptic_mpc.launch.py model:=${DRONE1_MODEL_NAME} drone_x:=${DRONE1_X} drone_y:=${DRONE1_Y} drone_z:=${DRONE1_Z} drone_yaw:=${DRONE1_YAW} peg_x:=${DRONE2_X} peg_y:=${DRONE2_Y} peg_z:=${DRONE2_Z}" C-m
+tmux send-keys -t $SESSION_NAME:0.3 "sleep 10 && ros2 launch drone_mpc_pkg haptic_mpc.launch.py model:=${DRONE1_MODEL_NAME} drone_x:=${DRONE1_X} drone_y:=${DRONE1_Y} drone_z:=${DRONE1_Z} drone_yaw:=${DRONE1_YAW} peg_x:=${DRONE2_X} peg_y:=${DRONE2_Y} peg_z:=${DRONE2_Z}" C-m
 
 # --- Riquadro 4: Terminale Libero (full width, in fondo) ---
 tmux select-pane -T '4: Spare Terminal' -t $SESSION_NAME:0.4
-tmux send-keys -t $SESSION_NAME:0.4 "cd /root/my_ros2_ws && colcon build && source /opt/ros/humble/setup.bash && source install/setup.bash && alias aaa='tmux list-panes -s -F \"#{pane_id}\" | grep -v \$(tmux display-message -p \"#{pane_id}\") | xargs -I {} tmux send-keys -t {} C-c && echo \"Attendendo 5 secondi per la chiusura pulita di Gazebo e ROS...\" && sleep 3 && tmux kill-server' && clear" C-m
+tmux send-keys -t $SESSION_NAME:0.4 "cd /root/my_ros2_ws && colcon build && source /opt/ros/humble/setup.bash && source install/setup.bash && alias aaa='tmux list-panes -s -F \"#{pane_id}\" | grep -v \$(tmux display-message -p \"#{pane_id}\") | xargs -I {} tmux send-keys -t {} C-c && echo \"Attendendo 5 secondi per la chiusura pulita di Gazebo e ROS...\" && sleep 5 && tmux kill-server' && clear" C-m
 
 # 5. ATTACCO ALLA SESSIONE
 tmux attach-session -t $SESSION_NAME\

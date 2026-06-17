@@ -219,16 +219,16 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
         pitch
     )
     
-    #model.con_h_expr = h_expr
+    model.con_h_expr = h_expr
     
     X_min = 1.5 
     # [Y_right, Y_left, Z_up, Z_down, X_min, roll, pitch]
-    #ocp.constraints.lh = np.array([-1000,  0.0, -1000,  0.0, X_min, -rp_limit, -rp_limit])
-    #ocp.constraints.uh = np.array([ 0.0,  1000,  0.0,  1000, 100,    rp_limit,  rp_limit])
+    ocp.constraints.lh = np.array([-1000,  0.0, -1000,  0.0, X_min, -rp_limit, -rp_limit])
+    ocp.constraints.uh = np.array([ 0.0,  1000,  0.0,  1000, 100,    rp_limit,  rp_limit])
 
     # Slacks per vincoli visuali (5) + roll/pitch (2) = 7
     n_soft_h = 7
-    #ocp.constraints.idxsh = np.array(range(n_soft_h))
+    ocp.constraints.idxsh = np.array(range(n_soft_h))
 
     # Pesi per i soft constraints
     # [Visx4, dist_sicurezza, roll, pitch]
@@ -236,10 +236,10 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     penalty_L2 = 1e-1
     weights_costs = np.array([1, 1, 1, 1, 1e4, 1e1, 1e1])
 
-    #ocp.cost.Zl = penalty_L2 * weights_costs
-    #ocp.cost.Zu = penalty_L2 * weights_costs
-    #ocp.cost.zl = penalty_L1 * weights_costs
-    #ocp.cost.zu = penalty_L1 * weights_costs
+    ocp.cost.Zl = penalty_L2 * weights_costs
+    ocp.cost.Zu = penalty_L2 * weights_costs
+    ocp.cost.zl = penalty_L1 * weights_costs
+    ocp.cost.zu = penalty_L1 * weights_costs
 
   #  # --- Fine parte visuale --- 
 
