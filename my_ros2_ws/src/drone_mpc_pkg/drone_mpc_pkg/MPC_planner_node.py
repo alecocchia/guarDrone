@@ -114,7 +114,6 @@ class MpcPlannerNode(Node):
         self.ts = 0.01             # 100 Hz
         self.N_horiz = 50          # Orizzonte di predizione (numero di campioni)
         self.Tp = self.N_horiz * self.ts  # Tempo totale dell'orizzonte 
-        self.ts_peg = 0.005
 
         self.path_pub_counter = 0  # Contatore per limitare la frequenza di pubblicazione del path
 
@@ -150,7 +149,7 @@ class MpcPlannerNode(Node):
         self.haptic_transition_duration = self.get_parameter('haptic_transition_duration').value
 
         # Target visivo di default (PoV: Xc, Yc, Zc, Pan)
-        self.pan_target = 0.2
+        self.pan_target = np.pi/2
         self.radius_target = 3.0
         self.pov_target = np.array([self.radius_target, 0.0, 0.0, self.pan_target])
         xc_hand = 0.5
@@ -544,7 +543,13 @@ class MpcPlannerNode(Node):
         visual_ref = (1 - alpha) * manual_pov[0:3] + alpha * auto_visual_ref
         
         p_obj_now = self.current_obj_pos
-        # pan : atan2(y-y_obj,x-x_obj)
+        # pan : atan2(y_drone - y_obj, x_drone - x_obj)
+        
+        q_drone = xk[6:10]
+        Rb = Rotation.from_quat([q_drone[1], q_drone[2], q_drone[3], q_drone[0]]).as_matrix()
+        p_cam = xk[0:3] + Rb @ self.camera_offset
+        
+        # pan : atan2(Y_cam - Y_obj, X_cam - X_obj)
         current_pan = np.arctan2(xk[1] - p_obj_now[1], xk[0] - p_obj_now[0])
         # normalizzo angoli di pan (caso manuale e autonomo) in [-pi, pi]
         diff_m = (manual_pov[3] - current_pan + np.pi) % (2 * np.pi) - np.pi
@@ -580,9 +585,10 @@ class MpcPlannerNode(Node):
 
         # g0 importato da common.py
 
-        X = 2; Y = 1; Z = 1; V = np.array([0.5, 0.5, 0.5]); PAN = ca.pi/2
-        RP_ANG = 0.1; ANG_DOT = np.array([0.3, 0.3,1.5])
-        ACC = np.array([1.0, 1.0, 2.0]); ACC_ANG = np.array([2.0,2.0,4.0])     
+        X = 3; Y = 3; Z = 2; V = np.array([1.5, 1.5, 1.5]); PAN = ca.pi/2
+        #RP_ANG = 0.1;
+        ANG_DOT = np.array([0.5, 0.5,2.0])
+        ACC = np.array([2.0, 2.0, 3.0]); ACC_ANG = np.array([2.0,2.0,4.0])     
         JERK = 10.0; SNAP = 200.0
         
         
@@ -601,11 +607,11 @@ class MpcPlannerNode(Node):
         PesoVis = 100
         PesoPan = PesoVis
         #PesoRot = PesoVis / 500
-        PesoVel = PesoVis / 10
-        PesoAngVel = PesoVis / 20
-        PesoAcc = PesoVis / 40
+        PesoVel = PesoVis/20
+        PesoAngVel = PesoVis / 10
+        PesoAcc = PesoVis / 20
         PesoAngAcc = PesoVis / 20
-        PesoJerk = PesoAcc / 10
+        PesoJerk = PesoAcc / 5
         PesoSnap = PesoJerk / 2
         PesoForce = PesoVis / 500
         PesoTorque = PesoForce * 2
@@ -618,8 +624,8 @@ class MpcPlannerNode(Node):
         Q_ang_dot = np.diag([PesoAngVel, PesoAngVel, PesoAngVel]) / ANG_DOT**2
         Q_acc = np.diag([PesoAcc, PesoAcc, PesoAcc]) / ACC**2
         Q_acc_ang = np.diag([PesoAngAcc, PesoAngAcc, PesoAngAcc]) / ACC_ANG**2
-        Q_jerk = np.diag([PesoJerk, PesoJerk, PesoJerk/5]) / JERK**2
-        Q_snap = np.diag([PesoSnap, PesoSnap, PesoSnap/5]) / SNAP**2
+        Q_jerk = np.diag([PesoJerk, PesoJerk, PesoJerk]) / JERK**2
+        Q_snap = np.diag([PesoSnap, PesoSnap, PesoSnap]) / SNAP**2
         
         R_f = np.diag([PesoForce]) / self.U_F**2
         R_tau = ca.diagcat(PesoTorque / self.U_TAU_X**2, PesoTorque / self.U_TAU_Y**2, PesoTorque / self.U_TAU_Z**2)
@@ -667,7 +673,7 @@ class MpcPlannerNode(Node):
         set_initial_state(self.ocp_solver, xk)
         
         # Il pan_ref viene ora passato solo come parametro del modello, yref[pan] è fisso a 0
-        yref_val = build_yref_online(self.y_idx, visual_ref, vel_ref, u_ref=self.u_hover)
+        yref_val = build_yref_online(self.y_idx, visual_ref, np.zeros(3), u_ref=self.u_hover)
         yref_e = yref_val[:self.ny_e]
         yref0 = yref_val
 
@@ -796,7 +802,7 @@ class MpcPlannerNode(Node):
             p_rel_world = p_obj_now - p_cam
             R_cam_body = Rotation.from_euler('xyz', self.camera_rpy).as_matrix()
             P_c = R_cam_body.T @ Rb.T @ p_rel_world
-            actual_pan = np.arctan2(p_cam[1] - p_obj_now[1], p_cam[0] - p_obj_now[0])
+            actual_pan = np.arctan2(xk[1] - p_obj_now[1], xk[0] - p_obj_now[0])
             
             actual_pov_msg = Float64MultiArray()
             actual_pov_msg.data = [float(P_c[0]), float(P_c[1]), float(P_c[2]), float(actual_pan)]

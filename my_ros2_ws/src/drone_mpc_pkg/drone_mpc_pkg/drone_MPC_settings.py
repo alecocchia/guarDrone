@@ -141,16 +141,15 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     # Usiamo min_angle per calcolare la distanza minima rispetto al riferimento passato come parametro p[3]
     # pan_expr sarà già l'errore, in modo da poter applicare min_angle
     pan_ref_sym = model.p[3]  # variabile simbolica CasADi per il pan_ref (parametro p[3])
-    _dx = p_cam[0] - p_obj_expr[0]
-    _dy = p_cam[1] - p_obj_expr[1]
-    # Normalizzazione per rendere il gradiente di atan2 bounded ovunque (O(1)).
-    # atan2(dy/r, dx/r) == atan2(dy, dx) esattamente per qualsiasi r > 0:
-    # la divisione non altera né il rapporto dy/dx né i segni degli argomenti.
-    # L'eps=1e-4 dentro sqrt serve solo per modificare il gradiente di atan2 CasADi (AD)
-    # ma non modifica il valore di atan2
-    _r   = ca.sqrt(_dx**2 + _dy**2 + 0.1)
+ 
+    _dx = p_expr[0] - p_obj_expr[0]
+    _dy = p_expr[1] - p_obj_expr[1]
+    
+    # testare le funzioni
     pan_raw = ca.atan2(_dy, _dx)
+
     pan_expr = min_angle(pan_raw - pan_ref_sym)
+    
 
     # state dynamics vector
     xdot = model.f_expl_expr
@@ -219,27 +218,27 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
         pitch
     )
     
-    model.con_h_expr = h_expr
+    #model.con_h_expr = h_expr
     
-    X_min = 1.5 
+    X_min = 1.5
     # [Y_right, Y_left, Z_up, Z_down, X_min, roll, pitch]
-    ocp.constraints.lh = np.array([-1000,  0.0, -1000,  0.0, X_min, -rp_limit, -rp_limit])
-    ocp.constraints.uh = np.array([ 0.0,  1000,  0.0,  1000, 100,    rp_limit,  rp_limit])
+    #ocp.constraints.lh = np.array([-1e2,  0.0, -1e2,  0.0, X_min, -rp_limit, -rp_limit])
+    #ocp.constraints.uh = np.array([ 0.0,  1e2,  0.0,  1e2, 1e2,    rp_limit,  rp_limit])
 
     # Slacks per vincoli visuali (5) + roll/pitch (2) = 7
     n_soft_h = 7
-    ocp.constraints.idxsh = np.array(range(n_soft_h))
+    #ocp.constraints.idxsh = np.array(range(n_soft_h))
 
     # Pesi per i soft constraints
     # [Visx4, dist_sicurezza, roll, pitch]
-    penalty_L1 = 1e-2
-    penalty_L2 = 1e-1
-    weights_costs = np.array([1, 1, 1, 1, 1e4, 1e1, 1e1])
+    penalty_L1 = 1e-4
+    penalty_L2 = 1e-3
+    weights_costs = np.array([1, 1, 1, 1, 1e4, 1e3, 1e3])
 
-    ocp.cost.Zl = penalty_L2 * weights_costs
-    ocp.cost.Zu = penalty_L2 * weights_costs
-    ocp.cost.zl = penalty_L1 * weights_costs
-    ocp.cost.zu = penalty_L1 * weights_costs
+    #ocp.cost.Zl = penalty_L2 * weights_costs
+    #ocp.cost.Zu = penalty_L2 * weights_costs
+    #ocp.cost.zl = penalty_L1 * weights_costs
+    #ocp.cost.zu = penalty_L1 * weights_costs
 
   #  # --- Fine parte visuale --- 
 

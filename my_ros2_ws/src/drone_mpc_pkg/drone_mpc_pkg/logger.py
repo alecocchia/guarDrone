@@ -344,11 +344,12 @@ class Logger(Node):
         # 2. Calcolo Camera Position e Visual/Spherical Actuals
         p_cam = pos + rot_flu2enu.apply(self.cam_offset)
         p_rel_world_obj2cam = p_cam - peg_pos
+        p_rel_world_obj2drone = pos - peg_pos
         p_rel_cam = rot_flu2enu.inv().apply(peg_pos - p_cam) # [Xc, Yc, Zc]
         
         Xc, Yc, Zc = p_rel_cam[:, 0], p_rel_cam[:, 1], p_rel_cam[:, 2]
         radius = np.linalg.norm(p_rel_world_obj2cam, axis=1)
-        pan = np.arctan2(p_rel_world_obj2cam[:, 1], p_rel_world_obj2cam[:, 0])
+        pan = np.arctan2(p_rel_world_obj2drone[:, 1], p_rel_world_obj2cam[:, 0])
         tilt = np.arcsin(Zc / np.clip(radius, 1e-3, None))
 
         out = dict(

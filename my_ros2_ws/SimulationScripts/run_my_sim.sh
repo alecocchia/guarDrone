@@ -11,14 +11,14 @@ if [[ "$1" == "--headless" ]]; then
 fi
 
 # --- Configurazione Posa Iniziale Drone MPC ---
-DRONE1_X=${DRONE1_X:--4.0}
-DRONE1_Y=${DRONE1_Y:--52.0}
+DRONE1_X=${DRONE1_X:--1.0}
+DRONE1_Y=${DRONE1_Y:--54.0}
 DRONE1_Z=${DRONE1_Z:-4.52}
 DRONE1_YAW=${DRONE1_YAW:-0.0}
 
 # --- Configurazione Posa Iniziale Drone di Interazione ---
-DRONE2_X=${DRONE2_X:--1.0}
-DRONE2_Y=${DRONE2_Y:--54.0}
+DRONE2_X=${DRONE2_X:--4.0}
+DRONE2_Y=${DRONE2_Y:--52.0}
 DRONE2_Z=${DRONE2_Z:-4.52}
 DRONE2_YAW=${DRONE2_YAW:-0.0}
 
