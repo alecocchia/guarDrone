@@ -2,11 +2,13 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include <Eigen/Dense>
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/int32_multi_array.hpp"
 
 using std::placeholders::_1;
 
@@ -24,34 +26,50 @@ public:
     this->declare_parameter("joy_scale", 15.0);    
     
     // Parametri integrazione PoV 
-    this->declare_parameter("v_pan_max", 0.5);   
+    this->declare_parameter("v_pan_max", 0.7);   
     this->declare_parameter("v_zc_max", 0.5);  
-    this->declare_parameter("v_xc_max", 0.8);
-    this->declare_parameter("dt", 0.02);           
+    this->declare_parameter("v_xc_max", 1.2);
+    this->declare_parameter("dt", 0.01);           
 
     // Parametri Campo Potenziale (Force Feedback dai vincoli MPC)
     this->declare_parameter("fov_h", 80.0);         
     this->declare_parameter("fov_v", 60.0);         
-    this->declare_parameter("x_min_safety", 1.5);   
-    this->declare_parameter("k_repulsive", 1.0); // costante elastica del campo repulsivo
-    this->declare_parameter("alpha", 1.2); // esponente del campo repulsivo che definisce la forma dell'esponenziale
-    this->declare_parameter("activation_ratio", 1.0); // Inizia a sentirsi prima (act_ratio%)
-    this->declare_parameter("activation_ratio_cam", 1.0); // Inizia a sentirsi prima (act_ratio%)
+    this->declare_parameter("x_min_safety", 1.0);   
+    this->declare_parameter("k_repulsive", 3.0); // costante elastica del campo repulsivo
+    this->declare_parameter("alpha", 1.3); // esponente del campo repulsivo che definisce la forma dell'esponenziale
+    this->declare_parameter("activation_ratio", 0.8); // Inizia a sentirsi prima (act_ratio%)
+    this->declare_parameter("activation_ratio_cam", 0.5); // Inizia a sentirsi prima (act_ratio%)
     this->declare_parameter("max_repulsive_force", 15.0); // Aumentato limite repulsione
+
+    // Actual parameters taken from launchfile:
+    //  'k_spring'
+    //  'b_damping'
+    //  'v_pan_max'
+    //  'v_zc_max'
+    //  'v_xc_max'
+    //  'deadband'
 
     // Subscribers
     pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
       "/fd/ee_pose", 10, std::bind(&FDHapticJoyNode::pose_cb, this, _1));
     
+    // Subscriber: bottone singolo /fd/button_state (Bool, backward compat — bottone centrale)
     button_sub_ = this->create_subscription<std_msgs::msg::Bool>(
       "/fd/button_state", 10, std::bind(&FDHapticJoyNode::button_cb, this, _1));
 
+    // Subscriber: tutti e 4 i bottoni /fd/button_states (Int32MultiArray)
+    buttons_sub_ = this->create_subscription<std_msgs::msg::Int32MultiArray>(
+      "/fd/button_states", 10, std::bind(&FDHapticJoyNode::buttons_cb, this, _1));
+
     actual_pov_sub_ = this->create_subscription<std_msgs::msg::Float64MultiArray>(
       "/actual_pov", 10, std::bind(&FDHapticJoyNode::actual_pov_cb, this, _1));
+    peg_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
+      "/peg_ref_pose", 10, std::bind(&FDHapticJoyNode::peg_pose_cb, this, _1));
 
     // Publishers
     force_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/fd/fd_controller/commands", 10);
     haptic_ref_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/haptic_ref", 10);
+    peg_live_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/peg_live_pose", 10);
 
     // Initial state
     current_pov_ref_ = {2.0, 0.0, 0.0, 0.0}; // [Xc, Yc, Zc, Pan_mutuo]
@@ -62,8 +80,14 @@ public:
     falcon_vel_ = {0.0, 0.0, 0.0};
     first_pose_received_ = false;
     button_pressed_ = false;
+    button_states_ = {0, 0, 0, 0};  // stato corrente dei 4 bottoni [btn0..btn3]
+    peg_pos_enu_   = {0.0, 0.0, 0.0};
+    peg_target_pos_= {0.0, 0.0, 0.0};
+    peg_target_yaw_= 0.0;
+    peg_yaw_enu_   = 0.0;
+    peg_mode_active_ = false;
 
-    // Timer loop a 50Hz
+    // Timer loop a 100Hz
     double dt = this->get_parameter("dt").as_double();
     timer_ = this->create_wall_timer(
       std::chrono::duration<double>(dt), std::bind(&FDHapticJoyNode::control_loop, this));
@@ -87,14 +111,36 @@ private:
 
   void button_cb(const std_msgs::msg::Bool::SharedPtr msg)
   {
+    // Backward compat: bottone 0 (quello centrale)
     if (msg->data && !button_pressed_) {
       RCLCPP_INFO(this->get_logger(), ">>> Pulsante Falcon PREMUTO: Controllo drone ATTIVATO");
     } else if (!msg->data && button_pressed_) {
       RCLCPP_INFO(this->get_logger(), "<<< Pulsante Falcon RILASCIATO: Controllo drone DISATTIVATO");
-      // Resetta velocità quando rilasci
       current_pov_vel_ = {0.0, 0.0, 0.0, 0.0};
     }
     button_pressed_ = msg->data;
+  }
+
+  void buttons_cb(const std_msgs::msg::Int32MultiArray::SharedPtr msg)
+  {
+    // Aggiorna lo stato di tutti i bottoni
+    for (size_t i = 0; i < msg->data.size() && i < button_states_.size(); ++i) {
+      button_states_[i] = msg->data[i];
+    }
+    // Log alla pressione/rilascio di bottoni non-centrali
+    RCLCPP_DEBUG(
+      this->get_logger(),
+      "Button states: [%d, %d, %d, %d]",
+      button_states_[0], button_states_[1], button_states_[2], button_states_[3]);
+  }
+
+  void peg_pose_cb(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
+  {
+    peg_pos_enu_[0] = msg->pose.position.x;
+    peg_pos_enu_[1] = msg->pose.position.y;
+    peg_pos_enu_[2] = msg->pose.position.z;
+    auto & q = msg->pose.orientation;
+    peg_yaw_enu_ = std::atan2(2.0*(q.w*q.z + q.x*q.y), 1.0 - 2.0*(q.y*q.y + q.z*q.z));
   }
 
   void actual_pov_cb(const std_msgs::msg::Float64MultiArray::SharedPtr msg)
@@ -288,10 +334,72 @@ private:
       haptic_msg.data.insert(haptic_msg.data.end(), current_pov_ref_.begin(), current_pov_ref_.end());
       haptic_msg.data.insert(haptic_msg.data.end(), current_pov_vel_.begin(), current_pov_vel_.end());
       haptic_ref_pub_->publish(haptic_msg);
-    } 
-      // se non viene premuto il pulsante, azzera la velocità di riferimento 
-    else  {
+    } else {
       current_pov_vel_ = {0.0, 0.0, 0.0, 0.0};
+    }
+
+    // =====================================================
+    // MODO PEG (bottone 2 = sopra): teleop drone peg nel frame camera MPC
+    // Falcon X → profondità, Falcon Y → laterale, Falcon Z → quota
+    // Bottone 1 → yaw CCW, Bottone 3 → yaw CW
+    // =====================================================
+    bool peg_btn = (button_states_[2] == 1);
+    if (peg_btn && !peg_mode_active_) {  // fronte di salita: inizializza dal peg reale
+      peg_target_pos_ = peg_pos_enu_;
+      peg_target_yaw_ = peg_yaw_enu_;
+    }
+    peg_mode_active_ = peg_btn;
+
+    if (peg_btn) {
+      double joy_scale = this->get_parameter("joy_scale").as_double();
+      double v_t  = this->get_parameter("v_xc_max").as_double();  // velocità trasl [m/s]
+      v_t = 0.5 * v_t;
+      double v_z  = this->get_parameter("v_zc_max").as_double();
+      double v_yr = this->get_parameter("v_pan_max").as_double(); // velocità yaw [rad/s]
+      double psi_body = peg_target_yaw_;  // Usa lo yaw del peg drone (body frame)
+
+      // L'hardware Falcon ha la X e la Y invertite rispetto al FLU (avanti/sinistra).
+      // Matematicamente, questo equivale a una rotazione di 180 gradi attorno all'asse Z
+      Eigen::Matrix3d R_falcon_to_body;
+      R_falcon_to_body << -1.0,  0.0,  0.0,
+                           0.0, -1.0,  0.0,
+                           0.0,  0.0,  1.0;
+
+      // Matrice dal Body del drone (FLU) al Mondo (ENU)
+      Eigen::Matrix3d R_body_to_world;
+      R_body_to_world << std::cos(psi_body), -std::sin(psi_body), 0.0,
+                         std::sin(psi_body),  std::cos(psi_body), 0.0,
+                         0.0,                 0.0,                1.0;
+
+      // Vettore comandi grezzi (hardware frame)
+      Eigen::Vector3d f_raw(
+        apply_deadband(falcon_pos_[0], deadband) * joy_scale,
+        apply_deadband(falcon_pos_[1], deadband) * joy_scale,
+        apply_deadband(falcon_pos_[2], deadband) * joy_scale
+      );
+
+      // Catena cinematica completa: World = R_body_to_world * R_falcon_to_body * Falcon
+      Eigen::Vector3d v_cmd = R_body_to_world * R_falcon_to_body * f_raw;
+
+      peg_target_pos_[0] += v_cmd.x() * v_t * dt;
+      peg_target_pos_[1] += v_cmd.y() * v_t * dt;
+      peg_target_pos_[2] += v_cmd.z() * v_z * dt;
+
+      if (button_states_[1] == 1) peg_target_yaw_ += v_yr * dt;  // CCW
+      if (button_states_[3] == 1) peg_target_yaw_ -= v_yr * dt;  // CW
+      peg_target_yaw_ = std::fmod(peg_target_yaw_ + M_PI, 2.0*M_PI);
+      if (peg_target_yaw_ < 0.0) peg_target_yaw_ += 2.0*M_PI;
+      peg_target_yaw_ -= M_PI;
+
+      geometry_msgs::msg::PoseStamped peg_msg;
+      peg_msg.header.stamp = this->now();
+      peg_msg.header.frame_id = "map";
+      peg_msg.pose.position.x = peg_target_pos_[0];
+      peg_msg.pose.position.y = peg_target_pos_[1];
+      peg_msg.pose.position.z = peg_target_pos_[2];
+      peg_msg.pose.orientation.w = std::cos(peg_target_yaw_ * 0.5);
+      peg_msg.pose.orientation.z = std::sin(peg_target_yaw_ * 0.5);
+      peg_live_pub_->publish(peg_msg);
     }
   }
 
@@ -301,7 +409,19 @@ private:
     return (val > 0) ? (val - deadband) : (val + deadband);
   }
 
-  // State
+  // ROS 2 objects
+  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr peg_pose_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr button_sub_;
+  rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr buttons_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr actual_pov_sub_;
+  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr force_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr goal_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr haptic_ref_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr peg_live_pub_;
+  rclcpp::TimerBase::SharedPtr timer_;
+
+  // State — MODO MPC
   std::vector<double> current_pov_ref_;
   std::vector<double> current_pov_vel_;
   std::vector<double> actual_pov_;
@@ -309,16 +429,15 @@ private:
   std::vector<double> prev_falcon_pos_;
   std::vector<double> falcon_vel_;
   bool first_pose_received_;
-  bool button_pressed_;
+  bool button_pressed_;            // bottone 0 (centrale)
+  std::vector<int> button_states_; // [btn0..btn3]
 
-  // ROS 2 objects
-  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
-  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr button_sub_;
-  rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr actual_pov_sub_;
-  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr force_pub_;
-  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr goal_pub_;
-  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr haptic_ref_pub_;
-  rclcpp::TimerBase::SharedPtr timer_;
+  // State — MODO PEG
+  std::vector<double> peg_pos_enu_;    // posizione reale peg (da /peg_ref_pose)
+  std::vector<double> peg_target_pos_; // setpoint integrato
+  double peg_yaw_enu_;                 // yaw reale peg
+  double peg_target_yaw_;              // setpoint yaw integrato
+  bool peg_mode_active_;
 };
 
 int main(int argc, char ** argv)

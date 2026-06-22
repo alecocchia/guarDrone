@@ -19,8 +19,17 @@
                 </xacro:unless>
             </hardware>
 
-            <!-- Configure GPIOs -->
-            <gpio name="button">
+            <!-- Configure GPIOs: 4 physical buttons of the Novint Falcon -->
+            <gpio name="button0">
+                <state_interface name="position"/>
+            </gpio>
+            <gpio name="button1">
+                <state_interface name="position"/>
+            </gpio>
+            <gpio name="button2">
+                <state_interface name="position"/>
+            </gpio>
+            <gpio name="button3">
                 <state_interface name="position"/>
             </gpio>
 

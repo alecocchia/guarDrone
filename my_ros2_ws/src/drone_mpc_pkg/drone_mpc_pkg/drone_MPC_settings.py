@@ -148,6 +148,9 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     # testare le funzioni
     pan_raw = ca.atan2(_dy, _dx)
 
+
+    ## IDEA DA TESTARE: matrice di rotazione mutua tra pan_raw e pan_ref_sym
+    # e ricavare angoli di rotazione da questa
     pan_expr = min_angle(pan_raw - pan_ref_sym)
     
 
@@ -233,7 +236,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     # [Visx4, dist_sicurezza, roll, pitch]
     penalty_L1 = 1e-4
     penalty_L2 = 1e-3
-    weights_costs = np.array([1, 1, 1, 1, 1e4, 1e3, 1e3])
+    weights_costs = np.array([1, 1, 1, 1, 1e4, 1, 1])
 
     #ocp.cost.Zl = penalty_L2 * weights_costs
     #ocp.cost.Zu = penalty_L2 * weights_costs

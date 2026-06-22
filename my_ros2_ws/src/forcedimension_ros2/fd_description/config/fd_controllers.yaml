@@ -55,7 +55,7 @@ fd/fd_ee_broadcaster:
       # - fd_roll
       # - fd_pitch
       # - fd_yaw
-    buttons: [button]  # Note: only one button supported for now
+    buttons: [button0, button1, button2, button3]  # 4 physical buttons of the Novint Falcon
 
 fd/fd_inertia_broadcaster:
   ros__parameters:
@@ -67,5 +67,5 @@ fd/fd_inertia_broadcaster:
 
 fd/fd_clutch_broadcaster:
   ros__parameters:
-    clutch_interface_name: "button/position"
+    clutch_interface_name: "button0/position"  # button0 = central button (clutch/enable)
     is_interface_a_button: true

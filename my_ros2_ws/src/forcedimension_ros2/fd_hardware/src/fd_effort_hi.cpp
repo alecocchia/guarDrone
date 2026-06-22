@@ -410,15 +410,19 @@ hardware_interface::return_type FDEffortHardwareInterface::read(
     }
   }
 
-  // Get button status, TODO multiple buttons from index
-  int button_status = dhdGetButton(0, interface_ID_);
-  if (button_status == 1) {
-    hw_button_state_[0] = 1.0;
-  } else if (button_status == 0) {
-    hw_button_state_[0] = 0.0;
-  } else {
-    RCLCPP_ERROR(rclcpp::get_logger("FDEffortHardwareInterface"), "Invalid button reading!");
-    flag += -1;
+  // Get button status for all physical buttons (Novint Falcon has 4)
+  for (int btn = 0; btn < static_cast<int>(hw_button_state_.size()); ++btn) {
+    int button_status = dhdGetButton(btn, interface_ID_);
+    if (button_status == 1) {
+      hw_button_state_[btn] = 1.0;
+    } else if (button_status == 0) {
+      hw_button_state_[btn] = 0.0;
+    } else {
+      RCLCPP_ERROR(
+        rclcpp::get_logger("FDEffortHardwareInterface"),
+        "Invalid button reading for button %d!", btn);
+      flag += -1;
+    }
   }
 
   if (flag >= 0) {

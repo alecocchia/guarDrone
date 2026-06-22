@@ -149,7 +149,7 @@ class MpcPlannerNode(Node):
         self.haptic_transition_duration = self.get_parameter('haptic_transition_duration').value
 
         # Target visivo di default (PoV: Xc, Yc, Zc, Pan)
-        self.pan_target = np.pi/2
+        self.pan_target = np.pi
         self.radius_target = 3.0
         self.pov_target = np.array([self.radius_target, 0.0, 0.0, self.pan_target])
         xc_hand = 0.5
@@ -470,6 +470,8 @@ class MpcPlannerNode(Node):
                 self.haptic_pov = np.array(msg.data[0:4], dtype=float)
                 self.haptic_pov_dot = np.array(msg.data[4:8], dtype=float)
                 self.haptic_timestamp = self.get_clock().now()
+                # Aggiorna il target autonomo all'ultimo input haptic per evitare che torni indietro al rilascio
+                self.pov_target = self.haptic_pov.copy()
 
     def joy_ref_callback(self, msg: Float64MultiArray):
         if len(msg.data) >= 8:
@@ -477,6 +479,8 @@ class MpcPlannerNode(Node):
                 self.joy_pov = np.array(msg.data[0:4], dtype=float)
                 self.joy_pov_dot = np.array(msg.data[4:8], dtype=float)
                 self.joy_timestamp = self.get_clock().now()
+                # Aggiorna il target autonomo all'ultimo input joypad per evitare che torni indietro
+                self.pov_target = self.joy_pov.copy()
 
     # ==================== Configurazione e Solve ====================
     def get_current_ref(self, xk):
@@ -587,8 +591,8 @@ class MpcPlannerNode(Node):
 
         X = 3; Y = 3; Z = 2; V = np.array([1.5, 1.5, 1.5]); PAN = ca.pi/2
         #RP_ANG = 0.1;
-        ANG_DOT = np.array([0.5, 0.5,2.0])
-        ACC = np.array([2.0, 2.0, 3.0]); ACC_ANG = np.array([2.0,2.0,4.0])     
+        ANG_DOT = np.array([0.8, 0.8,2.0])
+        ACC = np.array([3.0, 3.0, 3.0]); ACC_ANG = np.array([2.0,2.0,4.0])     
         JERK = 10.0; SNAP = 200.0
         
         
@@ -607,13 +611,13 @@ class MpcPlannerNode(Node):
         PesoVis = 100
         PesoPan = PesoVis
         #PesoRot = PesoVis / 500
-        PesoVel = PesoVis/20
-        PesoAngVel = PesoVis / 10
-        PesoAcc = PesoVis / 20
-        PesoAngAcc = PesoVis / 20
-        PesoJerk = PesoAcc / 5
+        PesoVel = PesoVis/30
+        PesoAngVel = PesoVis / 30
+        PesoAcc = PesoVis / 50
+        PesoAngAcc = PesoVis / 40
+        PesoJerk = PesoAcc / 2
         PesoSnap = PesoJerk / 2
-        PesoForce = PesoVis / 500
+        PesoForce = PesoVis / 1000
         PesoTorque = PesoForce * 2
         
         Q_pan = np.diag([PesoPan]) / PAN**2

@@ -31,6 +31,7 @@
 #include "realtime_tools/realtime_publisher.hpp"
 
 #include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/int32_multi_array.hpp"
 
 namespace fd_clutch_broadcaster
 {
@@ -67,12 +68,19 @@ public:
     const rclcpp_lifecycle::State & previous_state) override;
 
 protected:
-  std::string clutch_interface_name_;
+  // Interface names for all 4 physical buttons
+  std::vector<std::string> button_interface_names_;
 
-  //  Publishers
+  // Legacy single-button clutch publisher (kept for backward compatibility)
+  std::string clutch_interface_name_;
   std::shared_ptr<rclcpp::Publisher<std_msgs::msg::Bool>> clutch_publisher_;
   std::shared_ptr<realtime_tools::RealtimePublisher<std_msgs::msg::Bool>>
   realtime_clutch_publisher_;
+
+  // New multi-button publisher: [btn0, btn1, btn2, btn3]
+  std::shared_ptr<rclcpp::Publisher<std_msgs::msg::Int32MultiArray>> buttons_publisher_;
+  std::shared_ptr<realtime_tools::RealtimePublisher<std_msgs::msg::Int32MultiArray>>
+  realtime_buttons_publisher_;
 };
 
 }  // namespace fd_clutch_broadcaster

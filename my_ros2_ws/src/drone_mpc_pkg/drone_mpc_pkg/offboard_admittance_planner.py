@@ -96,11 +96,11 @@ class OffboardAdmittancePlanner(Node):
         self.declare_parameter('dt', 0.01)   # 100 Hz (più alto di prima per l'ammettenza)
 
         # -- Parametri ammettenza --
-        self.declare_parameter('F_threshold', 0.2)    # [N] soglia attivazione
+        self.declare_parameter('F_threshold', 0.02)    # [N] soglia attivazione
         #self.declare_parameter('adm_mass', 1.0)       # [kg] massa virtuale
         #self.declare_parameter('adm_damping', 8.0)    # smorzamento virtuale
         #self.declare_parameter('adm_stiffness', 0.0)  # rigidezza virtuale (0 = ammortizzatore puro)
-        self.declare_parameter('adm_max_delta', 0.75)  # [m] saturazione spostamento
+        self.declare_parameter('adm_max_delta', 10.0)  # [m] saturazione spostamento
 
         # -- Topic FT sensor --
         # Il topic cambia con l'ordine di spawn (_0 o _1).
@@ -126,23 +126,27 @@ class OffboardAdmittancePlanner(Node):
         
         # Ora adm_K, adm_M, adm_D sono array numpy (1 per asse nel frame SENSOR)
         # Es: Kx=50 (laterale), Ky=50 (laterale), Kz=50 (assiale al peg)
-        F_max_x = 2.0/10
-        F_max_y = 2.0/10
-        F_max_z = 8.0/10
+        F_max_x = 2.0
+        F_max_y = 2.0
+        F_max_z = 8.0
 
-        delta_x_max = 0.05
-        delta_y_max = 0.05
-        delta_z_max = 0.6
+        delta_x_max = 1.0
+        delta_y_max = 1.0
+        delta_z_max = 0.9  # Molla un po' più morbida (Kz = 10 N/m)
 
         adm_K_x = F_max_x/delta_x_max
         adm_K_y = F_max_y/delta_y_max
         adm_K_z = F_max_z/delta_z_max
 
         self.adm_K = np.array([adm_K_x, adm_K_y, adm_K_z])
-        self.Ta = np.array([5,5,5])
+        # Ta a 0.8s (0.4s rischia di essere più veloce della banda passante del controllore di posizione PX4)
+        self.Ta = np.array([1.0, 1.0, 1.0])
         self.wn = 4 / self.Ta
         self.adm_M = self.adm_K / (self.wn**2)
-        self.adm_D = 2 * np.sqrt(self.adm_K * self.adm_M)*np.array([1.5,1.5,1.5])
+        
+        # Aumentiamo tantissimo lo smorzamento su Z (zeta = 3.5) per "frenare" il ritorno elastico
+        damping_ratio = np.array([1.5, 1.5, 1.5])
+        self.adm_D = 2 * np.sqrt(self.adm_K * self.adm_M) * damping_ratio
         self.adm_max_delta = self.get_parameter('adm_max_delta').get_parameter_value().double_value
 
         ft_topic = self.get_parameter('ft_topic').get_parameter_value().string_value
@@ -182,6 +186,9 @@ class OffboardAdmittancePlanner(Node):
             Bool, 'offboard_traj_enabled', self.enabled_cb, 10)
         self.ft_sub = self.create_subscription(
             Wrench, ft_topic, self.ft_cb, qos_ft)
+        # Subscriber live haptic (bypassa il generatore di traiettoria)
+        self.live_pose_sub = self.create_subscription(
+            PoseStamped, '/peg_live_pose', self.live_target_cb, 10)
 
         # -- Stato interno (traiettoria) --
         self.current_pos = np.zeros(3)   # ENU + spawn offset
@@ -203,6 +210,12 @@ class OffboardAdmittancePlanner(Node):
         # Forza esterna nel frame SENSOR (aggiornata dalla callback FT)
         self.F_ext_sens = np.zeros(3)
         self.admittance_active = False
+
+        # Stato live haptic
+        self.live_target_pos = None
+        self.live_target_yaw = 0.0
+        self.live_mode = False
+        self.live_mode_stamp = None
 
         # -- Timer principale --
         self.timer = self.create_timer(self.dt, self.timer_cb)
@@ -280,6 +293,17 @@ class OffboardAdmittancePlanner(Node):
         if not self.offboard_traj_enabled:
             self.get_logger().info("[AdmittancePlanner] DISABILITATO.")
 
+    def live_target_cb(self, msg: PoseStamped):
+        """Haptic live teleop: aggiorna il target direttamente, bypass traiettoria."""
+        self.live_target_pos = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z])
+        _, _, self.live_target_yaw = quaternion_to_euler(
+            msg.pose.orientation.w, msg.pose.orientation.x,
+            msg.pose.orientation.y, msg.pose.orientation.z)
+        self.live_mode_stamp = self.get_clock().now()
+        if not self.live_mode:
+            self.live_mode = True
+            self.get_logger().info("[AdmittancePlanner] HAPTIC live mode ATTIVO")
+
     def target_cb(self, msg: PoseStamped):
         """Ricezione nuovo target --> (ri)calcolo traiettoria nominale."""
         if not self.has_odom:
@@ -335,20 +359,42 @@ class OffboardAdmittancePlanner(Node):
         # -- Pubblica sempre OffboardControlMode --
         ocm = OffboardControlMode()
         ocm.position = True
-        ocm.velocity = True    # feedforward velocità abilitato
+        ocm.velocity = True
         ocm.acceleration = False
         ocm.attitude = False
         ocm.body_rate = False
         ocm.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.offboard_pub.publish(ocm)
 
+        # -- Ammettenza (sempre integrata) --
+        self._integrate_admittance()
+        R_sensor2enu = self.R_flu2enu @ _R_SENSOR_TO_BODY
+        delta_p_enu = R_sensor2enu @ self.delta_p
+        delta_v_enu = R_sensor2enu @ self.delta_v
+
+        # -- MODALITÀ LIVE HAPTIC --
+        LIVE_TIMEOUT = 0.5  # s: dopo questo tempo senza messaggi, mantieni posizione
+        if self.live_mode and self.live_target_pos is not None:
+            elapsed = (self.get_clock().now() - self.live_mode_stamp).nanoseconds / 1e9
+            if elapsed > LIVE_TIMEOUT:
+                # Timeout: esci dal live mode, congela il target haptic come nuova traiettoria
+                self.live_mode = False
+                self.traj_p = [self.live_target_pos.copy()]
+                self.traj_rpy = [np.array([0.0, 0.0, self.live_target_yaw])]
+                self.current_index = 0
+                self.get_logger().info("[AdmittancePlanner] Live mode TERMINATO - mantengo posizione haptic")
+            else:
+                # Setpoint diretto senza traiettoria
+                p_cmd = self.live_target_pos + delta_p_enu
+                self.publish_setpoint(p_cmd, self.live_target_yaw, delta_v_enu)
+                return
+
+        # -- Posizione e velocità nominali dalla traiettoria --
         if self.traj_p is None:
-            # Nessun target: tieni la posizione corrente
             if self.has_odom:
                 self.publish_setpoint(self.current_pos, self.current_rpy[2])
             return
 
-        # -- Posizione e velocità nominali dalla traiettoria --
         idx = min(self.current_index, len(self.traj_p) - 1)
         p_nom = self.traj_p[idx]
         yaw_nom = self.traj_rpy[idx][2]
@@ -360,19 +406,9 @@ class OffboardAdmittancePlanner(Node):
         if dyaw < -np.pi: dyaw += 2 * np.pi
         yaw_rate_nom = dyaw / self.dt                               # [rad/s]
 
-        # -- Aggiornamento ammettenza --
-        # Integriamo SEMPRE l'equazione. Se non c'è contatto (admittance_active=False), 
-        # F_ext_sens è [0,0,0], quindi la molla virtuale (K) riporterà naturalmente delta_p a zero!
-        self._integrate_admittance()
-
-        # -- Composizione setpoint finale --
-        # Ruotiamo delta_p e delta_v dal frame SENSOR al frame ENU
-        R_sensor2enu =  self.R_flu2enu @ _R_SENSOR_TO_BODY
-        delta_p_enu = R_sensor2enu @ self.delta_p
-        delta_v_enu = R_sensor2enu @ self.delta_v
-
+        # -- Composizione setpoint finale (delta_p/v già calcolati sopra) --
         p_cmd = p_nom + delta_p_enu
-        v_cmd = v_nom + delta_v_enu   # velocità totale (nominale + contributo ammettenza)
+        v_cmd = v_nom + delta_v_enu
 
         self.publish_setpoint(p_cmd, yaw_nom, v_cmd)
 

@@ -33,6 +33,7 @@
 #include "rcpputils/split.hpp"
 #include "rcutils/logging_macros.h"
 #include "std_msgs/msg/header.hpp"
+#include "std_msgs/msg/int32_multi_array.hpp"
 
 
 namespace rclcpp_lifecycle
@@ -64,11 +65,11 @@ const
   controller_interface::InterfaceConfiguration state_interfaces_config;
   state_interfaces_config.type = controller_interface::interface_configuration_type::INDIVIDUAL;
 
-  if (clutch_interface_name_.empty()) {
-    RCLCPP_WARN(get_node()->get_logger(), "No clutch interface name provided!");
-
-  } else {
-    state_interfaces_config.names.push_back(clutch_interface_name_);
+  // Register all 4 button state interfaces
+  for (const auto & name : button_interface_names_) {
+    if (!name.empty()) {
+      state_interfaces_config.names.push_back(name);
+    }
   }
   return state_interfaces_config;
 }
@@ -78,27 +79,39 @@ FdClutchBroadcaster::on_configure(const rclcpp_lifecycle::State & /*previous_sta
 {
   // Declare parameters
   try {
-    auto_declare<std::string>("clutch_interface_name", std::string("button/position"));
+    auto_declare<std::string>("clutch_interface_name", std::string("button0/position"));
     auto_declare<bool>("is_interface_a_button", true);
   } catch (const std::exception & e) {
     fprintf(stderr, "Exception thrown during configure stage with message: %s \n", e.what());
     return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
   }
 
-  // Get interface name from parameters
-  clutch_interface_name_ = get_node()->get_parameter("clutch_interface_name").as_string();
-  if (clutch_interface_name_.empty()) {
-    RCLCPP_ERROR(get_node()->get_logger(), "Please provide the clutch interface name!");
-    return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
+  // Build the 4 button interface names: button0/position .. button3/position
+  button_interface_names_.clear();
+  for (int i = 0; i < 4; ++i) {
+    button_interface_names_.push_back("button" + std::to_string(i) + "/position");
   }
+  // Keep legacy name pointing to button0 for backward compat
+  clutch_interface_name_ = button_interface_names_[0];
 
   try {
+    // Legacy Bool publisher on /fd/button_state (button 0 only, backward compat)
     clutch_publisher_ = get_node()->create_publisher<std_msgs::msg::Bool>(
-      "fd_clutch",
+      "/fd/button_state",
       rclcpp::SystemDefaultsQoS());
     realtime_clutch_publisher_ =
       std::make_shared<realtime_tools::RealtimePublisher<std_msgs::msg::Bool>>(
       clutch_publisher_);
+
+    // New publisher: all 4 buttons as Int32MultiArray on /fd/button_states
+    buttons_publisher_ = get_node()->create_publisher<std_msgs::msg::Int32MultiArray>(
+      "/fd/button_states",
+      rclcpp::SystemDefaultsQoS());
+    realtime_buttons_publisher_ =
+      std::make_shared<realtime_tools::RealtimePublisher<std_msgs::msg::Int32MultiArray>>(
+      buttons_publisher_);
+    // Pre-allocate 4 elements in the message
+    realtime_buttons_publisher_->msg_.data.resize(4, 0);
   } catch (const std::exception & e) {
     // get_node() may throw, logging raw here
     fprintf(stderr, "Exception thrown during configure stage with message: %s \n", e.what());
@@ -131,25 +144,25 @@ controller_interface::return_type FdClutchBroadcaster::update(
   const rclcpp::Duration & /*period*/)
 {
   RCLCPP_DEBUG(get_node()->get_logger(), "Entering update()");
+
+  const size_t n_buttons = state_interfaces_.size(); // should be 4
+
+  // --- Publish /fd/button_states (Int32MultiArray, all buttons) ---
+  if (realtime_buttons_publisher_ && realtime_buttons_publisher_->trylock()) {
+    auto & data = realtime_buttons_publisher_->msg_.data;
+    data.resize(n_buttons, 0);
+    for (size_t i = 0; i < n_buttons; ++i) {
+      double val = state_interfaces_[i].get_value();
+      data[i] = (val > 0.5) ? 1 : 0;
+    }
+    realtime_buttons_publisher_->unlockAndPublish();
+  }
+
+  // --- Publish /fd/button_state (Bool, button 0 only — backward compat) ---
   if (realtime_clutch_publisher_ && realtime_clutch_publisher_->trylock()) {
     RCLCPP_DEBUG(get_node()->get_logger(), "Lock acquired");
-    // Read provided state interface
-    bool is_interface_a_button = get_node()->get_parameter("is_interface_a_button").as_bool();
-    double read_value = state_interfaces_[0].get_value();
-
-    bool clutch_state = false;
-    if (is_interface_a_button) {
-      // Clutched (workspace engaged) if button is pressed
-      clutch_state = (read_value > 0.5) ? true : false;
-    } else {
-      // Clutched (workspace engaged) if handle angle is small (i.e., physically clutched)
-      // E.g., 7th "joint" of Omega 6 / Sigma 7
-      clutch_state = (read_value < 0.03) ? true : false;
-    }
-
-    // Publish clucth
-    auto & fd_clutch_msg = realtime_clutch_publisher_->msg_;
-    fd_clutch_msg.data = clutch_state;
+    double read_value = (n_buttons > 0) ? state_interfaces_[0].get_value() : 0.0;
+    realtime_clutch_publisher_->msg_.data = (read_value > 0.5);
     RCLCPP_DEBUG(get_node()->get_logger(), "publish and unlock");
     realtime_clutch_publisher_->unlockAndPublish();
   }
