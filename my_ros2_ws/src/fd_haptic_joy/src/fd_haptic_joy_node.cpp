@@ -25,22 +25,25 @@ public:
     this->declare_parameter("deadband", 0.005);    
     this->declare_parameter("joy_scale", 15.0);    
     
-    // Parametri integrazione PoV 
-    this->declare_parameter("v_pan_max", 0.7);   
-    this->declare_parameter("v_zc_max", 0.5);  
-    this->declare_parameter("v_xc_max", 1.2);
-    this->declare_parameter("dt", 0.01);           
+    // Parametri integrazione PoV sferico
+    this->declare_parameter("v_r_max",    1.2);   // velocità radiale max [m/s]
+    this->declare_parameter("v_beta_max", 0.7);   // velocità azimut max [rad/s]
+    this->declare_parameter("v_gamma_max",0.5);   // velocità elevazione max [rad/s]
+    this->declare_parameter("dt", 0.01);
 
     // Parametri Campo Potenziale (Force Feedback dai vincoli MPC)
     this->declare_parameter("fov_h", 80.0);         
     this->declare_parameter("fov_v", 60.0);         
-    this->declare_parameter("x_min_safety", 1.0);   
-    this->declare_parameter("k_repulsive", 3.0); // costante elastica del campo repulsivo
-    this->declare_parameter("alpha", 1.3); // esponente del campo repulsivo che definisce la forma dell'esponenziale
-    this->declare_parameter("activation_ratio", 0.8); // Inizia a sentirsi prima (act_ratio%)
-    this->declare_parameter("activation_ratio_cam", 0.5); // Inizia a sentirsi prima (act_ratio%)
-    this->declare_parameter("max_repulsive_force", 15.0); // Aumentato limite repulsione
+    this->declare_parameter("r_min_safety", 1.5);  // distanza minima di sicurezza [m]
+    this->declare_parameter("k_repulsive", 1.0);
+    this->declare_parameter("alpha", 2.0);
+    this->declare_parameter("activation_ratio", 1.0);
+    this->declare_parameter("activation_ratio_cam", 0.3);
+    this->declare_parameter("max_repulsive_force", 15.0);
 
+    this->declare_parameter("v_pan_max", 0.5);
+    this->declare_parameter("v_zc_max", 0.5);
+    this->declare_parameter("v_xc_max", 1.0);
     // Actual parameters taken from launchfile:
     //  'k_spring'
     //  'b_damping'
@@ -72,9 +75,13 @@ public:
     peg_live_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/peg_live_pose", 10);
 
     // Initial state
-    current_pov_ref_ = {2.0, 0.0, 0.0, 0.0}; // [Xc, Yc, Zc, Pan_mutuo]
-    current_pov_vel_ = {0.0, 0.0, 0.0, 0.0}; // [dXc, dYc, dZc, dPan]
-    actual_pov_ = {2.0, 0.0, 0.0, 0.0};       // [Xc, Yc, Zc, Pan] dal drone
+    // Stato PoV in coordinate sferiche: [r, beta, gamma]
+    // r     = distanza 3D dall'oggetto [m]
+    // beta  = azimut nel piano XY [rad]  (orbita orizzontale)
+    // gamma = elevazione dal piano XY [rad]  (0=piano, +pi/2=zenit)
+    current_pov_ref_ = {3.0, M_PI, 0.0};   // default: 3m dietro, stessa quota
+    current_pov_vel_ = {0.0, 0.0, 0.0};    // [dr, d_beta, d_gamma]
+    actual_pov_      = {3.0, M_PI, 0.0, 0.0};   // [r, beta, gamma, yaw_err] dal drone
     falcon_pos_ = {0.0, 0.0, 0.0};
     prev_falcon_pos_ = {0.0, 0.0, 0.0};
     falcon_vel_ = {0.0, 0.0, 0.0};
@@ -116,9 +123,12 @@ private:
       RCLCPP_INFO(this->get_logger(), ">>> Pulsante Falcon PREMUTO: Controllo drone ATTIVATO");
     } else if (!msg->data && button_pressed_) {
       RCLCPP_INFO(this->get_logger(), "<<< Pulsante Falcon RILASCIATO: Controllo drone DISATTIVATO");
-      current_pov_vel_ = {0.0, 0.0, 0.0, 0.0};
+      current_pov_vel_ = {0.0, 0.0, 0.0};
     }
     button_pressed_ = msg->data;
+    if (!msg->data) {
+      current_pov_vel_ = {0.0, 0.0, 0.0};
+    }
   }
 
   void buttons_cb(const std_msgs::msg::Int32MultiArray::SharedPtr msg)
@@ -145,27 +155,29 @@ private:
 
   void actual_pov_cb(const std_msgs::msg::Float64MultiArray::SharedPtr msg)
   {
+    // Formato atteso: [r, beta, gamma, yaw_err]
+    if (msg->data.size() >= 3) {
+      actual_pov_[0] = msg->data[0]; // r
+      actual_pov_[1] = msg->data[1]; // beta
+      actual_pov_[2] = msg->data[2]; // gamma
+    }
     if (msg->data.size() >= 4) {
-      actual_pov_[0] = msg->data[0]; // Xc
-      actual_pov_[1] = msg->data[1]; // Yc
-      actual_pov_[2] = msg->data[2]; // Zc
-      actual_pov_[3] = msg->data[3]; // Pan
+      actual_pov_[3] = msg->data[3]; // yaw_err
     }
 
     // Se il pulsante non è premuto, il riferimento segue la posizione reale del drone
     if (!button_pressed_) {
-      current_pov_ref_[0] = actual_pov_[0];
-      current_pov_ref_[1] = actual_pov_[1];
-      current_pov_ref_[2] = actual_pov_[2];
-      current_pov_ref_[3] = actual_pov_[3];
-      current_pov_vel_ = {0.0, 0.0, 0.0, 0.0};
+      current_pov_ref_[0] = actual_pov_[0]; // r
+      current_pov_ref_[1] = actual_pov_[1]; // beta
+      current_pov_ref_[2] = actual_pov_[2]; // gamma
+      current_pov_vel_ = {0.0, 0.0, 0.0};
     }
   }
 
   /**
    * Calcola la forza repulsiva data la distanza dal bordo e la distanza massima.
    * Forza = 0 se dist > d_activation
-   * Forza cresce quadraticamente da 0 a max quando dist va da d_activation a 0
+   * Forza cresce esponenzialmente da 0 a max quando dist va da d_activation a 0
    */
   double repulsive_force(double dist, double d_max, double activation_ratio, double k_rep, double alpha, double max_rep)
   {
@@ -206,67 +218,41 @@ private:
     }
 
     // Parametri campo potenziale
-    double fov_h_deg = this->get_parameter("fov_h").as_double();
-    double fov_v_deg = this->get_parameter("fov_v").as_double();
-    double x_min = this->get_parameter("x_min_safety").as_double();
-    double k_rep = this->get_parameter("k_repulsive").as_double();
-    double act_ratio = this->get_parameter("activation_ratio").as_double();
-    double act_ratio_cam = this->get_parameter("activation_ratio_cam").as_double();
-    double max_rep = this->get_parameter("max_repulsive_force").as_double();
-
-    double T_h = std::tan(fov_h_deg * M_PI / 360.0); // tan(fov_h/2)
-    double T_v = std::tan(fov_v_deg * M_PI / 360.0); // tan(fov_v/2)
-
-    // Stato attuale della camera (dal topic /actual_pov)
-    double Xc = actual_pov_[0];
-    double Yc = actual_pov_[1];
-    double Zc = actual_pov_[2];
-
     // =====================================================
-    // CALCOLO DISTANZE DAI BORDI CAMERA
+    // CAMPO POTENZIALE: forza repulsiva basata su distanza radiale r
     // =====================================================
-    // I vincoli nel frame camera sono:
-    //   Bordo Destro:    Yc <= +T_h * Xc  ->  dist = T_h*Xc - Yc
-    //   Bordo Sinistro:  Yc >= -T_h * Xc  ->  dist = T_h*Xc + Yc
-    //   Bordo Alto:      Zc <= +T_v * Xc  ->  dist = T_v*Xc - Zc
-    //   Bordo Basso:     Zc >= -T_v * Xc  ->  dist = T_v*Xc + Zc
-    //   Dist. Sicurezza: Xc >= X_min      ->  dist = Xc - X_min
+    double r_min    = this->get_parameter("r_min_safety").as_double();
+    double k_rep    = this->get_parameter("k_repulsive").as_double();
+    double act_ratio= this->get_parameter("activation_ratio").as_double();
+    double act_ratio_cam  = this->get_parameter("activation_ratio_cam").as_double();
+    double max_rep  = this->get_parameter("max_repulsive_force").as_double();
 
-    double half_width = T_h * Xc;   // semi-larghezza FOV a distanza Xc
-    double half_height = T_v * Xc;  // semi-altezza FOV a distanza Xc
+    // Parametri Campo Visivo (FoV)
+    double fov_h = this->get_parameter("fov_h").as_double();
+    double fov_v = this->get_parameter("fov_v").as_double();
+    double limit_gamma_max = (fov_v / 2.0) * (M_PI / 180.0);
+    double limit_yaw_max   = (fov_h / 2.0) * (M_PI / 180.0);
 
-    double dist_right  = half_width - Yc;
-    double dist_left   = half_width + Yc;
-    double dist_top    = half_height - Zc;
-    double dist_bottom = half_height + Zc;
-    double dist_safety = Xc - x_min;
+    // 1. Asse X: Forza repulsiva basata su distanza radiale r
+    double r_actual   = actual_pov_[0];          // r [m]
+    double dist_r_min = r_actual - r_min;        // >0 se sicuro, <0 se violato
+    double f_rep_x = +repulsive_force(dist_r_min, r_min, act_ratio, k_rep, alpha, max_rep);
 
-    // =====================================================
-    // CALCOLO FORZE REPULSIVE
-    // =====================================================
-    // Forza sull'asse Y del Falcon (comanda Pan/Orbit):
-    //   - Bordo destro violato -> forza che spinge Falcon Y verso sinistra (negativa)
-    //   - Bordo sinistro violato -> forza che spinge Falcon Y verso destra (positiva)
-    double f_rep_right = repulsive_force(dist_right, half_width, act_ratio_cam, k_rep, alpha, max_rep);
-    double f_rep_left  = repulsive_force(dist_left,  half_width, act_ratio_cam, k_rep, alpha, max_rep);
-    double f_rep_y = -f_rep_right + f_rep_left; // Forza netta su asse Y Falcon
+    // 2. Asse Z: Forza repulsiva basata su elevazione gamma (limite FoV verticale)
+    double gamma_act = actual_pov_[2];
+    double dist_gamma_top = limit_gamma_max - gamma_act;
+    double dist_gamma_bot = gamma_act - (-limit_gamma_max);
+    double f_rep_z_top = -repulsive_force(dist_gamma_top, limit_gamma_max, act_ratio_cam, k_rep, alpha, max_rep);
+    double f_rep_z_bot = +repulsive_force(dist_gamma_bot, limit_gamma_max, act_ratio_cam, k_rep, alpha, max_rep);
+    double f_rep_z = f_rep_z_top + f_rep_z_bot;
 
-    // Forza sull'asse Z del Falcon (comanda Zc/Altezza):
-    //   - Bordo alto violato -> forza che spinge Falcon Z verso l'alto (positiva)
-    //   - Bordo basso violato -> forza che spinge Falcon Z verso il basso (negativa)
-    double f_rep_top    = repulsive_force(dist_top,    half_height, act_ratio_cam, k_rep, alpha*2, max_rep);
-    double f_rep_bottom = repulsive_force(dist_bottom, half_height, act_ratio_cam, k_rep, alpha*2, max_rep);
-    double f_rep_z = f_rep_top - f_rep_bottom; // Netto su asse Z Falcon
+    // 3. Asse Y: Forza repulsiva basata su yaw_err (limite FoV orizzontale)
+    double yaw_err_act = actual_pov_[3];
+    double dist_yaw = limit_yaw_max - std::abs(yaw_err_act);
+    double f_rep_yaw_mag = repulsive_force(dist_yaw, limit_yaw_max, act_ratio_cam, k_rep, alpha, max_rep);
+    // Se yaw_err > 0, opponiamo una forza per spingere l'utente a correggere
+    double f_rep_y = (yaw_err_act > 0) ? -f_rep_yaw_mag : f_rep_yaw_mag;
 
-    // Forza sull'asse X del Falcon (comanda Xc/Zoom):
-    //   - Troppo vicino all'oggetto -> forza POSITIVA che spinge Falcon X in avanti
-    //     (Falcon X positivo -> Xc aumenta -> drone si allontana dall'oggetto)
-    double f_rep_safety = repulsive_force(dist_safety, Xc, act_ratio, k_rep, alpha, max_rep);
-    double f_rep_x = +f_rep_safety; // Spinge LONTANO dall'oggetto
-
-    // =====================================================
-    // FORZA TOTALE = Molla centering ammortizzata + Campo Potenziale
-    // =====================================================
     std::vector<double> forces(3, 0.0);
     for (int i = 0; i < 3; ++i) {
       // Forza elastica ammortizzata: F = -k * x - b * v
@@ -290,53 +276,47 @@ private:
     force_msg.data = forces;
     force_pub_->publish(force_msg);
 
-    // 2. Integrazione PoV se il pulsante è premuto
+    // =====================================================
+    // INTEGRAZIONE PoV sferico se il pulsante è premuto
+    // Mapping assi Falcon -> Coordinate Sferiche:
+    //   Falcon X (Avanti/Dietro)   -> dr     (zoom: avvicina/allontana)
+    //   Falcon Y (Destra/Sinistra) -> d_beta (orbita orizzontale)
+    //   Falcon Z (Su/Giù)          -> d_gamma(orbita verticale / elevazione)
+    // =====================================================
     if (button_pressed_) {
-      // Mappatura assi Falcon -> Comandi
-      // Falcon X (Avanti/Dietro)   -> Xc (Zoom)
-      // Falcon Y (Destra/Sinistra) -> Pan (Orbit)
-      // Falcon Z (Su/Giù)          -> Zc (Altezza)
-      
-      double joy_scale = this->get_parameter("joy_scale").as_double();
-      double xc_cmd  = apply_deadband(falcon_pos_[0], deadband) * joy_scale; 
-      double pan_cmd = apply_deadband(falcon_pos_[1], deadband) * joy_scale;  
-      double zc_cmd  = -apply_deadband(falcon_pos_[2], deadband) * joy_scale;  
+      double joy_scale   = this->get_parameter("joy_scale").as_double();
+      double v_r_max     = this->get_parameter("v_r_max").as_double();
+      double v_beta_max  = this->get_parameter("v_beta_max").as_double();
+      double v_gamma_max = this->get_parameter("v_gamma_max").as_double();
 
-      double v_pan_max = this->get_parameter("v_pan_max").as_double();
-      double v_zc_max  = this->get_parameter("v_zc_max").as_double();
-      double v_xc_max  = this->get_parameter("v_xc_max").as_double();
+      double dr_cmd     =  apply_deadband(falcon_pos_[0], deadband) * joy_scale * v_r_max;
+      double dbeta_cmd  =  apply_deadband(falcon_pos_[1], deadband) * joy_scale * v_beta_max;
+      double dgamma_cmd =  apply_deadband(falcon_pos_[2], deadband) * joy_scale * v_gamma_max;
 
-      // Calcolo velocità di riferimento (interpreto posizione haptic come velocità)
-      current_pov_vel_[0] = xc_cmd  * v_xc_max;
-      current_pov_vel_[1] = 0.0; // Yc non comandata direttamente
-      current_pov_vel_[2] = zc_cmd  * v_zc_max;
-      current_pov_vel_[3] = pan_cmd * v_pan_max;
+      current_pov_vel_[0] = dr_cmd;
+      current_pov_vel_[1] = dbeta_cmd;
+      current_pov_vel_[2] = dgamma_cmd;
 
-      // Integrazione posizione (SENZA limiti di sicurezza: li gestisce l'MPC + feedback)
-      current_pov_ref_[0] += current_pov_vel_[0] * dt; // Xc (Zoom)
-      current_pov_ref_[2] += current_pov_vel_[2] * dt; // Zc
-      current_pov_ref_[3] += current_pov_vel_[3] * dt; // Pan_mutuo
-      
-      // Wrap pan_mutuo
-      current_pov_ref_[3] = std::fmod(current_pov_ref_[3] + M_PI, 2.0 * M_PI);
-      if (current_pov_ref_[3] < 0) current_pov_ref_[3] += 2.0 * M_PI;
-      current_pov_ref_[3] -= M_PI;
+      // Integrazione
+      current_pov_ref_[0] += current_pov_vel_[0] * dt;                              // r
+      current_pov_ref_[0]  = std::max(0.5, current_pov_ref_[0]);                    // r >= 0.5 m
+      current_pov_ref_[1] += current_pov_vel_[1] * dt;                              // beta
+      current_pov_ref_[1]  = std::fmod(current_pov_ref_[1] + M_PI, 2.0 * M_PI);    // wrap
+      if (current_pov_ref_[1] < 0) current_pov_ref_[1] += 2.0 * M_PI;
+      current_pov_ref_[1] -= M_PI;
+      current_pov_ref_[2] += current_pov_vel_[2] * dt;                              // gamma
+      current_pov_ref_[2]  = std::max(-M_PI/2.0 + 0.05,
+                               std::min( M_PI/2.0 - 0.05, current_pov_ref_[2]));    // clamp
 
-      // 3. Pubblicazione Goal (Legacy) - DISATTIVATA
-      /*
-      auto goal_msg = std_msgs::msg::Float64MultiArray();
-      goal_msg.data = current_pov_ref_;
-      goal_pub_->publish(goal_msg);
-      */
-
-      // 4. Pubblicazione Haptic Ref (Completo)
+      // Pubblica: [r, beta, gamma, dr, d_beta, d_gamma]  (6 valori)
       auto haptic_msg = std_msgs::msg::Float64MultiArray();
       haptic_msg.data.insert(haptic_msg.data.end(), current_pov_ref_.begin(), current_pov_ref_.end());
       haptic_msg.data.insert(haptic_msg.data.end(), current_pov_vel_.begin(), current_pov_vel_.end());
       haptic_ref_pub_->publish(haptic_msg);
     } else {
-      current_pov_vel_ = {0.0, 0.0, 0.0, 0.0};
+      current_pov_vel_ = {0.0, 0.0, 0.0};
     }
+
 
     // =====================================================
     // MODO PEG (bottone 2 = sopra): teleop drone peg nel frame camera MPC

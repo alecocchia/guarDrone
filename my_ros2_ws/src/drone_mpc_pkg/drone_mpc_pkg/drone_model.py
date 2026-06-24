@@ -4,7 +4,11 @@ import numpy as np
 import casadi as ca
 from drone_mpc_pkg.common import *
 
-def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset, camera_rpy) -> AcadosModel:
+def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset=None, camera_rpy=None) -> AcadosModel:
+    """Quadrotor ODE model con parametri sferici mondiali.
+    camera_offset e camera_rpy sono mantenuti per compatibilità con setup_model()
+    ma non vengono più usati nel costo (formulazione sferica mondiale).
+    """
 
     model_name = 'quadrotor_ode'
 
@@ -42,23 +46,13 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset, camera_rpy) -> A
     # Rotation matrix from quaternion
     Rb = quat_to_R(q)
 
-    # Model parameters (p)
-    # p[0:3]   = object position (p_obj)
-    # p[3]     = pan reference (pan_ref)
-    # p[4:7]   = visual reference (Xc_ref, Yc_ref, Zc_ref)
-    ref_sym = ca.SX.sym('p', 7) 
-    p_obj_sym = ref_sym[0:3]
-    pan_ref_sym = ref_sym[3]
-    visual_ref_sym = ref_sym[4:7]
-
-    # Camera parameters as static constants
-    cam_off = ca.DM(camera_offset).reshape((3,1))
-    R_cam_body = RPY_to_R(camera_rpy[0], camera_rpy[1], camera_rpy[2])
-
-    # Camera projection inside the model 
-    p_cam = p + Rb @ cam_off
-    p_rel_world = p_obj_sym - p_cam
-    P_c = R_cam_body.T @ Rb.T @ p_rel_world
+    # Model parameters (p) — coordinate sferiche mondiali
+    # p[0:3] = p_obj   (posizione oggetto nel mondo)
+    # p[3]   = r_ref   (distanza di riferimento [m])
+    # p[4]   = beta_ref  (azimut di riferimento [rad], angolo drone->obj nel piano XY)
+    # p[5]   = gamma_ref (elevazione di riferimento [rad], 0=piano, +pi/2=zenit)
+    ref_sym = ca.SX.sym('p', 6)
+    # (i simboli vengono usati direttamente in drone_MPC_settings.py tramite model.p[...])
 
     # Equations of motion (ODEs)
     p_dot = v

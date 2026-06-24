@@ -10,23 +10,25 @@ from scipy.spatial.transform import Rotation
 #################  AGGIUSTARE: ricavare snap, jerk, acc in qualche modo perché da y_expr non si può tramite get(...)
 ##############  Estendere lo stato con tutti gli stati
 
-def build_yref_online(y_idx, visual_ref, vel_ref, u_ref=np.zeros(4)):
-    yref = np.zeros(y_idx["u"].stop) 
-    yref[y_idx["pan"]]     = 0.0                    # Errore di pan centrato in 0 (gestito da min_angle nel modello)
+def build_yref_online(y_idx, vel_ref, u_ref=np.zeros(4)):
+    """Costruisce il vettore di riferimento online per la formulazione sferica.
+    Gli errori sferici (r_err, beta_err, gamma_err, yaw_err) hanno riferimento 0
+    perché sono già espressi come errore nel modello.
+    """
+    yref = np.zeros(y_idx["u"].stop)
+    yref[y_idx["sph"]]     = np.array([0.0, 0.0, 0.0, 0.0])  # [r_err, beta_err, gamma_err, yaw_err] → tutti zero
     yref[y_idx["vel"]]     = vel_ref
-    #yref[y_idx["rp"]]      = np.array([0,0])        # X_c, Y_c (posizione dell'oggetto rispetto alla camera, nella terna camera)
-    yref[y_idx["visual"]]  = visual_ref
-    yref[y_idx["ang_vel"]] = np.array([0,0,0])
-    yref[y_idx["acc"]]     = np.array([0,0,0])
-    yref[y_idx["acc_ang"]] = np.array([0,0,0])
-    yref[y_idx["jerk"]]    = np.array([0,0,0])
-    yref[y_idx["snap"]]    = np.array([0,0,0])
+    yref[y_idx["ang_vel"]] = np.array([0.0, 0.0, 0.0])
+    yref[y_idx["acc"]]     = np.array([0.0, 0.0, 0.0])
+    yref[y_idx["acc_ang"]] = np.array([0.0, 0.0, 0.0])
+    yref[y_idx["jerk"]]    = np.array([0.0, 0.0, 0.0])
+    yref[y_idx["snap"]]    = np.array([0.0, 0.0, 0.0])
     yref[y_idx["u"]]       = u_ref
     return yref
 
-def build_yref_terminal(y_idx, visual_ref, vel_ref, ny_e, u_ref=np.zeros(4)):
-    y = build_yref_online(y_idx, visual_ref, vel_ref, u_ref)
-    return y[:ny_e]  
+def build_yref_terminal(y_idx, vel_ref, ny_e, u_ref=np.zeros(4)):
+    y = build_yref_online(y_idx, vel_ref, u_ref)
+    return y[:ny_e]
 
 
 def setup_model(m, Ixx, Iyy, Izz, camera_offset, camera_rpy):
@@ -62,10 +64,9 @@ def set_initial_state(ocp_solver, xk):
     ocp_solver.set(0, "lbx", xk)
     ocp_solver.set(0, "ubx", xk)
 
-def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts, W, W_e, 
+def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
                   u_min, u_max,
-                  pan_ref = 0.0, visual_ref = np.zeros(3), vel_ref = np.zeros(3),
-                  cam_rpy = np.zeros(3), fov_h = 80.0, fov_v = 60.0,
+                  sph_ref = np.zeros(3),
                   rp_limit = 35.0 * np.pi / 180.0):
     
     nx = model.x.rows()
@@ -80,89 +81,75 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
 
     ocp = AcadosOcp()
     ocp.model = model
-    
+
     ocp.solver_options.tf = Tf
     ocp.solver_options.N_horizon = N_horiz
 
     '''
-                                            STATE & KINEMATICS             
+                                            STATE & KINEMATICS
     '''
-    # Position - Cartesiana Pura
+    # Position
     p_expr = model.x[0:3]
 
-    # Quaternione di stato - Orientamento Puro
+    # Quaternion
     q_expr = model.x[6:10]
-    
-    # Derivata per Euler rates e Yaw
-    qw = q_expr[0]
-    qx = q_expr[1]
-    qy = q_expr[2]
-    qz = q_expr[3]
-    
-    # Normalizzazione per sicurezza numerica
+    qw = q_expr[0]; qx = q_expr[1]; qy = q_expr[2]; qz = q_expr[3]
+
+    # Normalizzazione numerica
     q_norm = q_expr / ca.norm_2(q_expr)
     rpy_expr = quat_to_RPY(q_norm)
     roll = rpy_expr[0]
     pitch = rpy_expr[1]
     yaw = rpy_expr[2]
     w_expr = model.x[10:13]
-    ang_vel=w_expr
+    ang_vel = w_expr
 
-    # Rotazione attuale del drone rispetto al world
+    # Rotazione body→world
     R_expr = quat_to_R(q_expr)
-
-    # --- Parte visuale --> Sistema camera ---  
-    d_cam = ca.DM(camera_offset[0:3]).reshape((3,1))
-
-    # posizione camera = posizione drone nel mondo + posa camera-body ruotata nel mondo
-    p_cam = p_expr + R_expr @ d_cam   # Posizione della camera nel mondo
-
-    # Orientamento della camera rispetto al body del drone (FLU)
-    R_cam_body = RPY_to_R(cam_rpy[0], cam_rpy[1], cam_rpy[2])
-
-    fov_h_rad = fov_h * ca.pi / 180.0
-    fov_v_rad = fov_v * ca.pi / 180.0
-
-    T_h = ca.tan(fov_h_rad / 2.0)
-    T_v = ca.tan(fov_v_rad / 2.0)
-
-    p_obj_expr = model.p[0:3]
-    p_rel_world = p_obj_expr - p_cam
-
-    # Posa relativa dell'oggetto rispetto alla camera, nella terna camera
-    # Mondo -> body_drone -> camera
-    P_c = R_cam_body.T @ R_expr.T @ p_rel_world    
-
-    X_c = P_c[0]
-    Y_c = P_c[1]
-    Z_c = P_c[2]
-
-    # Pan mutuo: angolo del vettore (P_cam - P_obj) nel piano XY globale
-    # Usiamo min_angle per calcolare la distanza minima rispetto al riferimento passato come parametro p[3]
-    # pan_expr sarà già l'errore, in modo da poter applicare min_angle
-    pan_ref_sym = model.p[3]  # variabile simbolica CasADi per il pan_ref (parametro p[3])
- 
-    _dx = p_expr[0] - p_obj_expr[0]
-    _dy = p_expr[1] - p_obj_expr[1]
-    
-    # testare le funzioni
-    pan_raw = ca.atan2(_dy, _dx)
-
-
-    ## IDEA DA TESTARE: matrice di rotazione mutua tra pan_raw e pan_ref_sym
-    # e ricavare angoli di rotazione da questa
-    pan_expr = min_angle(pan_raw - pan_ref_sym)
-    
 
     # state dynamics vector
     xdot = model.f_expl_expr
 
     # Velocity
-    v_expr = model.x[3:6]  
+    v_expr = model.x[3:6]
 
-    # Acceleration 
+    # Acceleration
     acc_expr = xdot[3:6]
     acc_ang_expr = xdot[10:13]
+
+    '''
+                                            FORMULAZIONE SFERICA MONDIALE
+    Parametri del modello (6 totali):
+      p[0:3] = p_obj   (posizione oggetto nel mondo)
+      p[3]   = r_ref   (distanza di riferimento)
+      p[4]   = beta_ref  (azimut di riferimento, angolo nel piano XY)
+      p[5]   = gamma_ref (elevazione di riferimento, angolo dal piano XY)
+    '''
+    p_obj_expr = model.p[0:3]
+    r_ref_sym   = model.p[3]
+    beta_ref_sym = model.p[4]
+    gamma_ref_sym = model.p[5]
+
+    # Vettore drone → oggetto nel frame mondo
+    p_rel = p_expr - p_obj_expr
+
+    # Distanza 3D: sempre > 0
+    r_sph = ca.norm_2(p_rel)
+    r_err = r_sph - r_ref_sym
+
+    # Azimut: angolo del vettore drone→obj nel piano XY (rad)
+    beta_raw = ca.atan2(p_rel[1], p_rel[0])
+    beta_err = min_angle(beta_raw - beta_ref_sym)
+
+    # Elevazione: angolo dal piano XY verso l'alto (0=piano, +pi/2=zenit, -pi/2=nadir)
+    r_xy = ca.sqrt(p_rel[0]**2 + p_rel[1]**2 + 1e-6)
+    gamma_raw = ca.atan2(p_rel[2], r_xy)
+    gamma_err = gamma_raw - gamma_ref_sym
+
+    # Yaw error: il drone deve puntare VERSO l'oggetto
+    # La direzione desiderata è -p_rel (da drone verso oggetto)
+    yaw_desired = ca.atan2(-p_rel[1], -p_rel[0])
+    yaw_err = min_angle(yaw - yaw_desired)
 
     #########################################################################################################                   
     #Jerk
@@ -206,76 +193,56 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     ocp.solver_options.nlp_solver_type = 'SQP_RTI'
     #ocp.solver_options.globalization = 'MERIT_BACKTRACKING'
 
-    visual_constr_expr = ca.vertcat(
-        Y_c - T_h * X_c,  # Limite Destro:  Y_c <= T_h * X_c
-        Y_c + T_h * X_c,  # Limite Sinistro: Y_c >= -T_h * X_c
-        Z_c - T_v * X_c,  # Limite Alto:    Z_c <= T_v * X_c
-        Z_c + T_v * X_c,  # Limite Basso:   Z_c >= -T_v * X_c
-        X_c               # Profondità:     X_c >= X_min
-    )
-
-    # Vincolo su Roll e Pitch (Soft Constraints)
+    # --- Vincolo di sicurezza: distanza minima dall'oggetto (sempre r > 0, mai problemi di segno) ---
+    r_min = 1.5  # [m] distanza minima di sicurezza
     h_expr = ca.vertcat(
-        visual_constr_expr,
-        roll,
-        pitch
+        r_sph - r_min,   # r >= r_min  (indice 0)
     )
-    
-    #model.con_h_expr = h_expr
-    
-    X_min = 1.5
-    # [Y_right, Y_left, Z_up, Z_down, X_min, roll, pitch]
-    #ocp.constraints.lh = np.array([-1e2,  0.0, -1e2,  0.0, X_min, -rp_limit, -rp_limit])
-    #ocp.constraints.uh = np.array([ 0.0,  1e2,  0.0,  1e2, 1e2,    rp_limit,  rp_limit])
+    model.con_h_expr = h_expr
 
-    # Slacks per vincoli visuali (5) + roll/pitch (2) = 7
-    n_soft_h = 7
-    #ocp.constraints.idxsh = np.array(range(n_soft_h))
+    # Soft constraints: [r_min]
+    ocp.constraints.lh = np.array([0.0])
+    ocp.constraints.uh = np.array([1e6])
+    ocp.constraints.idxsh = np.array([0])
 
-    # Pesi per i soft constraints
-    # [Visx4, dist_sicurezza, roll, pitch]
-    penalty_L1 = 1e-4
-    penalty_L2 = 1e-3
-    weights_costs = np.array([1, 1, 1, 1, 1e4, 1, 1])
+    # Pesi soft (L2 quadratico + L1 lineare)
+    # [r_min, roll, pitch]
+    penalty_L2 = np.array([5e2])
+    penalty_L1 = np.array([1e1])
 
-    #ocp.cost.Zl = penalty_L2 * weights_costs
-    #ocp.cost.Zu = penalty_L2 * weights_costs
-    #ocp.cost.zl = penalty_L1 * weights_costs
-    #ocp.cost.zu = penalty_L1 * weights_costs
-
-  #  # --- Fine parte visuale --- 
+    ocp.cost.Zl = penalty_L2
+    ocp.cost.Zu = penalty_L2
+    ocp.cost.zl = penalty_L1
+    ocp.cost.zu = penalty_L1
 
     '''
                                         COST FUNCTION               
     '''
-    # Cost function quantities (expressed with respect to state and control)
+    # Cost function quantities — formulazione sferica mondiale
+    # [r_err, beta_err, gamma_err, yaw_err, vel, ang_vel, acc, acc_ang, jerk, snap, u]
     y_expr = ca.vertcat(
-        pan_expr,                       # Pan Mutuo
-        X_c,                            # Posizione X dell'oggetto rispetto alla camera
-        Y_c,                            # Posizione Y dell'oggetto rispetto alla camera
-        Z_c,                            # Posizione Z dell'oggetto rispetto alla camera
-        v_expr,                         # velocity
-        #roll,                           # Roll
-        #pitch,                          # Pitch
-        ang_vel,                        # Euler rates (non è vero, ora sono velocità angolari)
-        acc_expr,                       # acceleration
-        acc_ang_expr,                   # angular acceleration
-        j_expr,                         # jerk
-        s_expr,                         # snap
-        model.u                         # control
+        r_err,                          # Errore distanza 3D (>0 sempre)
+        beta_err,                       # Errore azimut (orbita orizzontale)
+        gamma_err,                      # Errore elevazione (orbita verticale)
+        yaw_err,                        # Errore yaw (punta verso l'oggetto)
+        v_expr,                         # Velocità
+        ang_vel,                        # Velocità angolari
+        acc_expr,                       # Accelerazione
+        acc_ang_expr,                   # Accelerazione angolare
+        j_expr,                         # Jerk
+        s_expr,                         # Snap
+        model.u                         # Controllo
     )
-    
-    # Terminal cost exrpession
+
+    # Terminal cost expression
     y_expr_e = ca.vertcat(
-        pan_expr,                       # Pan Mutuo
-        X_c,
-        Y_c,
-        Z_c,
-        v_expr,                         # velocity
-        #roll,
-        #pitch,                         
-        ang_vel,                        # Euler rates
-        acc_hover,                      # acceleration
+        r_err,
+        beta_err,
+        gamma_err,
+        yaw_err,
+        v_expr,
+        ang_vel,
+        acc_hover,
         acc_ang_hover,
         #j_hover,                        # jerk
         #s_hover,                        # snap
@@ -290,70 +257,48 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     ocp.cost.W_e = W_e
     ocp.cost.set = True
     
-    # I parametri ora passati al modello (p) sono 7: 
-    # [p_obj (3), pan_ref (1), visual_ref (3)]
-    ocp.parameter_values = np.zeros(7)
-    ocp.parameter_values[0:3]   = p_obj[0,:] 
-    ocp.parameter_values[3]     = pan_ref
-    ocp.parameter_values[4:7]   = visual_ref
+    # Parametri del modello (6 totali):
+    # [p_obj(3), r_ref(1), beta_ref(1), gamma_ref(1)]
+    ocp.parameter_values = np.zeros(6)
+    ocp.parameter_values[0:3] = p_obj[0,:]
+    ocp.parameter_values[3]   = sph_ref[0]   # r_ref
+    ocp.parameter_values[4]   = sph_ref[1]   # beta_ref
+    ocp.parameter_values[5]   = sph_ref[2]   # gamma_ref
 
     '''
                                         REFERENCES
     '''
     
-    # Definition of constant references
-    #rp_ref = np.array([0,0]) #roll and pitch refs
-    ang_vel_ref = np.array([0,0,0])
-    acc_ref=np.array([0,0,0])
-    acc_ang_ref = np.array([0,0,0])
-    jerk_ref=np.array([0,0,0])
-    snap_ref=np.array([0,0,0])
-    u_ref=np.array(u_hovering.full().flatten())
-    #u_ref = np.zeros(4)
+    u_ref = np.array(u_hovering.full().flatten())
 
-    # Indexes (Aggiornati per le nuove dimensioni)
-    pan_ind = slice(0,1) # pan
-    visual_ind = slice(pan_ind.stop,pan_ind.stop+3) # X_c, Y_c, Z_c
-    vel_ind = slice(visual_ind.stop, visual_ind.stop+3)
-    #rp_ind = slice(vel_ind.stop, vel_ind.stop+2)
-    ang_vel_ind = slice(vel_ind.stop,vel_ind.stop+3)
-    acc_ind = slice(ang_vel_ind.stop,ang_vel_ind.stop+3)
-    acc_ang_ind = slice(acc_ind.stop,acc_ind.stop+3)
-    jerk_ind = slice(acc_ang_ind.stop,acc_ang_ind.stop+3)   
-    snap_ind = slice(jerk_ind.stop,jerk_ind.stop+3)
-    u_ind = slice(snap_ind.stop,snap_ind.stop+4)
+    # Indici del vettore y (formulazione sferica)
+    sph_ind     = slice(0, 4)                                    # [r_err, beta_err, gamma_err, yaw_err]
+    vel_ind     = slice(sph_ind.stop,     sph_ind.stop + 3)
+    ang_vel_ind = slice(vel_ind.stop,     vel_ind.stop + 3)
+    acc_ind     = slice(ang_vel_ind.stop, ang_vel_ind.stop + 3)
+    acc_ang_ind = slice(acc_ind.stop,     acc_ind.stop + 3)
+    jerk_ind    = slice(acc_ang_ind.stop, acc_ang_ind.stop + 3)
+    snap_ind    = slice(jerk_ind.stop,    jerk_ind.stop + 3)
+    u_ind       = slice(snap_ind.stop,    snap_ind.stop + 4)
 
     y_idx = {
-        "pan": pan_ind,
-        "visual": visual_ind,
-        "vel": vel_ind,
-        #"rp": rp_ind,
+        "sph":     sph_ind,      # [r_err, beta_err, gamma_err, yaw_err]
+        "vel":     vel_ind,
         "ang_vel": ang_vel_ind,
-        "acc": acc_ind,
+        "acc":     acc_ind,
         "acc_ang": acc_ang_ind,
-        "jerk": jerk_ind,
-        "snap": snap_ind,
-        "u": u_ind,
+        "jerk":    jerk_ind,
+        "snap":    snap_ind,
+        "u":       u_ind,
     }
-    ny   = y_expr.numel  
-    ny_e = y_expr_e.numel()  # dimensione effettiva del vettore terminale
-    
-    yref = np.zeros(y_expr.numel())
-    yref_e = np.zeros(y_expr_e.numel())
+    ny   = y_expr.numel()
+    ny_e = y_expr_e.numel()
 
-    # ASSIGN REFERENCES
-    yref[pan_ind]= 0.0                  # L'errore di pan è già gestito nel modello (distanza minima da p[9])
-    yref[visual_ind]=visual_ref
-    yref[vel_ind]=vel_ref
-    #yref[rp_ind]= rp_ref
-    yref[ang_vel_ind]= ang_vel_ref
-    yref[acc_ind]=acc_ref
-    yref[acc_ang_ind]=acc_ang_ref
-    yref[jerk_ind]=jerk_ref         
-    yref[snap_ind]=snap_ref         
-    yref[u_ind]=u_ref               
+    # Tutti gli errori sferici sono già espressi come errore → riferimento = 0
+    yref   = np.zeros(ny)
+    yref[u_ind] = u_ref
 
-    yref_e = yref[:y_expr_e.numel()]  
+    yref_e = yref[:ny_e]
 
     ocp.cost.yref = yref
     ocp.cost.yref_e = yref_e

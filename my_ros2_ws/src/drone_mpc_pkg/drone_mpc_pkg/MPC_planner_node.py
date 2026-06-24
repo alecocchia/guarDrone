@@ -31,7 +31,7 @@ from rclpy.executors import MultiThreadedExecutor
 from drone_mpc_pkg.drone_MPC_settings import (
     setup_model, setup_initial_conditions, configure_mpc, set_initial_state, build_yref_online
 )
-from drone_mpc_pkg.common import quat_to_RPY, g0
+from drone_mpc_pkg.common import quat_to_RPY, g0, wrap_pi
 
 import tf2_ros
 
@@ -148,15 +148,11 @@ class MpcPlannerNode(Node):
         self.declare_parameter('haptic_transition_duration', 3.0)
         self.haptic_transition_duration = self.get_parameter('haptic_transition_duration').value
 
-        # Target visivo di default (PoV: Xc, Yc, Zc, Pan)
-        self.pan_target = np.pi
-        self.radius_target = 3.0
-        self.pov_target = np.array([self.radius_target, 0.0, 0.0, self.pan_target])
-        xc_hand = 0.5
-        yc_hand = -0.3
-        zc_hand = -0.5
-        scale_factor = 1.0
-        self.final_target=np.array([xc_hand, yc_hand, zc_hand]) * scale_factor #aggiungere pan
+        # Target PoV in coordinate sferiche: [r_ref, beta_ref, gamma_ref]
+        # r     = distanza 3D dall'oggetto [m]
+        # beta  = azimut del vettore drone->obj nel piano XY [rad]  (pan attorno all'oggetto)
+        # gamma = elevazione dal piano XY [rad]  (0=piano, +pi/2=zenit)
+        self.pov_target = np.array([3.0, np.pi, 0.0])  # default: 3m dietro, stessa quota
 
         self.declare_parameter('control_flag',  1)  
         self.control_flag_val = self.get_parameter('control_flag').get_parameter_value().integer_value
@@ -275,7 +271,6 @@ class MpcPlannerNode(Node):
     def supervisor_start_callback(self, msg: Bool):
         if msg.data == True:
             self.get_logger().info("Ricevuto comando dal Supervisor: Inizio MPC Task!")
-            self.bt_task_running = True
             self.task_started = True
             self.planner_configure()
 
@@ -462,138 +457,120 @@ class MpcPlannerNode(Node):
     def pov_target_callback(self, msg: Float64MultiArray):
         if len(msg.data) >= 4:
             with self.state_lock:
-                self.pov_target = np.array([msg.data[0], msg.data[1], msg.data[2], msg.data[3]], dtype=float)
+                # Formato: [r_ref, beta_ref, gamma_ref]
+                self.pov_target = np.array([msg.data[0], msg.data[1], msg.data[2]], dtype=float)
 
     def haptic_ref_callback(self, msg: Float64MultiArray):
-        if len(msg.data) >= 8:
+        # Formato atteso: [r, beta, gamma, dr, d_beta, d_gamma]  (6 valori)
+        if len(msg.data) >= 6:
             with self.state_lock:
-                self.haptic_pov = np.array(msg.data[0:4], dtype=float)
-                self.haptic_pov_dot = np.array(msg.data[4:8], dtype=float)
+                self.haptic_pov     = np.array(msg.data[0:3], dtype=float)  # [r, beta, gamma]
+                self.haptic_pov_dot = np.array(msg.data[3:6], dtype=float)  # [dr, d_beta, d_gamma]
                 self.haptic_timestamp = self.get_clock().now()
-                # Aggiorna il target autonomo all'ultimo input haptic per evitare che torni indietro al rilascio
+                # Aggiorna il target autonomo all'ultimo input haptic
                 self.pov_target = self.haptic_pov.copy()
 
     def joy_ref_callback(self, msg: Float64MultiArray):
-        if len(msg.data) >= 8:
+        # Formato atteso: [r, beta, gamma, dr, d_beta, d_gamma]  (6 valori)
+        if len(msg.data) >= 6:
             with self.state_lock:
-                self.joy_pov = np.array(msg.data[0:4], dtype=float)
-                self.joy_pov_dot = np.array(msg.data[4:8], dtype=float)
+                self.joy_pov     = np.array(msg.data[0:3], dtype=float)  # [r, beta, gamma]
+                self.joy_pov_dot = np.array(msg.data[3:6], dtype=float)  # [dr, d_beta, d_gamma]
                 self.joy_timestamp = self.get_clock().now()
-                # Aggiorna il target autonomo all'ultimo input joypad per evitare che torni indietro
+                # Aggiorna il target autonomo all'ultimo input joypad
                 self.pov_target = self.joy_pov.copy()
 
     # ==================== Configurazione e Solve ====================
     def get_current_ref(self, xk):
         """
-        Calcola i riferimenti (visuali, pan, velocità) con interpolazione tra 
-        Manual (Haptic/Joypad) e Traiettoria Autonoma per una transizione fluida.
+        Calcola il riferimento sferico [r_ref, beta_ref, gamma_ref] con interpolazione
+        tra controllo Manuale (Haptic/Joypad) e Traiettoria Autonoma.
+
+        Coordinate sferiche centrate sull'oggetto, vettore drone->oggetto:
+          r     = distanza 3D [m]
+          beta  = azimut nel piano XY [rad]  (orbita orizzontale)
+          gamma = elevazione dal piano XY [rad]  (0=piano, +pi/2=zenit)
         """
         now = self.get_clock().now()
-        # soglia di inattività (s): dopo dt_off si passa da riferimento manuale a autonomo
-        dt_off = 0.2 
+        dt_off = 0.2  # soglia inattività [s]
 
-        # 1) Valutazione Haptic
+        # --- Valutazione alpha haptic ---
         alpha_h = 1.0
         h_active = False
         if self.haptic_timestamp is not None:
             dt_h = (now - self.haptic_timestamp).nanoseconds / 1e9
             h_active = (dt_h < dt_off)
-            if h_active:
-                alpha_h = 0.0
-            else:
-                alpha_h = min(1.0, max(0.0, (dt_h - dt_off) / self.haptic_transition_duration))
+            alpha_h = 0.0 if h_active else min(1.0, max(0.0, (dt_h - dt_off) / self.haptic_transition_duration))
 
-        # 2) Valutazione Joypad
+        # --- Valutazione alpha joypad ---
         alpha_j = 1.0
         j_active = False
         if self.joy_timestamp is not None:
             dt_j = (now - self.joy_timestamp).nanoseconds / 1e9
             j_active = (dt_j < dt_off)
-            if j_active:
-                alpha_j = 0.0
-            else:
-                alpha_j = min(1.0, max(0.0, (dt_j - dt_off) / self.joy_transition_duration))
+            alpha_j = 0.0 if j_active else min(1.0, max(0.0, (dt_j - dt_off) / self.joy_transition_duration))
 
-        # 3) Selezione del riferimento manuale (Haptic ha priorità)
+        # --- Selezione sorgente manuale ---
         if h_active:
-            alpha = 0.0
-            manual_pov = self.haptic_pov
-            manual_d_pov = self.haptic_pov_dot
+            alpha, manual_pov, manual_d_pov = 0.0, self.haptic_pov, self.haptic_pov_dot
         elif j_active:
-            alpha = 0.0
-            manual_pov = self.joy_pov
-            manual_d_pov = self.joy_pov_dot
+            alpha, manual_pov, manual_d_pov = 0.0, self.joy_pov, self.joy_pov_dot
+        elif alpha_h < alpha_j:
+            alpha, manual_pov, manual_d_pov = alpha_h, self.haptic_pov, self.haptic_pov_dot
         else:
-            # Entrambi in transizione o inattivi: usiamo quello più "fresco" (alpha minore)
-            if alpha_h < alpha_j:
-                alpha = alpha_h
-                manual_pov = self.haptic_pov
-                manual_d_pov = self.haptic_pov_dot
-            else:
-                alpha = alpha_j
-                manual_pov = self.joy_pov
-                manual_d_pov = self.joy_pov_dot
+            alpha, manual_pov, manual_d_pov = alpha_j, self.joy_pov, self.joy_pov_dot
 
-        # 4) Riferimento Autonomo
-        auto_visual_ref = self.pov_target[0:3]
-        auto_pan_target = self.pov_target[3]
+        # Riferimento autonomo [r, beta, gamma]
+        auto_sph = self.pov_target.copy()   # [r_ref, beta_ref, gamma_ref]
 
         if manual_pov is None:
-            manual_pov = np.concatenate([auto_visual_ref, [auto_pan_target]])
-            manual_d_pov = np.zeros(4)
+            manual_pov   = auto_sph.copy()
+            manual_d_pov = np.zeros(3)
             alpha = 1.0
 
-        # 5) Interpolazione finale
-        visual_ref = (1 - alpha) * manual_pov[0:3] + alpha * auto_visual_ref
-        
+        # --- Interpolazione lineare su r e gamma ---
+        r_ref     = (1 - alpha) * manual_pov[0] + alpha * auto_sph[0]
+        gamma_ref = (1 - alpha) * manual_pov[2] + alpha * auto_sph[2]
+
+        # --- Interpolazione circolare su beta ---
+        diff_beta = wrap_pi(manual_pov[1] - auto_sph[1])
+        beta_ref  = wrap_pi(auto_sph[1] + (1 - alpha) * diff_beta)
+
+        # --- Velocità di riferimento dal rate haptic/joy ---
+        d_pov = (1 - alpha) * manual_d_pov if manual_d_pov is not None else np.zeros(3)
+
+        # Velocità world dal rate sferico:
+        #   dr     -> movimento radiale (avvicina/allontana)
+        #   d_beta -> orbita orizzontale (velocità tangenziale XY)
+        #   d_gamma-> orbita verticale
         p_obj_now = self.current_obj_pos
-        # pan : atan2(y_drone - y_obj, x_drone - x_obj)
-        
-        q_drone = xk[6:10]
-        Rb = Rotation.from_quat([q_drone[1], q_drone[2], q_drone[3], q_drone[0]]).as_matrix()
-        p_cam = xk[0:3] + Rb @ self.camera_offset
-        
-        # pan : atan2(Y_cam - Y_obj, X_cam - X_obj)
-        current_pan = np.arctan2(xk[1] - p_obj_now[1], xk[0] - p_obj_now[0])
-        # normalizzo angoli di pan (caso manuale e autonomo) in [-pi, pi]
-        diff_m = (manual_pov[3] - current_pan + np.pi) % (2 * np.pi) - np.pi
-        diff_a = (auto_pan_target - current_pan + np.pi) % (2 * np.pi) - np.pi
-        
-        # time derivative for velocity ref
-        d_pov = (1 - alpha) * manual_d_pov
+        p_rel_xy  = xk[0:2] - p_obj_now[0:2]
+        dist_xy   = np.linalg.norm(p_rel_xy)
+        dist_3d   = np.linalg.norm(xk[0:3] - p_obj_now)
 
-        # Interpolazione su pan e velocità relative comandate
-        pan_target = current_pan + (1 - alpha) * diff_m + alpha * diff_a
-
-        # Componente lineare (Xc, Yc, Zc) trasformata in mondo
-        R_body_world = Rotation.from_quat([xk[7], xk[8], xk[9], xk[6]]).as_matrix() # x,y,z,w
-        R_cam_body = Rotation.from_euler('xyz', self.camera_rpy).as_matrix()
-        R_world_cam = R_body_world @ R_cam_body
-        v_linear_rel_world = R_world_cam @ d_pov[0:3]
-        
-        # Componente di orbita (Pan) - velocità tangenziale in mondo
-        p_rel_xy = xk[0:2] - self.current_obj_pos[0:2]
-        dist_xy = np.linalg.norm(p_rel_xy)
-        v_orbit_world = np.zeros(3)
+        v_world = self.current_obj_vel.copy()
+        if dist_3d > 0.1:
+            radial_dir = (xk[0:3] - p_obj_now) / dist_3d
+            v_world += d_pov[0] * radial_dir                       # dr
         if dist_xy > 0.1:
-            # segno - per far ruotare il drone in senso antiorario con un d_pov[3] (pan speed) > 0
-            tangent = np.array([-p_rel_xy[1], p_rel_xy[0]]) / dist_xy
-            v_orbit_world[0:2] = tangent * (dist_xy * d_pov[3])
-        
-        vel_ref = self.current_obj_vel + v_orbit_world - v_linear_rel_world
+            tangent = np.array([-p_rel_xy[1], p_rel_xy[0], 0.0]) / dist_xy
+            v_world += dist_xy * d_pov[1] * tangent               # d_beta
+        # d_gamma -> velocità verticale approssimata
+        v_world[2] += dist_3d * d_pov[2]                          # d_gamma
 
-        return visual_ref, pan_target, vel_ref
+        return np.array([r_ref, beta_ref, gamma_ref]), v_world
 
 
     def configure_mpc(self):
 
         # g0 importato da common.py
 
-        X = 3; Y = 3; Z = 2; V = np.array([1.5, 1.5, 1.5]); PAN = ca.pi/2
-        #RP_ANG = 0.1;
-        ANG_DOT = np.array([0.8, 0.8,2.0])
-        ACC = np.array([3.0, 3.0, 3.0]); ACC_ANG = np.array([2.0,2.0,4.0])     
-        JERK = 10.0; SNAP = 200.0
+        V       = np.array([1.5, 1.5, 1.5])
+        ANG_DOT = np.array([0.8, 0.8, 2.0])
+        ACC     = np.array([2.0, 2.0, 3.0])
+        ACC_ANG = np.array([1.0, 1.0, 3.0])
+        JERK    = 10.0
+        SNAP    = 200.0
         
         
         f_max = self.get_parameter('f_max').value
@@ -608,42 +585,49 @@ class MpcPlannerNode(Node):
 
         #tarare meglio velocità angolari: cambiando da 0.3 a 0.5 su rp va una merda
 
-        PesoVis = 100
-        PesoPan = PesoVis
-        #PesoRot = PesoVis / 500
-        PesoVel = PesoVis/30
+        # Scala normalizzazione per [r_err, beta_err, gamma_err, yaw_err]
+        R_SPH  = 1.5      # scala distanza [m]
+        B_SPH  = np.pi/2  # scala azimut [rad]
+        G_SPH  = np.pi/4  # scala elevazione [rad]
+        Y_SPH  = np.pi/3  # scala yaw [rad]
+
+        PesoVis    = 100    # radius
+        PesoBeta   = PesoVis
+        PesoGamma  = PesoVis
+        PesoYaw    = PesoVis  # yaw leggermente più pesante 
+        PesoVel    = PesoVis / 30
         PesoAngVel = PesoVis / 30
-        PesoAcc = PesoVis / 50
-        PesoAngAcc = PesoVis / 40
-        PesoJerk = PesoAcc / 2
-        PesoSnap = PesoJerk / 2
-        PesoForce = PesoVis / 1000
+        PesoAcc    = PesoVis / 30
+        PesoAngAcc = PesoVis / 30
+        PesoJerk   = PesoAcc / 2
+        PesoSnap   = PesoJerk / 2
+        PesoForce  = PesoVis / 1000
         PesoTorque = PesoForce * 2
-        
-        Q_pan = np.diag([PesoPan]) / PAN**2
-        Q_visual = np.diag([PesoVis,PesoVis,PesoVis]) / np.array([X,Y,Z])**2 
-        Q_vel = np.diag([PesoVel, PesoVel, PesoVel]) / V**2
-        #Q_rot = np.diag([PesoRot, PesoRot]) / RP_ANG**2  
-        
-        Q_ang_dot = np.diag([PesoAngVel, PesoAngVel, PesoAngVel]) / ANG_DOT**2
-        Q_acc = np.diag([PesoAcc, PesoAcc, PesoAcc]) / ACC**2
-        Q_acc_ang = np.diag([PesoAngAcc, PesoAngAcc, PesoAngAcc]) / ACC_ANG**2
-        Q_jerk = np.diag([PesoJerk, PesoJerk, PesoJerk]) / JERK**2
-        Q_snap = np.diag([PesoSnap, PesoSnap, PesoSnap]) / SNAP**2
-        
-        R_f = np.diag([PesoForce]) / self.U_F**2
-        R_tau = ca.diagcat(PesoTorque / self.U_TAU_X**2, PesoTorque / self.U_TAU_Y**2, PesoTorque / self.U_TAU_Z**2)
-        
-        R = ca.diagcat(R_f, R_tau)
-        Q = ca.diagcat(Q_pan, Q_visual, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
-        Q_visual_e = np.diag([2*PesoVis,2*PesoVis,2*PesoVis]) / np.array([X,Y,Z])**2 
-        Q_pan_e = np.diag([2*PesoPan]) / PAN**2
 
-        Q_e = ca.diagcat(Q_pan_e, Q_visual_e, 2*Q_vel, 2*Q_ang_dot, 2*Q_acc, 2*Q_acc_ang)
+        # Q sferica: [r_err, beta_err, gamma_err, yaw_err]
+        Q_sph = np.diag([PesoVis / R_SPH**2,
+                         PesoBeta  / B_SPH**2,
+                         PesoGamma / G_SPH**2,
+                         PesoYaw   / Y_SPH**2])
 
-        # Definiamo i limiti fisici reali da passare al solver
+        Q_vel     = np.diag([PesoVel]*3)    / np.array(V)**2
+        Q_ang_dot = np.diag([PesoAngVel]*3) / np.array(ANG_DOT)**2
+        Q_acc     = np.diag([PesoAcc]*3)    / np.array(ACC)**2
+        Q_acc_ang = np.diag([PesoAngAcc]*3) / np.array(ACC_ANG)**2
+        Q_jerk    = np.diag([PesoJerk]*3)   / JERK**2
+        Q_snap    = np.diag([PesoSnap]*3)   / SNAP**2
+
+        R_f   = np.diag([PesoForce / self.U_F**2])
+        R_tau = ca.diagcat(PesoTorque / self.U_TAU_X**2,
+                           PesoTorque / self.U_TAU_Y**2,
+                           PesoTorque / self.U_TAU_Z**2)
+
+        R   = ca.diagcat(R_f, R_tau)
+        Q   = ca.diagcat(Q_sph, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
+        Q_e = ca.diagcat(2 * Q_sph, 2*Q_vel, 2*Q_ang_dot, 2*Q_acc, 2*Q_acc_ang)
+
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
-        u_max = np.array([self.U_F, self.U_TAU_X, self.U_TAU_Y, self.U_TAU_Z]) 
+        u_max = np.array([self.U_F,  self.U_TAU_X,  self.U_TAU_Y,  self.U_TAU_Z])
 
         W   = ca.diagcat(Q, R).full()
         W_e = Q_e.full()
@@ -651,12 +635,10 @@ class MpcPlannerNode(Node):
         rp_limit_rad = self.get_parameter('rp_limit').value * np.pi / 180.0
 
         (self.ocp_solver, self.N_horiz, self.nx, self.nu, self.y_idx, self.ny, self.ny_e) = configure_mpc(
-            model=self.model, x0=self.x0, camera_offset=self.camera_offset,
-            p_obj=np.array([self.current_obj_pos]), rpy_obj=np.array([self.current_obj_rpy]), Tf=self.Tp, ts=self.ts,
+            model=self.model, x0=self.x0,
+            p_obj=np.array([self.current_obj_pos]), Tf=self.Tp, ts=self.ts,
             W=W, W_e=W_e, u_min=u_min, u_max=u_max,
-            pan_ref=self.pov_target[3], visual_ref = self.pov_target[0:3],
-            vel_ref=np.zeros(3),
-            cam_rpy=self.camera_rpy, fov_h=self.fov_h, fov_v=self.fov_v,
+            sph_ref=self.pov_target,
             rp_limit=rp_limit_rad
         )
 
@@ -672,28 +654,25 @@ class MpcPlannerNode(Node):
 
         self.publish_predicted_path_from_buffers()
 
-    def solve_MPC(self, xk, visual_ref, pan_target, vel_ref):
-        yref0 = None
+    def solve_MPC(self, xk, sph_ref, vel_ref):
+        """sph_ref = [r_ref, beta_ref, gamma_ref]"""
         set_initial_state(self.ocp_solver, xk)
-        
-        # Il pan_ref viene ora passato solo come parametro del modello, yref[pan] è fisso a 0
-        yref_val = build_yref_online(self.y_idx, visual_ref, np.zeros(3), u_ref=self.u_hover)
-        yref_e = yref_val[:self.ny_e]
-        yref0 = yref_val
 
-        # Parametri (7): [p_obj(3), pan_ref(1), visual_ref(3)]
-        params = np.zeros(7)
-        params[3]     = pan_target        
-        params[4:7]   = visual_ref
+        # Tutti gli errori sferici hanno riferimento 0 (sono già espressi come errore nel modello)
+        yref_val = build_yref_online(self.y_idx, vel_ref, u_ref=self.u_hover)
+        yref_e   = yref_val[:self.ny_e]
+
+        # Parametri (6): [p_obj(3), r_ref, beta_ref, gamma_ref]
+        params = np.zeros(6)
+        params[3:6] = sph_ref
 
         for i in range(self.N_horiz + 1):
             p_i = self.current_obj_pos + self.current_obj_vel * (i * self.ts)
-            params[0:3] = p_i               # Target object position
+            params[0:3] = p_i
             self.ocp_solver.set(i, "p", params)
-            
             if i < self.N_horiz:
                 self.ocp_solver.set(i, "yref", yref_val)
-            elif i == self.N_horiz:
+            else:
                 self.ocp_solver.set(self.N_horiz, "yref", yref_e)
 
         status = self.ocp_solver.solve()
@@ -712,28 +691,21 @@ class MpcPlannerNode(Node):
                 self.x_prev = list(self.x_prev[1:]) + [self.x_prev[-1]]
             
             self.get_logger().warn(f"MPC Solver failed (Status {status}). Using fallback.", throttle_duration_sec=1.0)
-            return u0, x_seq, yref0, u_plan_fallback, x_plan_fallback
+            return u0, x_seq, yref_val, u_plan_fallback, x_plan_fallback
 
         # --- SUCCESS: Get results and shift buffers ---
         u0 = self.ocp_solver.get(0, "u")
         x_seq = [self.ocp_solver.get(i, "x") for i in range(self.N_horiz + 1)]
+        new_u_plan = [self.ocp_solver.get(i, "u") for i in range(self.N_horiz)]
+        new_x_plan = [self.ocp_solver.get(i, "x") for i in range(self.N_horiz + 1)]
 
-        # Estraiamo l'intera sequenza predetta per l'uso in "Hold and Shift"
-        new_u_plan = []
-        new_x_plan = []
-        for i in range(self.N_horiz):
-            new_u_plan.append(self.ocp_solver.get(i, "u"))
-            new_x_plan.append(self.ocp_solver.get(i, "x"))
-        new_x_plan.append(self.ocp_solver.get(self.N_horiz, "x")) # ultimo stato
-
-        # Aggiornamento buffer per warm-start (manteniamo la logica originale per il solver)
         for i in range(self.N_horiz - 1):
             self.u_prev[i] = new_u_plan[i+1]
             self.x_prev[i] = new_x_plan[i+1]
         self.u_prev[self.N_horiz-1] = new_u_plan[-1]
-        self.x_prev[self.N_horiz] = new_x_plan[-1]
+        self.x_prev[self.N_horiz]   = new_x_plan[-1]
 
-        return u0, x_seq, yref0, np.array(new_u_plan), np.array(new_x_plan)
+        return u0, x_seq, yref_val, np.array(new_u_plan), np.array(new_x_plan)
 
     # ==================== Ciclo planner ====================
     def control_step(self):
@@ -790,31 +762,33 @@ class MpcPlannerNode(Node):
                 self.current_quat[0], self.current_quat[1], self.current_quat[2], self.current_quat[3],
                 self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2]
             ])
-            # Calcolo dei riferimenti (disaccoppiato dal solver)
-            online_visual_ref, pan_target, vel_ref = self.get_current_ref(xk)
+            # Calcolo dei riferimenti sferici [r_ref, beta_ref, gamma_ref]
+            sph_ref, vel_ref = self.get_current_ref(xk)
+            vel_ref = np.zeros(3)
 
-            # Pubblicazione riferimenti per debugging/monitoring
-            online_spherical_ref = np.array([online_visual_ref[0], pan_target, 0.0])
-            self.ref_pub.publish(Float64MultiArray(data=[float(x) for x in online_spherical_ref]))
-            self.visual_ref_pub.publish(Float64MultiArray(data=[float(x) for x in online_visual_ref]))
+            # Publish reference for monitoring
+            self.ref_pub.publish(Float64MultiArray(data=[float(x) for x in sph_ref]))
 
-            p_drone = xk[0:3]
-            q_drone = xk[6:10]
-            Rb = Rotation.from_quat([q_drone[1], q_drone[2], q_drone[3], q_drone[0]]).as_matrix()
-            p_cam = p_drone + Rb @ self.camera_offset
+            # Calcola e pubblica il PoV attuale (sferico)
             p_obj_now = self.current_obj_pos
-            p_rel_world = p_obj_now - p_cam
-            R_cam_body = Rotation.from_euler('xyz', self.camera_rpy).as_matrix()
-            P_c = R_cam_body.T @ Rb.T @ p_rel_world
-            actual_pan = np.arctan2(xk[1] - p_obj_now[1], xk[0] - p_obj_now[0])
+            p_rel = xk[0:3] - p_obj_now
+            r_act    = float(np.linalg.norm(p_rel))
+            beta_act = float(np.arctan2(p_rel[1], p_rel[0]))
+            r_xy     = np.linalg.norm(p_rel[0:2])
+            gamma_act= float(np.arctan2(p_rel[2], r_xy + 1e-6))
+            
+            yaw_actual = self.current_rpy[2]
+            yaw_desired = np.arctan2(-p_rel[1], -p_rel[0])
+            yaw_err_act = float(np.arctan2(np.sin(yaw_actual - yaw_desired), np.cos(yaw_actual - yaw_desired)))
             
             actual_pov_msg = Float64MultiArray()
-            actual_pov_msg.data = [float(P_c[0]), float(P_c[1]), float(P_c[2]), float(actual_pan)]
+            actual_pov_msg.data = [r_act, beta_act, gamma_act, yaw_err_act]
             self.actual_pov_pub.publish(actual_pov_msg)
+            self.visual_ref_pub.publish(Float64MultiArray(data=[float(x) for x in sph_ref]))
         
         try:
-            t_start = time.perf_counter() # questo è un wall time (non dipende dal simulatore)
-            u0_new, x_seq_new, yref0, u_plan_new, x_plan_new = self.solve_MPC(xk, online_visual_ref, pan_target, vel_ref)
+            t_start = time.perf_counter()
+            u0_new, x_seq_new, yref0, u_plan_new, x_plan_new = self.solve_MPC(xk, sph_ref, vel_ref)
             t_end = time.perf_counter()
             
             # Calcolo tempo di risoluzione dell'iterazione corrente dell'MPC 
