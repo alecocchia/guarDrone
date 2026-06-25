@@ -109,7 +109,7 @@ def configure_mpc(model : AcadosModel, x0, camera_offset, p_obj, rpy_obj, Tf, ts
     ang_vel=w_expr
 
     # Rotazione attuale del drone rispetto al world
-    R_expr = quat_to_R(q_expr)
+    R_expr = quat_to_R(q_norm)
 
     # --- Parte visuale --> Sistema camera ---  
     d_cam = ca.DM(camera_offset[0:3]).reshape((3,1))

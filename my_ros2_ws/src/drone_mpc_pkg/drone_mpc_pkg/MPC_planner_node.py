@@ -149,7 +149,7 @@ class MpcPlannerNode(Node):
         self.haptic_transition_duration = self.get_parameter('haptic_transition_duration').value
 
         # Target visivo di default (PoV: Xc, Yc, Zc, Pan)
-        self.pan_target = np.pi
+        self.pan_target = np.pi/2
         self.radius_target = 3.0
         self.pov_target = np.array([self.radius_target, 0.0, 0.0, self.pan_target])
         xc_hand = 0.5
