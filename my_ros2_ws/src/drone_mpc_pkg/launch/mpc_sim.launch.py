@@ -213,7 +213,7 @@ def generate_launch_description():
         DeclareLaunchArgument('cf', default_value='8.0e-4'),
         DeclareLaunchArgument('ct', default_value='1.0e-5'),
         # -- Parametri ammettenza peg --
-        DeclareLaunchArgument('peg_F_threshold',   default_value='0.02',
+        DeclareLaunchArgument('peg_F_threshold',   default_value='0.06',
                               description='[N] Soglia forza per attivare ammettenza'),
         #DeclareLaunchArgument('peg_adm_mass',      default_value='2.0',
         #                      description='[kg] Massa virtuale ammettenza'),

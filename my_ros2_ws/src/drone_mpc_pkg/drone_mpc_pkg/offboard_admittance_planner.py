@@ -43,10 +43,9 @@ from drone_mpc_pkg.planner import generate_trapezoidal_trajectory
 
 
 # ── Frame: end_eff_sens → body FLU ──────────────────────────────────────────
-# end_eff_sens ha pitch = -π/2 rispetto al frame modello (ENU-aligned quando yaw=0)
+# end_eff_sens ha pitch = -π/2 rispetto al body frame (FLU) 
 # Gz FT default: misure nel frame child, verso parent (convenzione: forza che il
 # contatto esercita sull'end-effector, nel frame child = sensore).
-# Per portare in sensor da body FLU: ruotiamo di π/2 attorno a Y (preso dall' SDF).
 
 _R_BODY_TO_SENSOR = Rotation.from_euler('y', np.pi / 2.0).as_matrix()
 _R_SENSOR_TO_BODY = _R_BODY_TO_SENSOR.T
@@ -59,19 +58,6 @@ _M_NED2ENU = np.array([[0., 1., 0 ],
 _M_FRD2FLU = np.array([[1., 0., 0.],
                         [0., -1., 0.],
                         [0., 0., -1.]])
-
-
-def quaternion_to_euler(w, x, y, z):
-    """Quaternione → RPY (roll, pitch, yaw)."""
-    t0 = 2.0 * (w * x + y * z)
-    t1 = 1.0 - 2.0 * (x * x + y * y)
-    roll = math.atan2(t0, t1)
-    t2 = max(-1.0, min(1.0, 2.0 * (w * y - z * x)))
-    pitch = math.asin(t2)
-    t3 = 2.0 * (w * z + x * y)
-    t4 = 1.0 - 2.0 * (y * y + z * z)
-    yaw = math.atan2(t3, t4)
-    return roll, pitch, yaw
 
 
 class OffboardAdmittancePlanner(Node):
@@ -128,24 +114,22 @@ class OffboardAdmittancePlanner(Node):
         # Es: Kx=50 (laterale), Ky=50 (laterale), Kz=50 (assiale al peg)
         F_max_x = 2.0
         F_max_y = 2.0
-        F_max_z = 8.0
+        F_max_z = 6.0
 
         delta_x_max = 1.0
         delta_y_max = 1.0
-        delta_z_max = 0.9  # Molla un po' più morbida (Kz = 10 N/m)
+        delta_z_max = 0.3  
 
         adm_K_x = F_max_x/delta_x_max
         adm_K_y = F_max_y/delta_y_max
         adm_K_z = F_max_z/delta_z_max
 
         self.adm_K = np.array([adm_K_x, adm_K_y, adm_K_z])
-        # Ta a 0.8s (0.4s rischia di essere più veloce della banda passante del controllore di posizione PX4)
-        self.Ta = np.array([1.0, 1.0, 1.0])
+        self.Ta = np.array([1.0, 1.0, 1.5])
         self.wn = 4 / self.Ta
         self.adm_M = self.adm_K / (self.wn**2)
         
-        # Aumentiamo tantissimo lo smorzamento su Z (zeta = 3.5) per "frenare" il ritorno elastico
-        damping_ratio = np.array([1.5, 1.5, 1.5])
+        damping_ratio = np.array([1.2, 1.2, 1.2])
         self.adm_D = 2 * np.sqrt(self.adm_K * self.adm_M) * damping_ratio
         self.adm_max_delta = self.get_parameter('adm_max_delta').get_parameter_value().double_value
 
@@ -245,17 +229,13 @@ class OffboardAdmittancePlanner(Node):
         self.current_rpy[:] = rot_flu2enu.as_euler('xyz')
         self.R_flu2enu = R_flu2enu
 
-        # Yaw per il planner (ENU convention)
-        _, _, y_ned = quaternion_to_euler(msg.q[0], msg.q[1], msg.q[2], msg.q[3])
-        self.current_rpy[2] = -y_ned + np.pi / 2.0
-
         self.has_odom = True
 
     def ft_cb(self, msg: Wrench):
         """
-        Misura FT sensor → forza esterna in ENU.
+        Misura FT sensor -> forza esterna in ENU.
 
-        Gz Sim ForceTorque (nessun tag <frame> nel SDF):
+        Gz Sim ForceTorque:
           - Misure nel frame del child link (end_eff_sens), convenzione child→parent.
           - end_eff_sens ha pitch = -π/2 rispetto al modello (ENU-aligned a yaw=0).
           - Per passare al body FLU: R_SENSOR_TO_BODY = Ry(+π/2)
@@ -296,9 +276,12 @@ class OffboardAdmittancePlanner(Node):
     def live_target_cb(self, msg: PoseStamped):
         """Haptic live teleop: aggiorna il target direttamente, bypass traiettoria."""
         self.live_target_pos = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z])
-        _, _, self.live_target_yaw = quaternion_to_euler(
-            msg.pose.orientation.w, msg.pose.orientation.x,
-            msg.pose.orientation.y, msg.pose.orientation.z)
+        self.live_target_yaw = Rotation.from_quat([
+            msg.pose.orientation.x,
+            msg.pose.orientation.y,
+            msg.pose.orientation.z,
+            msg.pose.orientation.w
+        ]).as_euler('xyz')[2]
         self.live_mode_stamp = self.get_clock().now()
         if not self.live_mode:
             self.live_mode = True
@@ -318,12 +301,12 @@ class OffboardAdmittancePlanner(Node):
                 and msg.pose.orientation.y == 0.0 and msg.pose.orientation.z == 0.0):
             t_yaw = self.current_rpy[2]
         else:
-            _, _, t_yaw = quaternion_to_euler(
-                msg.pose.orientation.w,
+            t_yaw = Rotation.from_quat([
                 msg.pose.orientation.x,
                 msg.pose.orientation.y,
-                msg.pose.orientation.z
-            )
+                msg.pose.orientation.z,
+                msg.pose.orientation.w
+            ]).as_euler('xyz')[2]
 
         x0 = [self.current_pos[0], self.current_pos[1], self.current_pos[2],
                0.0, 0.0, self.current_rpy[2]]
@@ -366,14 +349,15 @@ class OffboardAdmittancePlanner(Node):
         ocm.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.offboard_pub.publish(ocm)
 
-        # -- Ammettenza (sempre integrata) --
-        self._integrate_admittance()
+        # -- Ammettenza (sempre integrata in ENU) --
         R_sensor2enu = self.R_flu2enu @ _R_SENSOR_TO_BODY
-        delta_p_enu = R_sensor2enu @ self.delta_p
-        delta_v_enu = R_sensor2enu @ self.delta_v
+        self._integrate_admittance(R_sensor2enu)
+        # delta_p e delta_v sono già in ENU dopo la refactoring
+        delta_p_enu = self.delta_p
+        delta_v_enu = self.delta_v
 
         # -- MODALITÀ LIVE HAPTIC --
-        LIVE_TIMEOUT = 0.5  # s: dopo questo tempo senza messaggi, mantieni posizione
+        LIVE_TIMEOUT = 0.5  # s: dopo questo tempo senza messaggi, mantieni ultima posizione
         if self.live_mode and self.live_target_pos is not None:
             elapsed = (self.get_clock().now() - self.live_mode_stamp).nanoseconds / 1e9
             if elapsed > LIVE_TIMEOUT:
@@ -451,19 +435,35 @@ class OffboardAdmittancePlanner(Node):
 
     # -- Integrazione ammettenza --
 
-    def _integrate_admittance(self):
+    def _integrate_admittance(self, R_sensor2enu: np.ndarray):
         """
-        Integra la dinamica virtuale di ammettenza:
-            M·Δp̈ + D·Δṗ + K·Δp = F_ext_enu
-        con metodo di Eulero esplicito al passo dt.
-        """
-        F = self.F_ext_sens.copy()
+        Integra la dinamica virtuale di ammettenza **nel frame ENU** (world frame).
 
-        # Accelerazione virtuale nel frame SENSOR
-        delta_a = (F - self.adm_D * self.delta_v - self.adm_K * self.delta_p) / self.adm_M
-        #delta_a[0] = 0.0
-        #delta_a[1] = 0.0
-        # Integrazione Eulero
+        Integrare nel frame sensore (body) è scorretto quando il drone ruota:
+        il termine restauratore K*delta_p punterebbe in direzioni diverse ad ogni
+        timestep man mano che il sensore yawta, generando oscillazioni spurie.
+        Portando le matrici diagonali K, D, M in ENU tramite la similarità
+          X_enu = R @ diag(X_sens) @ R.T
+        si garantisce che la forza molla/smorzatore sia sempre coerente con lo
+        spostamento accumulato, indipendentemente dall'orientamento del drone.
+        """
+        # Forza esterna portata in ENU
+        F_z = np.array([0.0,0.0,self.F_ext_sens[2]])
+
+        # F_enu = R_sensor2enu @ F_ext_sens
+
+        F_enu = R_sensor2enu @ F_z
+
+        # Ruota le matrici di ammettenza (diagonali in sensor) nel frame ENU
+        K_enu = R_sensor2enu @ np.diag(self.adm_K) @ R_sensor2enu.T
+        D_enu = R_sensor2enu @ np.diag(self.adm_D) @ R_sensor2enu.T
+        M_enu = R_sensor2enu @ np.diag(self.adm_M) @ R_sensor2enu.T
+
+        # Accelerazione virtuale in ENU: M·a = F - D·v - K·p
+        delta_a = np.linalg.solve(M_enu, F_enu - D_enu @ self.delta_v - K_enu @ self.delta_p)
+        
+
+        # Integrazione Eulero in ENU
         self.delta_v += delta_a * self.dt
         self.delta_p += self.delta_v * self.dt
 

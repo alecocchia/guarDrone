@@ -99,10 +99,15 @@ def main():
            "Drone Velocities vs MPC Reference", ncols=3, use_tex=args.tex, block=block, fignum=3, task_start=task_start)
 
     # --- FIGURE 4: Coordinate Sferiche (r, beta, gamma) vs Riferimento ---
+    # Allineamento dell'azimut per evitare che ref e sim si sdoppino di 2*pi nel plot
+    beta_sim_unwrapped = np.unwrap(data['beta_sph'])
+    beta_diff_wrapped = (data['online_sph_ref'][:, 1] - data['beta_sph'] + np.pi) % (2 * np.pi) - np.pi
+    beta_ref_aligned = beta_sim_unwrapped + beta_diff_wrapped
+
     fig4_data = [
         {'sim': data['r_sph'],    'ref': data['online_sph_ref'][:, 0]},
-        {'sim': data['beta_sph'], 'ref': data['online_sph_ref'][:, 1]},
-        {'sim': data['gamma_sph'],'ref': data['online_sph_ref'][:, 2]},
+        {'sim': beta_sim_unwrapped, 'ref': beta_ref_aligned},
+        {'sim': np.unwrap(data['gamma_sph']),'ref': np.unwrap(data['online_sph_ref'][:, 2])},
     ]
     myPlot(t, fig4_data,
            ["Distance r [m]", "Azimuth beta [rad]", "Elevation gamma [rad]"],

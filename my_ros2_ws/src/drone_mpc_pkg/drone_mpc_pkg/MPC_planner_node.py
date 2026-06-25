@@ -152,7 +152,7 @@ class MpcPlannerNode(Node):
         # r     = distanza 3D dall'oggetto [m]
         # beta  = azimut del vettore drone->obj nel piano XY [rad]  (pan attorno all'oggetto)
         # gamma = elevazione dal piano XY [rad]  (0=piano, +pi/2=zenit)
-        self.pov_target = np.array([3.0, np.pi, 0.0])  # default: 3m dietro, stessa quota
+        self.pov_target = np.array([2.0, np.pi, 0.0])  # default: 3m dietro, stessa quota
 
         self.declare_parameter('control_flag',  1)  
         self.control_flag_val = self.get_parameter('control_flag').get_parameter_value().integer_value
@@ -566,7 +566,7 @@ class MpcPlannerNode(Node):
         # g0 importato da common.py
 
         V       = np.array([1.5, 1.5, 1.5])
-        ANG_DOT = np.array([0.8, 0.8, 2.0])
+        ANG_DOT = np.array([0.5, 0.5, 2.0])
         ACC     = np.array([2.0, 2.0, 3.0])
         ACC_ANG = np.array([1.0, 1.0, 3.0])
         JERK    = 10.0
@@ -583,23 +583,21 @@ class MpcPlannerNode(Node):
         self.U_TAU_Y = arm_l_x * f_max / 2.0
         self.U_TAU_Z = moment_const * f_max
 
-        #tarare meglio velocità angolari: cambiando da 0.3 a 0.5 su rp va una merda
-
         # Scala normalizzazione per [r_err, beta_err, gamma_err, yaw_err]
-        R_SPH  = 1.5      # scala distanza [m]
-        B_SPH  = np.pi/2  # scala azimut [rad]
-        G_SPH  = np.pi/4  # scala elevazione [rad]
+        R_SPH  = 2.0      # scala distanza [m]
+        B_SPH  = np.pi/4  # scala azimut [rad]
+        G_SPH  = np.pi/6  # scala elevazione [rad]
         Y_SPH  = np.pi/3  # scala yaw [rad]
 
         PesoVis    = 100    # radius
         PesoBeta   = PesoVis
         PesoGamma  = PesoVis
-        PesoYaw    = PesoVis  # yaw leggermente più pesante 
-        PesoVel    = PesoVis / 30
-        PesoAngVel = PesoVis / 30
-        PesoAcc    = PesoVis / 30
-        PesoAngAcc = PesoVis / 30
-        PesoJerk   = PesoAcc / 2
+        PesoYaw    = PesoVis
+        PesoVel    = PesoVis / 40
+        PesoAngVel = PesoVis / 50
+        PesoAcc    = PesoVis / 20
+        PesoAngAcc = PesoVis / 20
+        PesoJerk   = PesoAcc / 5
         PesoSnap   = PesoJerk / 2
         PesoForce  = PesoVis / 1000
         PesoTorque = PesoForce * 2
@@ -770,9 +768,15 @@ class MpcPlannerNode(Node):
             # Publish reference for monitoring
             self.ref_pub.publish(Float64MultiArray(data=[float(x) for x in sph_ref]))
 
-            # Calcola e pubblica il PoV attuale (sferico)
+            # Calcola e pubblica il PoV attuale (sferico) basato sulla telecamera
+            p_drone = xk[0:3]
+            q_drone = xk[6:10]
+            # Scipy Rotation.from_quat usa [x, y, z, w], CasADi usa [w, x, y, z]
+            Rb = Rotation.from_quat([q_drone[1], q_drone[2], q_drone[3], q_drone[0]]).as_matrix()
+            p_cam = p_drone + Rb @ self.camera_offset
+            
             p_obj_now = self.current_obj_pos
-            p_rel = xk[0:3] - p_obj_now
+            p_rel = p_cam - p_obj_now
             r_act    = float(np.linalg.norm(p_rel))
             beta_act = float(np.arctan2(p_rel[1], p_rel[0]))
             r_xy     = np.linalg.norm(p_rel[0:2])

@@ -342,8 +342,12 @@ class Logger(Node):
                 jerk[:, i] = np.gradient(acc[:, i], T_rel)
                 snap[:, i] = np.gradient(jerk[:, i], T_rel)
 
-        # 2. Coordinate sferiche mondiali: vettore drone->oggetto
-        p_rel_world = pos - peg_pos                           # drone CoM - oggetto
+        # 2. Coordinate sferiche nel mondo basate sulla TELECAMERA
+        # Trasformiamo l'offset della telecamera (nel frame body FLU) nel frame ENU 
+        # R_flu2enu ha shape (N, 3, 3) e self.cam_offset ha shape (3,)
+        cam_offset_world = np.einsum('nij,j->ni', R_flu2enu, self.cam_offset)
+        p_cam = pos + cam_offset_world
+        p_rel_world = p_cam - peg_pos                           # camera - oggetto
         r_sph   = np.linalg.norm(p_rel_world, axis=1)        # distanza 3D [m]
         beta_sph  = np.arctan2(p_rel_world[:, 1],
                                p_rel_world[:, 0])            # azimut [rad]
