@@ -639,7 +639,8 @@ class MpcPlannerNode(Node):
             p_obj=np.array([self.current_obj_pos]), Tf=self.Tp, ts=self.ts,
             W=W, W_e=W_e, u_min=u_min, u_max=u_max,
             sph_ref=self.pov_target,
-            rp_limit=rp_limit_rad
+            rp_limit=rp_limit_rad,
+            cam_offset_body=self.camera_offset
         )
 
         self.u_hover = np.array([self.get_parameter('mass').value * g0, 0.0, 0.0, 0.0])

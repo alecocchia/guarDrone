@@ -67,7 +67,8 @@ def set_initial_state(ocp_solver, xk):
 def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
                   u_min, u_max,
                   sph_ref = np.zeros(3),
-                  rp_limit = 35.0 * np.pi / 180.0):
+                  rp_limit = 35.0 * np.pi / 180.0,
+                  cam_offset_body = np.zeros(3)):
     
     nx = model.x.rows()
     nu = model.u.rows()
@@ -104,8 +105,10 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     w_expr = model.x[10:13]
     ang_vel = w_expr
 
-    # Rotazione body→world
-    R_expr = quat_to_R(q_expr)
+    # Rotazione body→world — IMPORTANTE: usa q_norm (normalizzato) per coerenza con yaw.
+    # R_expr e yaw devono venire dallo stesso quaternione, altrimenti
+    # p_cam_expr e yaw_desired divergono generando un yaw_err residuo artificiale.
+    R_expr = quat_to_R(q_norm)
 
     # state dynamics vector
     xdot = model.f_expl_expr
@@ -118,7 +121,7 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     acc_ang_expr = xdot[10:13]
 
     '''
-                                            FORMULAZIONE SFERICA MONDIALE
+                                            PROBLEMA IN COORDINATE SFERICHE
     Parametri del modello (6 totali):
       p[0:3] = p_obj   (posizione oggetto nel mondo)
       p[3]   = r_ref   (distanza di riferimento)
@@ -130,23 +133,26 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     beta_ref_sym = model.p[4]
     gamma_ref_sym = model.p[5]
 
-    # Vettore drone → oggetto nel frame mondo
-    p_rel = p_expr - p_obj_expr
+    # Posizione della telecamera nel mondo
+    p_cam_expr = p_expr + R_expr @ ca.DM(cam_offset_body)
+
+    # Vettore telecamera → oggetto nel frame mondo
+    p_rel = p_cam_expr - p_obj_expr
 
     # Distanza 3D: sempre > 0
     r_sph = ca.norm_2(p_rel)
     r_err = r_sph - r_ref_sym
 
-    # Azimut: angolo del vettore drone→obj nel piano XY (rad)
+    # Azimut: angolo del vettore drone -> obj nel piano XY (rad)
     beta_raw = ca.atan2(p_rel[1], p_rel[0])
     beta_err = min_angle(beta_raw - beta_ref_sym)
 
     # Elevazione: angolo dal piano XY verso l'alto (0=piano, +pi/2=zenit, -pi/2=nadir)
-    r_xy = ca.sqrt(p_rel[0]**2 + p_rel[1]**2 + 1e-6)
+    r_xy = ca.sqrt(p_rel[0]**2 + p_rel[1]**2)
     gamma_raw = ca.atan2(p_rel[2], r_xy)
     gamma_err = gamma_raw - gamma_ref_sym
 
-    # Yaw error: il drone deve puntare VERSO l'oggetto
+    # Yaw error: il drone deve puntare verso l'oggetto
     # La direzione desiderata è -p_rel (da drone verso oggetto)
     yaw_desired = ca.atan2(-p_rel[1], -p_rel[0])
     yaw_err = min_angle(yaw - yaw_desired)
