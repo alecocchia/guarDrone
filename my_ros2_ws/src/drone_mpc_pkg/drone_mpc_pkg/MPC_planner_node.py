@@ -14,7 +14,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from geometry_msgs.msg import PoseStamped, TwistStamped, TransformStamped, Wrench
-from nav_msgs.msg import Path, Odometry
+from nav_msgs.msg import Path
 from std_msgs.msg import Bool, Float64MultiArray, String
 
 # --- PX4 MESSAGES IMPORTS ---
@@ -32,6 +32,7 @@ from drone_mpc_pkg.drone_MPC_settings import (
     setup_model, setup_initial_conditions, configure_mpc, set_initial_state, build_yref_online
 )
 from drone_mpc_pkg.common import quat_to_RPY, g0, wrap_pi
+from drone_mpc_pkg.momentum_based_estimator import MomentumBasedEstimator
 
 import tf2_ros
 
@@ -110,6 +111,8 @@ class MpcPlannerNode(Node):
 
         self.model, self.model_rpy = setup_model(mass, ixx, iyy, izz, self.camera_offset, self.camera_rpy)
         self.x0, self.x0_rpy = setup_initial_conditions(start_x,start_y,start_z,start_roll,start_pitch,start_yaw)
+
+
         # === Tempo/Orizzonte ===
         self.ts = 0.01             # 100 Hz
         self.N_horiz = 50          # Orizzonte di predizione (numero di campioni)
@@ -118,6 +121,9 @@ class MpcPlannerNode(Node):
         self.path_pub_counter = 0  # Contatore per limitare la frequenza di pubblicazione del path
 
         self.t_prev = 0.0
+
+        # === Inizializzazione Momentum Based Estimator ===
+        self.mbe = MomentumBasedEstimator(mass, ixx, iyy, izz, self.ts, g0)
 
         # === Stato MPC / loop ===
         self.acados_solver_ready = False
@@ -405,7 +411,16 @@ class MpcPlannerNode(Node):
             q_z = q_flu2enu[2]
             
             q = [q_w, q_x, q_y, q_z]
-            self.current_quat = q / np.linalg.norm(q)    # norma quaternione ad 1
+            q = q / np.linalg.norm(q)    # norma quaternione ad 1
+
+            # Evitiamo salti discontinui del quaternione (q vs -q)
+            if hasattr(self, 'last_quat'):
+                if np.dot(q, self.last_quat) < 0:
+                    q = -q
+
+            self.current_quat = q
+            self.last_quat = q.copy()
+
             self.current_rpy[:] = rot_flu2enu.as_euler('xyz')
 
             # Velocità lineare: NED → ENU
@@ -429,6 +444,10 @@ class MpcPlannerNode(Node):
                     self.current_rpy[0],      self.current_rpy[1],      self.current_rpy[2],
                     self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2]
                 ])
+
+                # --- INITIALIZATION OF THE ESTIMATOR ---
+                self.mbe.initialize(self.current_raw_vel, self.current_ang_vel)
+                self.get_logger().info(f"Estimator initialized with initial velocity: {self.current_raw_vel}, initial angular velocity: {self.current_ang_vel}")
                 self.get_logger().info(f"Posa iniziale inizializzata da odometria: {self.current_position}")
                 self.first_odom_received = True 
 
@@ -560,12 +579,11 @@ class MpcPlannerNode(Node):
 
         return np.array([r_ref, beta_ref, gamma_ref]), v_world
 
-
     def configure_mpc(self):
 
         # g0 importato da common.py
 
-        V       = np.array([1.5, 1.5, 1.5])
+        V       = np.array([1, 1, 1.5])
         ANG_DOT = np.array([0.5, 0.5, 2.0])
         ACC     = np.array([2.0, 2.0, 3.0])
         ACC_ANG = np.array([1.0, 1.0, 3.0])
@@ -593,7 +611,7 @@ class MpcPlannerNode(Node):
         PesoBeta   = PesoVis
         PesoGamma  = PesoVis
         PesoYaw    = PesoVis
-        PesoVel    = PesoVis / 40
+        PesoVel    = PesoVis / 50
         PesoAngVel = PesoVis / 50
         PesoAcc    = PesoVis / 20
         PesoAngAcc = PesoVis / 20
@@ -630,14 +648,11 @@ class MpcPlannerNode(Node):
         W   = ca.diagcat(Q, R).full()
         W_e = Q_e.full()
 
-        rp_limit_rad = self.get_parameter('rp_limit').value * np.pi / 180.0
-
         (self.ocp_solver, self.N_horiz, self.nx, self.nu, self.y_idx, self.ny, self.ny_e) = configure_mpc(
             model=self.model, x0=self.x0,
             p_obj=np.array([self.current_obj_pos]), Tf=self.Tp, ts=self.ts,
             W=W, W_e=W_e, u_min=u_min, u_max=u_max,
             sph_ref=self.pov_target,
-            rp_limit=rp_limit_rad,
             cam_offset_body=self.camera_offset
         )
 
@@ -653,7 +668,7 @@ class MpcPlannerNode(Node):
 
         self.publish_predicted_path_from_buffers()
 
-    def solve_MPC(self, xk, sph_ref, vel_ref):
+    def solve_MPC(self, xk, sph_ref, vel_ref, F_ext=None, Tau_ext=None):
         """sph_ref = [r_ref, beta_ref, gamma_ref]"""
         set_initial_state(self.ocp_solver, xk)
 
@@ -661,9 +676,17 @@ class MpcPlannerNode(Node):
         yref_val = build_yref_online(self.y_idx, vel_ref, u_ref=self.u_hover)
         yref_e   = yref_val[:self.ny_e]
 
-        # Parametri (6): [p_obj(3), r_ref, beta_ref, gamma_ref]
-        params = np.zeros(6)
+        if F_ext is None:
+            F_ext = np.zeros(3)
+        if Tau_ext is None:
+            Tau_ext = np.zeros(3)
+
+        # Parametri (12): [p_obj(3), r_ref, beta_ref, gamma_ref, F_ext(3), Tau_ext(3)]
+        params = np.zeros(12)
         params[3:6] = sph_ref
+        params[6:9] = F_ext
+        params[9:12] = Tau_ext
+
 
         for i in range(self.N_horiz + 1):
             p_i = self.current_obj_pos + self.current_obj_vel * (i * self.ts)
@@ -790,10 +813,20 @@ class MpcPlannerNode(Node):
             actual_pov_msg.data = [r_act, beta_act, gamma_act, yaw_err_act]
             self.actual_pov_pub.publish(actual_pov_msg)
             self.visual_ref_pub.publish(Float64MultiArray(data=[float(x) for x in sph_ref]))
+
+            # --- AGGIORNAMENTO MBE ---
+            if self.last_u0_applied is not None:
+                Fz_prev = self.last_u0_applied[0]
+                tau_prev = self.last_u0_applied[1:4]
+            else:
+                Fz_prev = self.u_hover[0]
+                tau_prev = self.u_hover[1:4]
+                
+            F_ext, Tau_ext = self.mbe.update(self.current_vel, self.current_ang_vel, self.current_quat, Fz_prev, tau_prev)
         
         try:
             t_start = time.perf_counter()
-            u0_new, x_seq_new, yref0, u_plan_new, x_plan_new = self.solve_MPC(xk, sph_ref, vel_ref)
+            u0_new, x_seq_new, yref0, u_plan_new, x_plan_new = self.solve_MPC(xk, sph_ref, vel_ref, F_ext, Tau_ext)
             t_end = time.perf_counter()
             
             # Calcolo tempo di risoluzione dell'iterazione corrente dell'MPC 

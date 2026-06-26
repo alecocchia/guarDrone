@@ -51,16 +51,24 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset=None, camera_rpy=
     # p[3]   = r_ref   (distanza di riferimento [m])
     # p[4]   = beta_ref  (azimut di riferimento [rad], angolo drone->obj nel piano XY)
     # p[5]   = gamma_ref (elevazione di riferimento [rad], 0=piano, +pi/2=zenit)
-    ref_sym = ca.SX.sym('p', 6)
+    # p[6:9] = F_ext
+    # p [9:12] = Tau_ext_z
+    model_params = ca.SX.sym('p', 12)
+    p_obj = model_params[0:3]
+    r_ref = model_params[3]
+    beta_ref = model_params[4]
+    gamma_ref = model_params[5]
+    F_ext = model_params[6:9]
+    Tau_ext = model_params[9:12]
     # (i simboli vengono usati direttamente in drone_MPC_settings.py tramite model.p[...])
 
     # Equations of motion (ODEs)
     p_dot = v
     # v_dot: nominal thrust + gravity
-    v_dot = (1/m) * (ca.mtimes(Rb, ca.vertcat(0, 0, Fz))) - g
+    v_dot = (1/m) * (ca.mtimes(Rb, ca.vertcat(0, 0, Fz)) + F_ext) - g
     q_dot = 0.5 * ca.mtimes(omega_matrix(w), q)
     J_inv = ca.inv(J)
-    w_dot = ca.mtimes(J_inv, (ca.vertcat(tau_x, tau_y, tau_z) - ca.cross(w, ca.mtimes(J, w))))
+    w_dot = ca.mtimes(J_inv, (ca.vertcat(tau_x, tau_y, tau_z) - ca.cross(w, ca.mtimes(J, w)) + Tau_ext))
     # Compose augmented state [p, v, q, w] (13 states)
     x = ca.vertcat(p, v, q, w)
     xdot = ca.SX.sym('xdot', x.shape)
@@ -76,7 +84,7 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset=None, camera_rpy=
     model.xdot = xdot
     model.u = u
     
-    model.p = ref_sym       # model.p = parameters 
+    model.p = model_params       # model.p = parameters 
 
     model.name = model_name
     model.m = m             # Salviamo la massa nel modello per poterla recuperare dall'MPC
@@ -142,8 +150,8 @@ def convert_to_rpy_model(model_quat,m,Ixx,Iyy,Izz):
     model_rpy.xdot = xdot
     model_rpy.f_expl_expr = xdot
     model_rpy.name = model_quat.name + "_rpy"
-    ref_sym = ca.SX.sym('p', 3)  # simbolico per ref (p,rpy)
-    model_rpy.p = ref_sym       #model.p = parameters 
+    model_params = ca.SX.sym('p', 12)  # simbolico 
+    model_rpy.p = model_params       #model.p = parameters 
     model_rpy.m = m
     model_rpy.g = g0
     model_rpy.J = J

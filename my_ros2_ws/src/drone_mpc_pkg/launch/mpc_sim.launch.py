@@ -109,7 +109,7 @@ def launch_setup(context, *args, **kwargs):
             'start_x': peg_x, 'start_y': peg_y, 'start_z': peg_z,
             'v_max': 0.5,
             'a_max': 1.0,
-            'dt': 0.01,           # 100 Hz
+            'dt': 0.02,           # 50 Hz
             'px4_ns': 'px4_1',   # Namespace DDS del drone x500_interaction (UXRCE_DDS_NS=px4_1)
             # -- Ammettenza --
             'F_threshold':   LaunchConfiguration('peg_F_threshold'),
@@ -133,7 +133,7 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{
             'use_sim_time': True,
             'start_x': drone_x, 'start_y': drone_y, 'start_z': drone_z,
-            'dt': 0.01,           # 100 Hz
+            'dt': 0.02,           # 50 Hz
             'v_max': 0.5,
             'a_max': 1.0,
             'px4_ns': '',  # Namespace di root

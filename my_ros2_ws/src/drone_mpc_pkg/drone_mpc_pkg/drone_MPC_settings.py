@@ -67,7 +67,6 @@ def set_initial_state(ocp_solver, xk):
 def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
                   u_min, u_max,
                   sph_ref = np.zeros(3),
-                  rp_limit = 35.0 * np.pi / 180.0,
                   cam_offset_body = np.zeros(3)):
     
     nx = model.x.rows()
@@ -122,16 +121,21 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
 
     '''
                                             PROBLEMA IN COORDINATE SFERICHE
-    Parametri del modello (6 totali):
+    Parametri del modello (12 totali):
       p[0:3] = p_obj   (posizione oggetto nel mondo)
       p[3]   = r_ref   (distanza di riferimento)
       p[4]   = beta_ref  (azimut di riferimento, angolo nel piano XY)
       p[5]   = gamma_ref (elevazione di riferimento, angolo dal piano XY)
+      p[6:9] = F_ext
+      p [9:12] = Tau_ext
     '''
     p_obj_expr = model.p[0:3]
     r_ref_sym   = model.p[3]
     beta_ref_sym = model.p[4]
     gamma_ref_sym = model.p[5]
+
+    F_ext = model.p[6:9]
+    Tau_ext = model.p[9:12]
 
     # Posizione della telecamera nel mondo
     p_cam_expr = p_expr + R_expr @ ca.DM(cam_offset_body)
@@ -263,13 +267,15 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     ocp.cost.W_e = W_e
     ocp.cost.set = True
     
-    # Parametri del modello (6 totali):
-    # [p_obj(3), r_ref(1), beta_ref(1), gamma_ref(1)]
-    ocp.parameter_values = np.zeros(6)
+    # Parametri del modello (12 totali):
+    # [p_obj(3), r_ref(1), beta_ref(1), gamma_ref(1), F_ext(3), Tau_ext(3)]
+    ocp.parameter_values = np.zeros(12)
     ocp.parameter_values[0:3] = p_obj[0,:]
     ocp.parameter_values[3]   = sph_ref[0]   # r_ref
     ocp.parameter_values[4]   = sph_ref[1]   # beta_ref
     ocp.parameter_values[5]   = sph_ref[2]   # gamma_ref
+    ocp.parameter_values[6:9] = np.array([0,0,0]) # F_ext
+    ocp.parameter_values[9:12] = np.array([0,0,0]) # Tau_ext
 
     '''
                                         REFERENCES
