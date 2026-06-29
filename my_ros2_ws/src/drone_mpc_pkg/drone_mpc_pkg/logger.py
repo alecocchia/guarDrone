@@ -86,7 +86,9 @@ class Logger(Node):
         self.wrench_cmd, self.wrench_ref, self.wrench_target, self.t_ref = [], [], [], []
         self.peg_pos, self.online_ref, self.online_sph_ref = [], [], []
         self.peg_ext_force = []
+        self.estimated_wrench = []
         self.delta_p = []
+        self.delta_p_sensor = []
         
         # Drone di interazione (peg): posizione attuale e riferimento in ENU
         self.peg_actual_pos = []  # posizione attuale drone interazione (ENU)
@@ -106,7 +108,9 @@ class Logger(Node):
         self.last_haptic_force = [0.0, 0.0, 0.0]
         
         self.last_peg_ext_force = [0.0, 0.0, 0.0]
+        self.last_estimated_wrench = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         self.last_delta_p = [0.0, 0.0, 0.0]
+        self.last_delta_p_sensor = [0.0, 0.0, 0.0]
         
         # Ultimi valori drone di interazione
         self.last_peg_actual_pos = [0.0, 0.0, 0.0]
@@ -145,7 +149,9 @@ class Logger(Node):
         self.create_subscription(Float64MultiArray, '/fd/fd_controller/commands', self.cb_haptic_force, 10)
         self.create_subscription(VehicleOdometry, '/fmu/out/vehicle_odometry', self.cb_px4_odom, px4_qos_profile)
         self.create_subscription(Wrench, self.ft_topic, self.cb_peg_ft, 10)
+        self.create_subscription(Wrench, '/estimated_wrench', self.cb_estimated_wrench, 10)
         self.create_subscription(Vector3Stamped, '/delta_p', self.cb_delta_p, 10)
+        self.create_subscription(Vector3Stamped, '/delta_p_sensor', self.cb_delta_p_sensor, 10)
         # Drone di interazione: odometria attuale, riferimento nominale e velocità di riferimento
         peg_odom_topic = f'{self.peg_ns_prefix}/fmu/out/vehicle_odometry'
         self.create_subscription(VehicleOdometry, peg_odom_topic, self.cb_peg_odom, px4_qos_profile)
@@ -183,8 +189,14 @@ class Logger(Node):
         # Logghiamo le 3 componenti lineari (puoi anche loggare i torque aggiungendo elementi all'array)
         self.last_peg_ext_force = [msg.force.x, msg.force.y, msg.force.z]
 
+    def cb_estimated_wrench(self, msg: Wrench):
+        self.last_estimated_wrench = [msg.force.x, msg.force.y, msg.force.z, msg.torque.x, msg.torque.y, msg.torque.z]
+
     def cb_delta_p(self, msg: Vector3Stamped):
         self.last_delta_p = [msg.vector.x, msg.vector.y, msg.vector.z]
+
+    def cb_delta_p_sensor(self, msg: Vector3Stamped):
+        self.last_delta_p_sensor = [msg.vector.x, msg.vector.y, msg.vector.z]
 
     def cb_ref_pose(self, msg: PoseStamped):
         p = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z], dtype=float)
@@ -236,7 +248,9 @@ class Logger(Node):
         self.online_sph_ref.append(self.last_online_ref)  # stesso dato, alias
         self.haptic_force.append(self.last_haptic_force.copy())
         self.peg_ext_force.append(self.last_peg_ext_force.copy())
+        self.estimated_wrench.append(self.last_estimated_wrench.copy())
         self.delta_p.append(self.last_delta_p.copy())
+        self.delta_p_sensor.append(self.last_delta_p_sensor.copy())
         self.peg_actual_pos.append(list(self.last_peg_actual_pos))
         self.peg_ref_pos.append(list(self.last_peg_ref_pos))
         self.peg_actual_yaw.append(self.last_peg_actual_yaw)
@@ -328,6 +342,7 @@ class Logger(Node):
         online_sph_ref = np.asarray(self.online_sph_ref)
         online_ref = np.asarray(self.online_ref)
         peg_ext_force = np.asarray(self.peg_ext_force)
+        estimated_wrench = np.asarray(self.estimated_wrench)
 
         # 1. Calcolo derivate numeriche
         acc = np.zeros_like(v)
@@ -383,7 +398,9 @@ class Logger(Node):
             r_sph=r_sph, beta_sph=beta_sph, gamma_sph=gamma_sph,
             yaw_err_sph=yaw_err_sph,
             peg_ext_force=peg_ext_force,
+            estimated_wrench=estimated_wrench,
             delta_p=np.asarray(self.delta_p),
+            delta_p_sensor=np.asarray(self.delta_p_sensor),
             peg_actual_pos=np.asarray(self.peg_actual_pos),
             peg_ref_pos=np.asarray(self.peg_ref_pos),
             peg_actual_yaw=np.asarray(self.peg_actual_yaw),

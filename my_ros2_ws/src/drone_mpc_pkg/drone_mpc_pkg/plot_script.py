@@ -217,7 +217,7 @@ def main():
                ["Force X (Sensor) [N]", "Force Y (Sensor) [N]", "Force Z (Sensor) [N]"], 
                "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=11, task_start=task_start)
 
-    # --- FIGURE 12: Admittance delta_p (spostamento di ammettenza) ---
+    # --- FIGURE 12: Admittance delta_p (spostamento di ammettenza in ENU) ---
     if 'delta_p' in data.files:
         dp = data['delta_p']
         dp_norm = np.linalg.norm(dp, axis=1)
@@ -228,10 +228,26 @@ def main():
             {'sim': dp_norm,  'ref': 0.0}
         ]
         myPlot(t, fig12_data,
-               [r"$\Delta p_x$ [m]", r"$\Delta p_y$ [m]", r"$\Delta p_z$ [m]",
+               [r"$\Delta p_x$ [m] (ENU)", r"$\Delta p_y$ [m] (ENU)", r"$\Delta p_z$ [m] (ENU)",
                 r"$\|\Delta p\|$ [m]"],
-               "Admittance Displacement $\\Delta p$ (Sensor Frame)",
+               "Admittance Displacement $\\Delta p$ (ENU frame)",
                ncols=2, use_tex=args.tex, block=block, fignum=12, task_start=task_start)
+
+    # --- FIGURE 12b: delta_p in terna SENSORE ---
+    if 'delta_p_sensor' in data.files:
+        dps = data['delta_p_sensor']
+        dps_norm = np.linalg.norm(dps, axis=1)
+        fig12b_data = [
+            {'sim': dps[:, 0], 'ref': 0.0},
+            {'sim': dps[:, 1], 'ref': 0.0},
+            {'sim': dps[:, 2], 'ref': 0.0},
+            {'sim': dps_norm,  'ref': 0.0}
+        ]
+        myPlot(t, fig12b_data,
+               [r"$\Delta p_{sx}$ [m] (Sensor X)", r"$\Delta p_{sy}$ [m] (Sensor Y)",
+                r"$\Delta p_{sz}$ [m] (Sensor Z)", r"$\|\Delta p_s\|$ [m]"],
+               "Admittance Displacement in Sensor Frame (X,Y should be ~0)",
+               ncols=2, use_tex=args.tex, block=block, fignum=121, task_start=task_start)
 
     # --- FIGURE 13: Confronto ||delta_p|| vs ||F_ext|| ---
     if 'delta_p' in data.files and 'peg_ext_force' in data.files:
@@ -301,6 +317,21 @@ def main():
         myPlot(t, fig15_data, labels15,
                "Interaction Drone Velocities (ENU) and Yaw Rate",
                ncols=2, use_tex=args.tex, block=block, fignum=15, task_start=task_start)
+
+    # --- FIGURE 16: Estimated Wrench (Momentum Based Estimator) ---
+    if 'estimated_wrench' in data.files:
+        fig16_data = [
+            {'sim': data['estimated_wrench'][:, 0], 'ref': 0.0},
+            {'sim': data['estimated_wrench'][:, 1], 'ref': 0.0},
+            {'sim': data['estimated_wrench'][:, 2], 'ref': 0.0},
+            {'sim': data['estimated_wrench'][:, 3], 'ref': 0.0},
+            {'sim': data['estimated_wrench'][:, 4], 'ref': 0.0},
+            {'sim': data['estimated_wrench'][:, 5], 'ref': 0.0}
+        ]
+        myPlot(t, fig16_data, 
+               ["Force X [N]", "Force Y [N]", "Force Z [N]", 
+                "Torque X [Nm]", "Torque Y [Nm]", "Torque Z [Nm]"], 
+               "Estimated Wrench (Momentum-Based Estimator)", ncols=3, use_tex=args.tex, block=block, fignum=16, task_start=task_start)
 
     if args.save:
         for i in plt.get_fignums():

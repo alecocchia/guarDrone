@@ -159,6 +159,12 @@ class MpcPlannerNode(Node):
         # beta  = azimut del vettore drone->obj nel piano XY [rad]  (pan attorno all'oggetto)
         # gamma = elevazione dal piano XY [rad]  (0=piano, +pi/2=zenit)
         self.pov_target = np.array([2.0, np.pi, 0.0])  # default: 3m dietro, stessa quota
+        # Target autonomo pianificato (aggiornato SOLO da /pov_target, mai dall'haptic/joy)
+        # Usato come destinazione dell'interpolazione quando return2autonomous=True
+        self.autonomous_sph_ref = self.pov_target.copy()
+
+        self.declare_parameter('return2autonomous', False)
+        self.return2autonomous = self.get_parameter('return2autonomous').value
 
         self.declare_parameter('control_flag',  1)  
         self.control_flag_val = self.get_parameter('control_flag').get_parameter_value().integer_value
@@ -182,6 +188,7 @@ class MpcPlannerNode(Node):
         # PUBBLICATORI PER IL LOGGER
         self.wrench_cmd_pub = self.create_publisher(Wrench, '/wrench_cmd', 1)
         self.wrench_ref_pub = self.create_publisher(Wrench, '/wrench_reference', 1) # <--- Nuova
+        self.estimated_wrench_pub = self.create_publisher(Wrench, '/estimated_wrench', 1)
 
         self.single_wrench_pub = self.create_publisher(Wrench, '/optimal_wrench', 1)
 
@@ -478,26 +485,29 @@ class MpcPlannerNode(Node):
             with self.state_lock:
                 # Formato: [r_ref, beta_ref, gamma_ref]
                 self.pov_target = np.array([msg.data[0], msg.data[1], msg.data[2]], dtype=float)
+                # Aggiorna anche il target autonomo puro (non modificabile da haptic/joy)
+                self.autonomous_sph_ref = self.pov_target.copy()
 
     def haptic_ref_callback(self, msg: Float64MultiArray):
-        # Formato atteso: [r, beta, gamma, dr, d_beta, d_gamma]  (6 valori)
-        if len(msg.data) >= 6:
+        # Formato atteso: [r, beta, gamma]
+        if len(msg.data) >= 3:
             with self.state_lock:
-                self.haptic_pov     = np.array(msg.data[0:3], dtype=float)  # [r, beta, gamma]
-                self.haptic_pov_dot = np.array(msg.data[3:6], dtype=float)  # [dr, d_beta, d_gamma]
+                self.haptic_pov = np.array(msg.data[0:3], dtype=float)  # [r, beta, gamma]
                 self.haptic_timestamp = self.get_clock().now()
-                # Aggiorna il target autonomo all'ultimo input haptic
-                self.pov_target = self.haptic_pov.copy()
+                # pov_target viene aggiornato qui solo se return2autonomous=False
+                # (così quando l'haptic si rilascia, il drone resta dov'è)
+                if not self.return2autonomous:
+                    self.pov_target = self.haptic_pov.copy()
 
     def joy_ref_callback(self, msg: Float64MultiArray):
-        # Formato atteso: [r, beta, gamma, dr, d_beta, d_gamma]  (6 valori)
-        if len(msg.data) >= 6:
+        # Formato atteso: [r, beta, gamma]
+        if len(msg.data) >= 3:
             with self.state_lock:
-                self.joy_pov     = np.array(msg.data[0:3], dtype=float)  # [r, beta, gamma]
-                self.joy_pov_dot = np.array(msg.data[3:6], dtype=float)  # [dr, d_beta, d_gamma]
+                self.joy_pov = np.array(msg.data[0:3], dtype=float)  # [r, beta, gamma]
                 self.joy_timestamp = self.get_clock().now()
-                # Aggiorna il target autonomo all'ultimo input joypad
-                self.pov_target = self.joy_pov.copy()
+                # pov_target viene aggiornato qui solo se return2autonomous=False
+                if not self.return2autonomous:
+                    self.pov_target = self.joy_pov.copy()
 
     # ==================== Configurazione e Solve ====================
     def get_current_ref(self, xk):
@@ -509,6 +519,13 @@ class MpcPlannerNode(Node):
           r     = distanza 3D [m]
           beta  = azimut nel piano XY [rad]  (orbita orizzontale)
           gamma = elevazione dal piano XY [rad]  (0=piano, +pi/2=zenit)
+
+        Se return2autonomous=True:
+          Al rilascio del comando manuale, il drone interpola verso autonomous_sph_ref
+          (la traiettoria pianificata da /pov_target, non modificata dall'haptic).
+        Se return2autonomous=False (default):
+          Al rilascio del comando manuale, il drone resta nella posizione lasciata
+          (pov_target viene aggiornato ad ogni messaggio haptic/joy).
         """
         now = self.get_clock().now()
         dt_off = 0.2  # soglia inattività [s]
@@ -529,22 +546,26 @@ class MpcPlannerNode(Node):
             j_active = (dt_j < dt_off)
             alpha_j = 0.0 if j_active else min(1.0, max(0.0, (dt_j - dt_off) / self.joy_transition_duration))
 
-        # --- Selezione sorgente manuale ---
+        # --- Selezione sorgente manuale e alpha complessivo ---
         if h_active:
-            alpha, manual_pov, manual_d_pov = 0.0, self.haptic_pov, self.haptic_pov_dot
+            alpha, manual_pov = 0.0, self.haptic_pov
         elif j_active:
-            alpha, manual_pov, manual_d_pov = 0.0, self.joy_pov, self.joy_pov_dot
+            alpha, manual_pov = 0.0, self.joy_pov
         elif alpha_h < alpha_j:
-            alpha, manual_pov, manual_d_pov = alpha_h, self.haptic_pov, self.haptic_pov_dot
+            alpha, manual_pov = alpha_h, self.haptic_pov
         else:
-            alpha, manual_pov, manual_d_pov = alpha_j, self.joy_pov, self.joy_pov_dot
+            alpha, manual_pov = alpha_j, self.joy_pov
 
-        # Riferimento autonomo [r, beta, gamma]
-        auto_sph = self.pov_target.copy()   # [r_ref, beta_ref, gamma_ref]
+        # --- Scelta del target autonomo ---
+        # return2autonomous=True  → interpola verso la traiettoria pianificata
+        # return2autonomous=False → interpola verso l'ultima posizione manuale (= fermo)
+        if self.return2autonomous:
+            auto_sph = self.autonomous_sph_ref.copy()
+        else:
+            auto_sph = self.pov_target.copy()  # aggiornato dall'haptic/joy → resta fermo
 
         if manual_pov is None:
-            manual_pov   = auto_sph.copy()
-            manual_d_pov = np.zeros(3)
+            manual_pov = auto_sph.copy()
             alpha = 1.0
 
         # --- Interpolazione lineare su r e gamma ---
@@ -555,42 +576,11 @@ class MpcPlannerNode(Node):
         diff_beta = wrap_pi(manual_pov[1] - auto_sph[1])
         beta_ref  = wrap_pi(auto_sph[1] + (1 - alpha) * diff_beta)
 
-        # --- Velocità di riferimento dal rate haptic/joy ---
-        d_pov = (1 - alpha) * manual_d_pov if manual_d_pov is not None else np.zeros(3)
-
-        # Velocità world dal rate sferico:
-        #   dr     -> movimento radiale (avvicina/allontana)
-        #   d_beta -> orbita orizzontale (velocità tangenziale XY)
-        #   d_gamma-> orbita verticale
-        p_obj_now = self.current_obj_pos
-        p_rel_xy  = xk[0:2] - p_obj_now[0:2]
-        dist_xy   = np.linalg.norm(p_rel_xy)
-        dist_3d   = np.linalg.norm(xk[0:3] - p_obj_now)
-
-        v_world = self.current_obj_vel.copy()
-        if dist_3d > 0.1:
-            radial_dir = (xk[0:3] - p_obj_now) / dist_3d
-            v_world += d_pov[0] * radial_dir                       # dr
-        if dist_xy > 0.1:
-            tangent = np.array([-p_rel_xy[1], p_rel_xy[0], 0.0]) / dist_xy
-            v_world += dist_xy * d_pov[1] * tangent               # d_beta
-        # d_gamma -> velocità verticale approssimata
-        v_world[2] += dist_3d * d_pov[2]                          # d_gamma
-
-        return np.array([r_ref, beta_ref, gamma_ref]), v_world
+        return np.array([r_ref, beta_ref, gamma_ref])
 
     def configure_mpc(self):
 
-        # g0 importato da common.py
-
-        V       = np.array([1, 1, 1.5])
-        ANG_DOT = np.array([0.5, 0.5, 2.0])
-        ACC     = np.array([2.0, 2.0, 3.0])
-        ACC_ANG = np.array([1.0, 1.0, 3.0])
-        JERK    = 10.0
-        SNAP    = 200.0
-        
-        
+        # g0 importato da common.py        
         f_max = self.get_parameter('f_max').value
         arm_l_x = self.get_parameter('arm_l_x').value
         arm_l_y = self.get_parameter('arm_l_y').value
@@ -601,20 +591,28 @@ class MpcPlannerNode(Node):
         self.U_TAU_Y = arm_l_x * f_max / 2.0
         self.U_TAU_Z = moment_const * f_max
 
-        # Scala normalizzazione per [r_err, beta_err, gamma_err, yaw_err]
+        # Pesi normalizzati
+        # [r_err, beta_err, gamma_err, yaw_err]
         R_SPH  = 2.0      # scala distanza [m]
-        B_SPH  = np.pi/4  # scala azimut [rad]
-        G_SPH  = np.pi/6  # scala elevazione [rad]
-        Y_SPH  = np.pi/3  # scala yaw [rad]
+        B_SPH  = np.pi/2  # scala azimut [rad]
+        G_SPH  = np.pi/2  # scala elevazione [rad]
+        Y_SPH  = np.pi/2  # scala yaw [rad]
+
+        V       = np.array([1, 1, 1])
+        ANG_DOT = np.array([0.5, 0.5, 2.0])
+        ACC     = np.array([2.0, 2.0, 2.0])
+        ACC_ANG = np.array([1.0, 1.0, 3.0])
+        JERK    = 10.0
+        SNAP    = 200.0
 
         PesoVis    = 100    # radius
         PesoBeta   = PesoVis
         PesoGamma  = PesoVis
         PesoYaw    = PesoVis
-        PesoVel    = PesoVis / 50
-        PesoAngVel = PesoVis / 50
-        PesoAcc    = PesoVis / 20
-        PesoAngAcc = PesoVis / 20
+        PesoVel    = PesoVis / 20
+        PesoAngVel = PesoVis / 20
+        PesoAcc    = PesoVis / 30
+        PesoAngAcc = PesoVis / 30
         PesoJerk   = PesoAcc / 5
         PesoSnap   = PesoJerk / 2
         PesoForce  = PesoVis / 1000
@@ -785,7 +783,7 @@ class MpcPlannerNode(Node):
                 self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2]
             ])
             # Calcolo dei riferimenti sferici [r_ref, beta_ref, gamma_ref]
-            sph_ref, vel_ref = self.get_current_ref(xk)
+            sph_ref = self.get_current_ref(xk)
             vel_ref = np.zeros(3)
 
             # Publish reference for monitoring
@@ -823,6 +821,16 @@ class MpcPlannerNode(Node):
                 tau_prev = self.u_hover[1:4]
                 
             F_ext, Tau_ext = self.mbe.update(self.current_vel, self.current_ang_vel, self.current_quat, Fz_prev, tau_prev)
+            
+            # Pubblicazione estimated wrench
+            est_w_msg = Wrench()
+            est_w_msg.force.x = float(F_ext[0])
+            est_w_msg.force.y = float(F_ext[1])
+            est_w_msg.force.z = float(F_ext[2])
+            est_w_msg.torque.x = float(Tau_ext[0])
+            est_w_msg.torque.y = float(Tau_ext[1])
+            est_w_msg.torque.z = float(Tau_ext[2])
+            self.estimated_wrench_pub.publish(est_w_msg)
         
         try:
             t_start = time.perf_counter()
@@ -860,11 +868,11 @@ class MpcPlannerNode(Node):
                     u_px4 = self.u_hover
                     
                 err_u = np.linalg.norm(u0 - u_px4)
-                if err_u < 5.0: # Soglia tolleranza Newton/Nm
+                if err_u < 2.0: # Soglia tolleranza Newton/Nm
                     self.get_logger().info(f"Safe Switch OK! (err_u = {err_u:.2f}). L'MPC prende il controllo di PX4!")
                     self.safety_switch_passed = True
                 else:
-                    self.get_logger().warn(f"Safe Switch FALLITO. (err_u = {err_u:.2f} > 5.0). Attendo convergenza MPC...", throttle_duration_sec=1.0)
+                    self.get_logger().warn(f"Safe Switch FALLITO. (err_u = {err_u:.2f} > 2.0). Attendo convergenza MPC...", throttle_duration_sec=1.0)
                     return
 
             self.publish_optimal_wrench(u0)
@@ -885,13 +893,7 @@ class MpcPlannerNode(Node):
                 w_ref_msg.torque.z = float(yref_u[3])
                 self.wrench_ref_pub.publish(w_ref_msg)
 
-                v_ref_msg = TwistStamped()
-                v_ref_msg.header.stamp = self.get_clock().now().to_msg()
-                v_ref_msg.header.frame_id = "world"
-                v_ref_msg.twist.linear.x = float(yref0[self.y_idx["vel"]][0])
-                v_ref_msg.twist.linear.y = float(yref0[self.y_idx["vel"]][1])
-                v_ref_msg.twist.linear.z = float(yref0[self.y_idx["vel"]][2])
-                self.vel_ref_pub.publish(v_ref_msg)
+                # vel_ref = zeros: non si pubblica più /velocity_reference
 
         except Exception as e:
             self.get_logger().error(f"Errore nel solver: {e}")

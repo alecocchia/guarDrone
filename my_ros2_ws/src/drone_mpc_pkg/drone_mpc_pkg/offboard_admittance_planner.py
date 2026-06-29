@@ -47,8 +47,7 @@ from drone_mpc_pkg.planner import generate_trapezoidal_trajectory
 # Gz FT default: misure nel frame child, verso parent (convenzione: forza che il
 # contatto esercita sull'end-effector, nel frame child = sensore).
 
-_R_BODY_TO_SENSOR = Rotation.from_euler('y', np.pi / 2.0).as_matrix()
-_R_SENSOR_TO_BODY = _R_BODY_TO_SENSOR.T
+_R_SENSOR_TO_BODY = Rotation.from_euler('y', -np.pi / 2.0).as_matrix()
 # ── Conversione NED → ENU (stessa usata in offboard_trajectory_planner) ──────
 _M_NED2ENU = np.array([[0., 1., 0 ],
                         [1., 0., 0.],
@@ -82,7 +81,7 @@ class OffboardAdmittancePlanner(Node):
         self.declare_parameter('dt', 0.01)   # 100 Hz (più alto di prima per l'ammettenza)
 
         # -- Parametri ammettenza --
-        self.declare_parameter('F_threshold', 0.02)    # [N] soglia attivazione
+        self.declare_parameter('F_threshold', 0.06)    # [N] soglia attivazione
         #self.declare_parameter('adm_mass', 1.0)       # [kg] massa virtuale
         #self.declare_parameter('adm_damping', 8.0)    # smorzamento virtuale
         #self.declare_parameter('adm_stiffness', 0.0)  # rigidezza virtuale (0 = ammortizzatore puro)
@@ -107,31 +106,60 @@ class OffboardAdmittancePlanner(Node):
         #self.adm_D = self.get_parameter('adm_damping').get_parameter_value().double_value
         #self.adm_K = self.get_parameter('adm_stiffness').get_parameter_value().double_value
 
-        #wn=sqrt(K/M)
-        #zeta=D/2*sqrt(K*M)     --> smorzamento critico = 1
-        
-        # Ora adm_K, adm_M, adm_D sono array numpy (1 per asse nel frame SENSOR)
-        # Es: Kx=50 (laterale), Ky=50 (laterale), Kz=50 (assiale al peg)
-        F_max_x = 2.0
-        F_max_y = 2.0
-        F_max_z = 6.0
+        # ── Dimensionamento ammettenza (frame SENSOR) ───────────────────────────
+        #
+        # Il filtro è M·δ̈ + D·δ̇ + K·δ = F_ext  (un sistema 2° ordine per asse).
+        #
+        # Parametri LIBERI:
+        #   F_typ    : forza di contatto tipica attesa [N]
+        #   delta_typ: spostamento desiderato a quella forza [m]  → K = F_typ / delta_typ
+        #   Ta       : tempo di assestamento al 5% [s]            → ωn = 3 / Ta
+        #   zeta     : rapporto di smorzamento (1=critico, <1=oscillante, >1=sovrasmorzato)
+        #
+        # Parametri DERIVATI:
+        #   M = K / ωn²                         (massa virtuale)
+        #   D = 2 · ζ · √(K·M) = 2 · ζ · K/ωn (smorzamento)
+        #
+        # Risposta stazionaria a forza costante: δ_static = F / K
+        #
+        # ── ASSE Z (assiale, perp. alla parete) 
+        # Forza tipica: 3 N (contatto leggero con la parete)
+        # Cedevolezza desiderata: 3 N --> 8 cm di rimbalzo
+        # Tempo di assestamento: 0.5 s (risposta reattiva ma stabile)
+        # Smorzamento critico: niente rimbalzi sull'ostacolo
+        F_typ_z    = 2.0     # [N]  forza di contatto tipica
+        delta_typ_z= 0.04   # [m]  rimbalzo desiderato a F_typ_z (→ rigidezza K)
+        Ta_z       = 0.3     # [s]  tempo assestamento al 5%
+        zeta_z     = 1.1     # [-]  critico: risposta monotona senza rimbalzi
 
-        delta_x_max = 1.0
-        delta_y_max = 1.0
-        delta_z_max = 0.3  
+        # Risultati: K=37.5 N/m, ωn=6 rad/s, M≈1.04 kg, D≈12.5 N·s/m
+        # δ_max a 6 N di forza: 6/37.5 ≈ 0.16 m (adm_max_delta fa da saturazione)
 
-        adm_K_x = F_max_x/delta_x_max
-        adm_K_y = F_max_y/delta_y_max
-        adm_K_z = F_max_z/delta_z_max
+        # ── ASSE X e Y (laterali) — DISATTIVATI (K alto = rigido) ────────────
+        F_typ_x    = 2.0;  delta_typ_x = 0.4   #
+        F_typ_y    = 1.0;  delta_typ_y = 0.4   
+        Ta_x       = 0.4;  zeta_x      = 1.2
+        Ta_y       = 0.4;  zeta_y      = 1.2
 
-        self.adm_K = np.array([adm_K_x, adm_K_y, adm_K_z])
-        self.Ta = np.array([1.0, 1.0, 1.5])
-        self.wn = 4 / self.Ta
-        self.adm_M = self.adm_K / (self.wn**2)
-        
-        damping_ratio = np.array([1.2, 1.2, 1.2])
-        self.adm_D = 2 * np.sqrt(self.adm_K * self.adm_M) * damping_ratio
+        # ── Calcolo M e D (derivati) ──────────────────────────────────────────
+        K = np.array([F_typ_x / delta_typ_x,
+                      F_typ_y / delta_typ_y,
+                      F_typ_z / delta_typ_z])
+        Ta   = np.array([Ta_x,   Ta_y,   Ta_z])
+        zeta = np.array([zeta_x, zeta_y, zeta_z])
+        wn   = 3.0 / (zeta * Ta)        # ωn tale che assestamento 5% ≈ Ta
+        M    = K / wn**2                # M = K/ωn²
+        D    = 2.0 * zeta * K / wn      # D = 2·ζ·K/ωn  (equivalente a 2·ζ·√(KM))
+
+        self.adm_K = K
+        self.adm_M = M
+        self.adm_D = D
         self.adm_max_delta = self.get_parameter('adm_max_delta').get_parameter_value().double_value
+
+        self.get_logger().info(
+            f"[Admittance] K={self.adm_K}, M={self.adm_M.round(3)}, D={self.adm_D.round(3)}, "
+            f"wn={wn.round(2)} rad/s, Ta={Ta}, zeta={zeta}"
+        )
 
         ft_topic = self.get_parameter('ft_topic').get_parameter_value().string_value
 
@@ -156,7 +184,8 @@ class OffboardAdmittancePlanner(Node):
             OffboardControlMode, f'{prefix}/fmu/in/offboard_control_mode', 1)
         self.setpoint_pub = self.create_publisher(
             TrajectorySetpoint, f'{prefix}/fmu/in/trajectory_setpoint', 1)
-        self.delta_p_pub = self.create_publisher(Vector3Stamped, 'delta_p', 10)
+        self.delta_p_pub        = self.create_publisher(Vector3Stamped, 'delta_p', 10)
+        self.delta_p_sensor_pub  = self.create_publisher(Vector3Stamped, 'delta_p_sensor', 10)
         self.peg_ref_pub = self.create_publisher(PoseStamped, '/peg_ref_pose', 10)
         self.peg_ref_twist_pub = self.create_publisher(TwistStamped, '/peg_ref_twist', 10)
 
@@ -177,7 +206,7 @@ class OffboardAdmittancePlanner(Node):
         # -- Stato interno (traiettoria) --
         self.current_pos = np.zeros(3)   # ENU + spawn offset
         self.current_rpy = np.zeros(3)
-        self.R_flu2enu = np.eye(3)       # rotazione corrente body FLU → ENU
+        self.R_flu2enu = np.eye(3)       # rotazione corrente body FLU --> ENU
         self.has_odom = False
         self.offboard_traj_enabled = True
 
@@ -186,10 +215,13 @@ class OffboardAdmittancePlanner(Node):
         self.current_index = 0
 
         # -- Stato ammettenza --
-        # delta_p: spostamento accumulato dall'ammettenza rispetto alla traiettoria nominale
-        # delta_v: velocità di tale spostamento
-        self.delta_p = np.zeros(3)
-        self.delta_v = np.zeros(3)
+        # Integrazione in terna SENSORE (assi disaccoppiati, nessun coupling da rotazione)
+        # delta_p_s, delta_v_s: spostamento/velocità in terna sensore [m, m/s]
+        # delta_p, delta_v:     idem in terna ENU (output per il setpoint PX4)
+        self.delta_p_s = np.zeros(3)   # [m]    in sensor frame
+        self.delta_v_s = np.zeros(3)   # [m/s]  in sensor frame
+        self.delta_p   = np.zeros(3)   # [m]    in ENU  (= R_s2e @ delta_p_s)
+        self.delta_v   = np.zeros(3)   # [m/s]  in ENU  (= R_s2e @ delta_v_s)
 
         # Forza esterna nel frame SENSOR (aggiornata dalla callback FT)
         self.F_ext_sens = np.zeros(3)
@@ -217,7 +249,7 @@ class OffboardAdmittancePlanner(Node):
         R_frd2ned = Rotation.from_quat(q_scipy).as_matrix()
         R_flu2enu = _M_NED2ENU @ R_frd2ned @ _M_FRD2FLU
 
-        # Posizione: NED → ENU + spawn offset
+        # Posizione: NED --> ENU + spawn offset
         pos_ned = np.array([msg.position[0], msg.position[1], msg.position[2]])
         pos_enu = _M_NED2ENU @ pos_ned
         self.current_pos[0] = pos_enu[0] + self.get_parameter('start_x').value
@@ -236,13 +268,11 @@ class OffboardAdmittancePlanner(Node):
         Misura FT sensor -> forza esterna in ENU.
 
         Gz Sim ForceTorque:
-          - Misure nel frame del child link (end_eff_sens), convenzione child→parent.
-          - end_eff_sens ha pitch = -π/2 rispetto al modello (ENU-aligned a yaw=0).
+          - Misure nel frame del child link (end_eff_sens)
+          - end_eff_sens ha pitch = -π/2 rispetto al body FLU
           - Per passare al body FLU: R_SENSOR_TO_BODY = Ry(+π/2)
           - Per passare all'ENU: R_flu2enu (dall'odometria corrente)
 
-        La convenzione child→parent significa che msg.force è la forza che il contatto
-        applica sull'end-effector (quella che vogliamo compensare con l'ammettenza).
         """
         F_sensor = np.array([msg.force.x, msg.force.y, msg.force.z])
         F_norm = np.linalg.norm(F_sensor)
@@ -252,7 +282,7 @@ class OffboardAdmittancePlanner(Node):
         self.admittance_active = (F_norm >= self.F_threshold and self.current_pos[2] >= 0.3)
 
         # Se l'ammettenza NON deve agire (es. siamo a terra o forza debole), azzeriamo l'input.
-        # In questo modo l'integrazione, se delta_p > 0, lo riporterà a zero dolcemente (K>0)
+        # In questo modo l'integrazione, se delta_p > 0, lo riporterà a zero (K>0)
         
         if self.admittance_active:
             self.F_ext_sens = F_sensor.copy()
@@ -324,7 +354,7 @@ class OffboardAdmittancePlanner(Node):
         self.traj_rpy = rpy_vals
         self.current_index = 0
 
-        # Reset dell'ammettenza ad ogni nuovo target (si riparte da zero)
+        # Reset dell'ammettenza ad ogni nuovo target (riparte da zero)
         self.delta_p[:] = 0.0
         self.delta_v[:] = 0.0
 
@@ -349,12 +379,15 @@ class OffboardAdmittancePlanner(Node):
         ocm.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.offboard_pub.publish(ocm)
 
-        # -- Ammettenza (sempre integrata in ENU) --
+        # -- Ammettenza (integrazione in terna sensore, output in ENU) --
         R_sensor2enu = self.R_flu2enu @ _R_SENSOR_TO_BODY
         self._integrate_admittance(R_sensor2enu)
-        # delta_p e delta_v sono già in ENU dopo la refactoring
+        # delta_p e delta_v sono in ENU (= R_s2e @ delta_p_s)
         delta_p_enu = self.delta_p
         delta_v_enu = self.delta_v
+        #delta_v_enu = np.array([0,0,0])
+        # delta_p_s è già in terna sensore, usato per il topic /delta_p_sensor
+        self._delta_p_sensor = self.delta_p_s  # alias
 
         # -- MODALITÀ LIVE HAPTIC --
         LIVE_TIMEOUT = 0.5  # s: dopo questo tempo senza messaggi, mantieni ultima posizione
@@ -396,13 +429,23 @@ class OffboardAdmittancePlanner(Node):
 
         self.publish_setpoint(p_cmd, yaw_nom, v_cmd)
 
-        # -- Pubblica delta_p_enu (per logging e RViz) --
+        # -- Pubblica delta_p in ENU (per logging e RViz) --
+        stamp = self.get_clock().now().to_msg()
         dp_msg = Vector3Stamped()
-        dp_msg.header.stamp = self.get_clock().now().to_msg()
+        dp_msg.header.stamp = stamp
         dp_msg.vector.x = float(self.delta_p[0])
         dp_msg.vector.y = float(self.delta_p[1])
         dp_msg.vector.z = float(self.delta_p[2])
         self.delta_p_pub.publish(dp_msg)
+
+        # -- Pubblica delta_p in terna SENSORE (per plot) --
+        dp_s = self._delta_p_sensor
+        dp_s_msg = Vector3Stamped()
+        dp_s_msg.header.stamp = stamp
+        dp_s_msg.vector.x = float(dp_s[0])
+        dp_s_msg.vector.y = float(dp_s[1])
+        dp_s_msg.vector.z = float(dp_s[2])
+        self.delta_p_sensor_pub.publish(dp_s_msg)
 
         # -- Pubblica posizione + yaw di riferimento nominale peg in ENU (per logger) --
         ref_msg = PoseStamped()
@@ -437,40 +480,40 @@ class OffboardAdmittancePlanner(Node):
 
     def _integrate_admittance(self, R_sensor2enu: np.ndarray):
         """
-        Integra la dinamica virtuale di ammettenza **nel frame ENU** (world frame).
+        Integra la dinamica virtuale di ammettenza in TERNA SENSORE.
 
-        Integrare nel frame sensore (body) è scorretto quando il drone ruota:
-        il termine restauratore K*delta_p punterebbe in direzioni diverse ad ogni
-        timestep man mano che il sensore yawta, generando oscillazioni spurie.
-        Portando le matrici diagonali K, D, M in ENU tramite la similarità
-          X_enu = R @ diag(X_sens) @ R.T
-        si garantisce che la forza molla/smorzatore sia sempre coerente con lo
-        spostamento accumulato, indipendentemente dall'orientamento del drone.
+        Le matrici M, D, K sono diagonali per costruzione nel frame sensore.
+        Integrare in sensor frame garantisce che gli assi siano completamente
+        disaccoppiati: la forza su Z_s non genera mai displacement su X_s o Y_s.
+
+        L'integrazione in ENU con K_enu(t) = R(t)@diag(K)@R(t)^T era scorretta:
+        ad ogni timestep l'equilibrio della molla ruotava con il drone, generando
+        cross-axis coupling in terna sensore.
+
+        Output: self.delta_p e self.delta_v vengono aggiornati in ENU
+                (= R_sensor2enu @ delta_p_s) per essere usati direttamente nel setpoint.
         """
-        # Forza esterna portata in ENU
-        F_z = np.array([0.0,0.0,self.F_ext_sens[2]])
+        # -- Forza di ingresso in terna sensore (solo Z attivo) --
+        F_s = np.array([0.0, 0.0, self.F_ext_sens[2]])
+        F_s = self.F_ext_sens.copy()
+        # Per attivare tutti gli assi: F_s = self.F_ext_sens.copy()
 
-        # F_enu = R_sensor2enu @ F_ext_sens
+        # -- ODE disaccoppiata in sensor frame: M·a = F - D·v - K·p (element-wise) --
+        a_s = (F_s - self.adm_D * self.delta_v_s - self.adm_K * self.delta_p_s) / self.adm_M
 
-        F_enu = R_sensor2enu @ F_z
+        # -- Integrazione Eulero esplicito (forward Euler) --
+        v_s_k = self.delta_v_s.copy()    # salva v(k)
+        self.delta_v_s += a_s * self.dt  # v(k+1)
+        self.delta_p_s += v_s_k * self.dt  # p(k+1) con v(k)
 
-        # Ruota le matrici di ammettenza (diagonali in sensor) nel frame ENU
-        K_enu = R_sensor2enu @ np.diag(self.adm_K) @ R_sensor2enu.T
-        D_enu = R_sensor2enu @ np.diag(self.adm_D) @ R_sensor2enu.T
-        M_enu = R_sensor2enu @ np.diag(self.adm_M) @ R_sensor2enu.T
-
-        # Accelerazione virtuale in ENU: M·a = F - D·v - K·p
-        delta_a = np.linalg.solve(M_enu, F_enu - D_enu @ self.delta_v - K_enu @ self.delta_p)
-        
-
-        # Integrazione Eulero in ENU
-        self.delta_v += delta_a * self.dt
-        self.delta_p += self.delta_v * self.dt
-
-        # Saturazione: lo spostamento non può superare adm_max_delta
-        delta_norm = np.linalg.norm(self.delta_p)
+        # -- Saturazione in terna sensore --
+        delta_norm = np.linalg.norm(self.delta_p_s)
         if delta_norm > self.adm_max_delta:
-            self.delta_p = self.delta_p / delta_norm * self.adm_max_delta
+            self.delta_p_s = self.delta_p_s / delta_norm * self.adm_max_delta
+
+        # -- Output in ENU (per setpoint PX4) --
+        self.delta_p = R_sensor2enu @ self.delta_p_s
+        self.delta_v = R_sensor2enu @ self.delta_v_s
 
 
     # ── Pubblicazione setpoint ────────────────────────────────────────────────

@@ -9,8 +9,8 @@ class MomentumBasedEstimator:
         self.g0 = g0
         
         # Tuning parameters (Secondo Ordine)
-        self.Ta = 0.4     # Tempo di assestamento al 5% [s]
-        self.zita = 1   # Smorzamento
+        self.Ta = 1     # Tempo di assestamento al 5% [s]
+        self.zita = 0.9   # Smorzamento
         self.omega_n = 3.0 / (self.Ta * self.zita)
 
         # Calcolo dei guadagni K1 e K2 (scalari, validi per tutti gli assi)
@@ -24,7 +24,7 @@ class MomentumBasedEstimator:
         self.r_R = None  # Residuo rotazionale (Coppia stimata)
 
     def initialize(self, v0, w0):
-        """ Inizializza gli accumulatori con la quantità di moto iniziale reale """
+        """ Inizializza gli accumulatori (integrali) con la quantità di moto iniziale reale """
         self.I_T = self.mass * np.array(v0, dtype=float)
         self.I_R = self.J @ np.array(w0, dtype=float)
         
@@ -32,7 +32,7 @@ class MomentumBasedEstimator:
         self.r_R = np.zeros(3)
 
     def update(self, v_k, w_k, quat_k, Fz_prev, tau_prev):
-        """ Esegue il passo di integrazione di Eulero in avanti a 100 Hz """
+        """ Esegue il passo di integrazione di Eulero in avanti a (1/ts) Hz """
         
         # 1. Quantità di moto attuali (dai sensori)
         p_T = self.mass * np.array(v_k)
@@ -49,7 +49,7 @@ class MomentumBasedEstimator:
         # Coppia nominale (body) = Coppia netta - Effetto di Coriolis
         tau_nom = np.array(tau_prev) - np.cross(w_k, self.J @ w_k)
 
-        # 3. Aggiornamento Derivate (Sistema differenziale)
+        # 3. Aggiornamento Derivate (Sistema dinamico)
         dI_T = F_nom + self.r_T
         dr_T = self.K1 * (-self.r_T + self.K2 * (p_T - self.I_T))
 

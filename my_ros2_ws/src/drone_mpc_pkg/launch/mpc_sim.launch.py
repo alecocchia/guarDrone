@@ -80,6 +80,7 @@ def launch_setup(context, *args, **kwargs):
             'peg_x': peg_x, 'peg_y': peg_y, 'peg_z': peg_z,
             'w_min': auto_wmin, 'w_max': auto_wmax,
             'arm_l_x': auto_lx, 'arm_l_y': auto_ly, 'moment_const': auto_mc,
+            'return2autonomous': LaunchConfiguration('return2autonomous'),
         }],
         condition=IfCondition(PythonExpression([f"'{planner_mode}' == '1'"]))
     )
@@ -166,8 +167,8 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
         parameters=[{
             'use_sim_time': True,
-            'takeoff_alt_1': 4.52+3.0,   # [m] ENU: quota di decollo camera drone
-            'takeoff_alt_2': 4.52+3.0,   # [m] ENU: quota di decollo peg drone
+            'takeoff_alt_1': 4.52+6.0,   # [m] ENU: quota di decollo camera drone
+            'takeoff_alt_2': 4.52+6.0,   # [m] ENU: quota di decollo peg drone
             'cam_start_x': drone_x,
             'cam_start_y': drone_y,
             'cam_start_z': drone_z,
@@ -226,6 +227,8 @@ def generate_launch_description():
         DeclareLaunchArgument('peg_ft_topic',
                               default_value='/world/interaction/model/x500_interaction_0/joint/end_eff_sens_joint/force_torque',
                               description='Topic Gazebo del sensore FT sull\'end-effector del peg'),
+        DeclareLaunchArgument('return2autonomous', default_value='False',
+                              description='Se True, al rilascio del comando haptic/joy il drone torna alla traiettoria autonoma pianificata; se False (default) resta nella posizione lasciata.'),
     ]
 
     return LaunchDescription(declared_arguments + [

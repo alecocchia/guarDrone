@@ -364,12 +364,10 @@ private:
           std::max(-M_PI / 2.0 + 0.05,
                    std::min(M_PI / 2.0 - 0.05, current_pov_ref_[2])); // clamp
 
-      // Pubblica: [r, beta, gamma, dr, d_beta, d_gamma]  (6 valori)
+      // Pubblica: [r, beta, gamma]
       auto haptic_msg = std_msgs::msg::Float64MultiArray();
       haptic_msg.data.insert(haptic_msg.data.end(), current_pov_ref_.begin(),
                              current_pov_ref_.end());
-      haptic_msg.data.insert(haptic_msg.data.end(), current_pov_vel_.begin(),
-                             current_pov_vel_.end());
       haptic_ref_pub_->publish(haptic_msg);
     } else {
       current_pov_vel_ = {0.0, 0.0, 0.0};
