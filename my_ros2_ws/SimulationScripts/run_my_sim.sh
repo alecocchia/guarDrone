@@ -84,7 +84,7 @@ tmux send-keys -t $SESSION_NAME:0.2 "echo 'Aspetto 10s per Gazebo e Drone1...' &
 tmux select-pane -T '3: ROS2 Nodes' -t $SESSION_NAME:0.3
 tmux send-keys -t $SESSION_NAME:0.3 "cd /root/my_ros2_ws" C-m
 tmux send-keys -t $SESSION_NAME:0.3 "colcon build && source /opt/ros/humble/setup.bash && source install/setup.bash" C-m
-tmux send-keys -t $SESSION_NAME:0.3 "sleep 10 && ros2 launch drone_mpc_pkg mpc_sim.launch.py model:=${DRONE1_MODEL_NAME} drone_x:=${DRONE1_X} drone_y:=${DRONE1_Y} drone_z:=${DRONE1_Z} drone_yaw:=${DRONE1_YAW} peg_x:=${DRONE2_X} peg_y:=${DRONE2_Y} peg_z:=${DRONE2_Z}" C-m
+tmux send-keys -t $SESSION_NAME:0.3 "sleep 10 && ros2 launch drone_mpc_pkg simulation.launch.py model:=${DRONE1_MODEL_NAME} drone_x:=${DRONE1_X} drone_y:=${DRONE1_Y} drone_z:=${DRONE1_Z} drone_yaw:=${DRONE1_YAW} peg_x:=${DRONE2_X} peg_y:=${DRONE2_Y} peg_z:=${DRONE2_Z}" C-m
 
 # --- Riquadro 4: Terminale Libero (full width, in fondo) ---
 tmux select-pane -T '4: Spare Terminal' -t $SESSION_NAME:0.4

@@ -33,7 +33,6 @@ install(PROGRAMS
   ${PROJECT_NAME}/geometric_controller.py
   ${PROJECT_NAME}/PID_controller.py
   ${PROJECT_NAME}/supervisor.py
-  ${PROJECT_NAME}/teleop_peg.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

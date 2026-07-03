@@ -1,4 +1,4 @@
-# file: mpc_sim.launch.py
+# file: simulation.launch.py
 
 import os
 import xml.etree.ElementTree as ET
@@ -103,8 +103,8 @@ def launch_setup(context, *args, **kwargs):
         }],
     )
 
-    peg_planner = Node(
-        package='drone_mpc_pkg', executable='offboard_admittance_planner.py', name='peg_trajectory_planner',
+    interaction_drone_planner = Node(
+        package='drone_mpc_pkg', executable='offboard_admittance_planner.py', name='interaction_drone_trajectory_planner',
         parameters=[{
             'use_sim_time': True,
             'start_x': peg_x, 'start_y': peg_y, 'start_z': peg_z,
@@ -113,7 +113,7 @@ def launch_setup(context, *args, **kwargs):
             'dt': 0.02,           # 50 Hz
             'px4_ns': 'px4_1',   # Namespace DDS del drone x500_interaction (UXRCE_DDS_NS=px4_1)
             # -- Ammettenza --
-            'F_threshold':   LaunchConfiguration('peg_F_threshold'),
+            'F_threshold':   LaunchConfiguration('F_threshold'),
             #'adm_mass':      LaunchConfiguration('peg_adm_mass'),
             #'adm_damping':   LaunchConfiguration('peg_adm_damping'),
             #'adm_stiffness': LaunchConfiguration('peg_adm_stiffness'),
@@ -129,8 +129,8 @@ def launch_setup(context, *args, **kwargs):
         condition=IfCondition(PythonExpression([f"'{planner_mode}' in ['1', '2']"]))
     )
 
-    camera_planner = Node(
-        package='drone_mpc_pkg', executable='offboard_trajectory_planner.py', name='camera_trajectory_planner',
+    guarDrone_planner = Node(
+        package='drone_mpc_pkg', executable='offboard_trajectory_planner.py', name='guarDrone_trajectory_planner',
         parameters=[{
             'use_sim_time': True,
             'start_x': drone_x, 'start_y': drone_y, 'start_z': drone_z,
@@ -180,8 +180,8 @@ def launch_setup(context, *args, **kwargs):
 
     return [
         supervisor_node,
-        peg_planner,
-        camera_planner,
+        interaction_drone_planner,
+        guarDrone_planner,
         ros_gz_bridge,
         TimerAction(period=10.0, actions=[mpc_planner_node]),
         data_logger,
@@ -214,7 +214,7 @@ def generate_launch_description():
         DeclareLaunchArgument('cf', default_value='8.0e-4'),
         DeclareLaunchArgument('ct', default_value='1.0e-5'),
         # -- Parametri ammettenza peg --
-        DeclareLaunchArgument('peg_F_threshold',   default_value='0.06',
+        DeclareLaunchArgument('F_threshold',   default_value='0.06',
                               description='[N] Soglia forza per attivare ammettenza'),
         #DeclareLaunchArgument('peg_adm_mass',      default_value='2.0',
         #                      description='[kg] Massa virtuale ammettenza'),
@@ -225,7 +225,7 @@ def generate_launch_description():
         DeclareLaunchArgument('peg_adm_max_delta', default_value='10.0',
                               description='[m] Saturazione spostamento di ammettenza'),
         DeclareLaunchArgument('peg_ft_topic',
-                              default_value='/world/interaction/model/x500_interaction_0/joint/end_eff_sens_joint/force_torque',
+                              default_value='/world/interaction/model/x500_interaction/joint/end_eff_sens_joint/force_torque',
                               description='Topic Gazebo del sensore FT sull\'end-effector del peg'),
         DeclareLaunchArgument('return2autonomous', default_value='False',
                               description='Se True, al rilascio del comando haptic/joy il drone torna alla traiettoria autonoma pianificata; se False (default) resta nella posizione lasciata.'),

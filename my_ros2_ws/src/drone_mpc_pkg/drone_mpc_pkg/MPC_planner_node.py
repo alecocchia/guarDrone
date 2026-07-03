@@ -893,7 +893,17 @@ class MpcPlannerNode(Node):
                 w_ref_msg.torque.z = float(yref_u[3])
                 self.wrench_ref_pub.publish(w_ref_msg)
 
-                # vel_ref = zeros: non si pubblica più /velocity_reference
+                # vel_ref = zeros: lo pubblichiamo per il logger per non farlo rimanere "incastrato" all'ultimo valore del planner
+                twist_ref_msg = TwistStamped()
+                twist_ref_msg.header.stamp = self.get_clock().now().to_msg()
+                twist_ref_msg.header.frame_id = 'world'
+                twist_ref_msg.twist.linear.x = float(vel_ref[0])
+                twist_ref_msg.twist.linear.y = float(vel_ref[1])
+                twist_ref_msg.twist.linear.z = float(vel_ref[2])
+                twist_ref_msg.twist.angular.x = 0.0
+                twist_ref_msg.twist.angular.y = 0.0
+                twist_ref_msg.twist.angular.z = 0.0
+                self.vel_ref_pub.publish(twist_ref_msg)
 
         except Exception as e:
             self.get_logger().error(f"Errore nel solver: {e}")
@@ -968,11 +978,11 @@ class MpcPlannerNode(Node):
             w_max = self.get_parameter('w_max').value
             w_min = self.get_parameter('w_min').value
             # Calcoliamo la velocità angolare desiderata [0, w_max] rad/s
-            w_target = w_max * np.sqrt(max(0.0, float(u0[0])) / self.U_F)
+            #w_target = w_max * np.sqrt(max(0.0, float(u0[0])) / self.U_F)
             # Mappatura su norm_thrust [0, 1] considerando il range dell'airframe [w_min, w_max]
-            norm_thrust = (w_target - w_min) / (w_max - w_min)   
-            norm_thrust = max(0.0, min(1.0, norm_thrust))
-            #norm_thrust = max(0.0, float(u0[0])/self.U_F)
+            #norm_thrust = (w_target - w_min) / (w_max - w_min)   
+            #norm_thrust = max(0.0, min(1.0, norm_thrust))
+            norm_thrust = max(0.0, float(u0[0])/self.U_F)
 
             thrust_msg = VehicleThrustSetpoint()
             thrust_msg.timestamp = 0           # PX4 auto-compila con hrt_absolute_time()

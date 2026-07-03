@@ -1,0 +1,40 @@
+{
+    "python.autoComplete.extraPaths": [
+        "/home/usainbot/Desktop/CocchiaAlessandro/guarDrone/my_ros2_ws/install/drone_mpc_pkg/local/lib/python3.10/dist-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages",
+        "/home/usainbot/IsaacLab/_isaac_sim/python_packages",
+        "/home/usainbot/IsaacLab/_isaac_sim/exts/isaacsim.simulation_app",
+        "/home/usainbot/IsaacLab/_isaac_sim/extsDeprecated/omni.isaac.kit",
+        "/home/usainbot/IsaacLab/_isaac_sim/kit/kernel/py",
+        "/home/usainbot/IsaacLab/_isaac_sim/kit/plugins/bindings-python",
+        "/home/usainbot/IsaacLab/_isaac_sim/exts/isaacsim.robot_motion.lula/pip_prebundle",
+        "/home/usainbot/IsaacLab/_isaac_sim/exts/isaacsim.asset.exporter.urdf/pip_prebundle",
+        "/home/usainbot/IsaacLab/_isaac_sim/extscache/omni.kit.pip_archive-0.0.0+69cbf6ad.lx64.cp311/pip_prebundle",
+        "/home/usainbot/IsaacLab/_isaac_sim/exts/omni.isaac.core_archive/pip_prebundle",
+        "/home/usainbot/IsaacLab/_isaac_sim/exts/omni.isaac.ml_archive/pip_prebundle",
+        "/home/usainbot/IsaacLab/_isaac_sim/exts/omni.pip.compute/pip_prebundle",
+        "/home/usainbot/IsaacLab/_isaac_sim/exts/omni.pip.cloud/pip_prebundle",
+        "/home/usainbot/Desktop/vittcammarota/isaac_drone_racer",
+        "/home/usainbot/Desktop/vittcammarota/isaac_drone_racer"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/usainbot/Desktop/CocchiaAlessandro/guarDrone/my_ros2_ws/install/drone_mpc_pkg/local/lib/python3.10/dist-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages",
+        "/home/usainbot/IsaacLab/_isaac_sim/python_packages",
+        "/home/usainbot/IsaacLab/_isaac_sim/exts/isaacsim.simulation_app",
+        "/home/usainbot/IsaacLab/_isaac_sim/extsDeprecated/omni.isaac.kit",
+        "/home/usainbot/IsaacLab/_isaac_sim/kit/kernel/py",
+        "/home/usainbot/IsaacLab/_isaac_sim/kit/plugins/bindings-python",
+        "/home/usainbot/IsaacLab/_isaac_sim/exts/isaacsim.robot_motion.lula/pip_prebundle",
+        "/home/usainbot/IsaacLab/_isaac_sim/exts/isaacsim.asset.exporter.urdf/pip_prebundle",
+        "/home/usainbot/IsaacLab/_isaac_sim/extscache/omni.kit.pip_archive-0.0.0+69cbf6ad.lx64.cp311/pip_prebundle",
+        "/home/usainbot/IsaacLab/_isaac_sim/exts/omni.isaac.core_archive/pip_prebundle",
+        "/home/usainbot/IsaacLab/_isaac_sim/exts/omni.isaac.ml_archive/pip_prebundle",
+        "/home/usainbot/IsaacLab/_isaac_sim/exts/omni.pip.compute/pip_prebundle",
+        "/home/usainbot/IsaacLab/_isaac_sim/exts/omni.pip.cloud/pip_prebundle",
+        "/home/usainbot/Desktop/vittcammarota/isaac_drone_racer",
+        "/home/usainbot/Desktop/vittcammarota/isaac_drone_racer"
+    ]
+}

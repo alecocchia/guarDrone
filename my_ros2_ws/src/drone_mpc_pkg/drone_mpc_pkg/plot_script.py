@@ -246,7 +246,7 @@ def main():
         myPlot(t, fig12b_data,
                [r"$\Delta p_{sx}$ [m] (Sensor X)", r"$\Delta p_{sy}$ [m] (Sensor Y)",
                 r"$\Delta p_{sz}$ [m] (Sensor Z)", r"$\|\Delta p_s\|$ [m]"],
-               "Admittance Displacement in Sensor Frame (X,Y should be ~0)",
+               "Admittance Displacement in Sensor Frame",
                ncols=2, use_tex=args.tex, block=block, fignum=121, task_start=task_start)
 
     # --- FIGURE 13: Confronto ||delta_p|| vs ||F_ext|| ---

@@ -28,6 +28,14 @@ Parametri configurabili (launch / ros2 param):
   adm_max_delta [m]   saturazione dello spostamento di ammettenza (default 0.3)
   ft_topic      str   topic del sensore FT (default stringa vuota → usa _0)
 """
+##################################
+# PROBLEMA ATTUALE: QUANDO LA FORZA SI ANNULLA (PERCHÉ NON VIENE RILEVATO CONTATTO (F_SENS < f_THRESHOLD))
+# IL TARGET DEL DRONE TORNA AD ESSERE QUELLO PRE-CONTATTO; E MENTRE SULL'ASSE Z DEL SENSORE È GIUSTO CHE SIA COSÌ, 
+# SUGLI ASSI X ED Y QUESTO PROVOCA OSCILLAZIONI CONTINUE PER IL DRONE SU E GIU O DESTRA E SINISTRA SE IL TARGET
+# PRE-CONTATTO SI TROVA NON PERPENDICOLARE ALLA PARETE
+# IDEA: QUANDO VIENE RILEVATO CONTATTO, IL TARGET DEL DRONE SU X ED Y DIVENTA LA POSIZIONE ATTUALE, MENTRE SU Z
+# AGISCE DAVVERO L'IMPEDENZA
+##################################
 
 import rclpy
 from rclpy.node import Node
@@ -42,18 +50,18 @@ from scipy.spatial.transform import Rotation
 from drone_mpc_pkg.planner import generate_trapezoidal_trajectory
 
 
-# ── Frame: end_eff_sens → body FLU ──────────────────────────────────────────
+# -- Frame: end_eff_sens → body FLU -------------------------------------------
 # end_eff_sens ha pitch = -π/2 rispetto al body frame (FLU) 
 # Gz FT default: misure nel frame child, verso parent (convenzione: forza che il
 # contatto esercita sull'end-effector, nel frame child = sensore).
 
 _R_SENSOR_TO_BODY = Rotation.from_euler('y', -np.pi / 2.0).as_matrix()
-# ── Conversione NED → ENU (stessa usata in offboard_trajectory_planner) ──────
+# -- Conversione NED → ENU (stessa usata in offboard_trajectory_planner) ------
 _M_NED2ENU = np.array([[0., 1., 0 ],
                         [1., 0., 0.],
                         [0., 0., -1.]])
 
-# ── Conversione FRD → FLU ────────────────────────────────────────────────────
+# -- Conversione FRD → FLU ----------------------------------------------------
 _M_FRD2FLU = np.array([[1., 0., 0.],
                         [0., -1., 0.],
                         [0., 0., -1.]])
@@ -71,7 +79,7 @@ class OffboardAdmittancePlanner(Node):
     def __init__(self):
         super().__init__('offboard_admittance_planner')
 
-        # ── Parametri planner base ────────────────────────────────────────────
+        # -- Parametri planner base --
         self.declare_parameter('px4_ns', 'px4_1')
         self.declare_parameter('start_x', 0.0)
         self.declare_parameter('start_y', 0.0)
@@ -88,11 +96,10 @@ class OffboardAdmittancePlanner(Node):
         self.declare_parameter('adm_max_delta', 10.0)  # [m] saturazione spostamento
 
         # -- Topic FT sensor --
-        # Il topic cambia con l'ordine di spawn (_0 o _1).
         # Viene passato come parametro dal launch file.
         self.declare_parameter(
             'ft_topic',
-            '/world/interaction/model/x500_interaction_0/joint/end_eff_sens_joint/force_torque'
+            '/world/interaction/model/x500_interaction/joint/end_eff_sens_joint/force_torque'
         )
 
         # -- Lettura parametri --
@@ -106,50 +113,47 @@ class OffboardAdmittancePlanner(Node):
         #self.adm_D = self.get_parameter('adm_damping').get_parameter_value().double_value
         #self.adm_K = self.get_parameter('adm_stiffness').get_parameter_value().double_value
 
-        # ── Dimensionamento ammettenza (frame SENSOR) ───────────────────────────
+        # -- Dimensionamento ammettenza (frame SENSOR) --
         #
-        # Il filtro è M·δ̈ + D·δ̇ + K·δ = F_ext  (un sistema 2° ordine per asse).
+        # Il filtro è M * delta_ddot + D * delta_dot + K * delta = F_ext  (un sistema 2° ordine per asse).
         #
         # Parametri LIBERI:
         #   F_typ    : forza di contatto tipica attesa [N]
         #   delta_typ: spostamento desiderato a quella forza [m]  → K = F_typ / delta_typ
-        #   Ta       : tempo di assestamento al 5% [s]            → ωn = 3 / Ta
+        #   Ta       : tempo di assestamento al 5% [s]            → wn = 3 / Ta
         #   zeta     : rapporto di smorzamento (1=critico, <1=oscillante, >1=sovrasmorzato)
         #
         # Parametri DERIVATI:
-        #   M = K / ωn²                         (massa virtuale)
-        #   D = 2 · ζ · √(K·M) = 2 · ζ · K/ωn (smorzamento)
+        #   M = K / wn^2                         (massa virtuale)
+        #   D = 2 * zeta * sqrt(K*M)             (smorzamento)
         #
-        # Risposta stazionaria a forza costante: δ_static = F / K
+        # Risposta stazionaria a forza costante: delta_static = F / K
         #
-        # ── ASSE Z (assiale, perp. alla parete) 
+        # --- ASSE Z (assiale, perp. alla parete) 
         # Forza tipica: 3 N (contatto leggero con la parete)
         # Cedevolezza desiderata: 3 N --> 8 cm di rimbalzo
         # Tempo di assestamento: 0.5 s (risposta reattiva ma stabile)
         # Smorzamento critico: niente rimbalzi sull'ostacolo
-        F_typ_z    = 2.0     # [N]  forza di contatto tipica
-        delta_typ_z= 0.04   # [m]  rimbalzo desiderato a F_typ_z (→ rigidezza K)
-        Ta_z       = 0.3     # [s]  tempo assestamento al 5%
+        F_typ_z    = 1.0     # [N]  forza di contatto tipica
+        delta_typ_z= 0.05   # [m]  rimbalzo desiderato a F_typ_z (→ rigidezza K)
+        Ta_z       = 1.0     # [s]  tempo assestamento al 5%
         zeta_z     = 1.1     # [-]  critico: risposta monotona senza rimbalzi
 
-        # Risultati: K=37.5 N/m, ωn=6 rad/s, M≈1.04 kg, D≈12.5 N·s/m
-        # δ_max a 6 N di forza: 6/37.5 ≈ 0.16 m (adm_max_delta fa da saturazione)
+        # -- ASSE X e Y (laterali) -- (K alto = rigido) ------
+        F_typ_x    = 400.0;  delta_typ_x = 0.0004  
+        F_typ_y    = 100.0;  delta_typ_y = 0.0001   
+        Ta_x       = 1;  zeta_x      = 1.0
+        Ta_y       = 1;  zeta_y      = 1.0
 
-        # ── ASSE X e Y (laterali) — DISATTIVATI (K alto = rigido) ────────────
-        F_typ_x    = 2.0;  delta_typ_x = 0.4   #
-        F_typ_y    = 1.0;  delta_typ_y = 0.4   
-        Ta_x       = 0.4;  zeta_x      = 1.2
-        Ta_y       = 0.4;  zeta_y      = 1.2
-
-        # ── Calcolo M e D (derivati) ──────────────────────────────────────────
+        # -- M e D derivati wn e zeta
         K = np.array([F_typ_x / delta_typ_x,
                       F_typ_y / delta_typ_y,
                       F_typ_z / delta_typ_z])
         Ta   = np.array([Ta_x,   Ta_y,   Ta_z])
         zeta = np.array([zeta_x, zeta_y, zeta_z])
-        wn   = 3.0 / (zeta * Ta)        # ωn tale che assestamento 5% ≈ Ta
-        M    = K / wn**2                # M = K/ωn²
-        D    = 2.0 * zeta * K / wn      # D = 2·ζ·K/ωn  (equivalente a 2·ζ·√(KM))
+        wn   = 3.0 / (zeta * Ta)        # wn tale che assestamento 5% = Ta
+        M    = K / wn**2                # M = K/wn²
+        D    = 2.0 * zeta * K / wn      # D = 2*zeta*K/wn  (equivalente a 2*zeta*sqrt(K*M))
 
         self.adm_K = K
         self.adm_M = M
@@ -275,6 +279,8 @@ class OffboardAdmittancePlanner(Node):
 
         """
         F_sensor = np.array([msg.force.x, msg.force.y, msg.force.z])
+        # correzione offset sensore (-0.05 su X)
+        F_sensor[0] = F_sensor[0]+0.05
         F_norm = np.linalg.norm(F_sensor)
 
         was_active = self.admittance_active
@@ -493,10 +499,10 @@ class OffboardAdmittancePlanner(Node):
         Output: self.delta_p e self.delta_v vengono aggiornati in ENU
                 (= R_sensor2enu @ delta_p_s) per essere usati direttamente nel setpoint.
         """
-        # -- Forza di ingresso in terna sensore (solo Z attivo) --
-        F_s = np.array([0.0, 0.0, self.F_ext_sens[2]])
-        F_s = self.F_ext_sens.copy()
-        # Per attivare tutti gli assi: F_s = self.F_ext_sens.copy()
+        # -- Forza di ingresso in terna sensore --
+
+        F_s = self.F_ext_sens.copy() # Per attivare tutti gli assi
+        #F_s = np.array([0.0, 0.0, self.F_ext_sens[2]])
 
         # -- ODE disaccoppiata in sensor frame: M·a = F - D·v - K·p (element-wise) --
         a_s = (F_s - self.adm_D * self.delta_v_s - self.adm_K * self.delta_p_s) / self.adm_M
@@ -516,7 +522,7 @@ class OffboardAdmittancePlanner(Node):
         self.delta_v = R_sensor2enu @ self.delta_v_s
 
 
-    # ── Pubblicazione setpoint ────────────────────────────────────────────────
+    # -- Pubblicazione setpoint ---------------------------
 
     def publish_setpoint(self, pos_enu: np.ndarray, yaw_enu: float,
                          vel_enu: np.ndarray = None):

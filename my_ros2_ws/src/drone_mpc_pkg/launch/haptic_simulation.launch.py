@@ -13,8 +13,8 @@ def generate_launch_description():
     
     # 1. Include MPC Sim Launch (Gazebo + MPC Planner)
     # Disabilitiamo il joy node originale di mpc_sim per non avere conflitti
-    mpc_sim_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(mpc_pkg_dir, 'launch', 'mpc_sim.launch.py')),
+    simulation_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(mpc_pkg_dir, 'launch', 'simulation.launch.py')),
         launch_arguments={
             'enable_joy': 'false', # Disabilitiamo il joystick standard
             'enable_rviz': 'true',
@@ -59,7 +59,7 @@ def generate_launch_description():
         DeclareLaunchArgument('peg_x', default_value='-15.0'),
         DeclareLaunchArgument('peg_y', default_value='-37.0'),
         DeclareLaunchArgument('peg_z', default_value='0.0'),
-        mpc_sim_launch,
+        simulation_launch,
         fd_launch,
         haptic_joy_node
     ])

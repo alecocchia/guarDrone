@@ -9,21 +9,21 @@
 
 # 2. CONTATTO END EFFECTOR (Rileva contatti fisici con le strutture)
 # Mappiamo sia il topic per il mondo genericamente chiamato 'interaction' che per il mondo 'bridge_inspection_gazebo'
-- ros_topic_name: "/world/interaction/model/x500_interaction_0/link/end_eff_sens/sensor/contact_tl/contact"
-  gz_topic_name: "/world/bridge_inspection_gazebo/model/x500_interaction_0/link/end_eff_sens/sensor/contact_tl/contact"
+- ros_topic_name: "/world/interaction/model/x500_interaction/link/end_eff_sens/sensor/contact_tl/contact"
+  gz_topic_name: "/world/bridge_inspection_gazebo/model/x500_interaction/link/end_eff_sens/sensor/contact_tl/contact"
   ros_type_name: "ros_gz_interfaces/msg/Contacts"
   gz_type_name: "gz.msgs.Contacts"
   direction: GZ_TO_ROS
 
-- ros_topic_name: "/world/interaction/model/x500_interaction_0/link/end_eff_sens/sensor/contact_tl/contact"
-  gz_topic_name: "/world/interaction/model/x500_interaction_0/link/end_eff_sens/sensor/contact_tl/contact"
+- ros_topic_name: "/world/interaction/model/x500_interaction/link/end_eff_sens/sensor/contact_tl/contact"
+  gz_topic_name: "/world/interaction/model/x500_interaction/link/end_eff_sens/sensor/contact_tl/contact"
   ros_type_name: "ros_gz_interfaces/msg/Contacts"
   gz_type_name: "gz.msgs.Contacts"
   direction: GZ_TO_ROS
 
 # 3. FORZA / COPPIA END EFFECTOR (Misura forze di contatto tramite il sensore Force/Torque)
-- ros_topic_name: "/world/interaction/model/x500_interaction_0/joint/end_eff_sens_joint/force_torque"
-  gz_topic_name: "/world/interaction/model/x500_interaction_0/joint/end_eff_sens_joint/force_torque"
+- ros_topic_name: "/world/interaction/model/x500_interaction/joint/end_eff_sens_joint/force_torque"
+  gz_topic_name: "/world/interaction/model/x500_interaction/joint/end_eff_sens_joint/force_torque"
   ros_type_name: "geometry_msgs/msg/Wrench"
   gz_type_name: "gz.msgs.Wrench"
   direction: GZ_TO_ROS
