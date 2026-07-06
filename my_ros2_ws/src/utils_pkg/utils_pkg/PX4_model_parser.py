@@ -119,7 +119,8 @@ class PX4ModelParser:
                         if len(sp_vals) >= 6:
                             cam_rpy = sp_vals[3:6]
                     
-                    # Posa finale della camera (Link + Sensore)
+                    # Posa finale della camera (Link + Sensore).
+                    # Il frame SDF Gazebo usa già Z-up (= FLU): nessuna conversione necessaria.
                     cam_pos = [abs_link_x + s_pose[0], abs_link_y + s_pose[1], abs_link_z + s_pose[2]]
                     
                     # Estraiamo FOV

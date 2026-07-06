@@ -111,6 +111,7 @@ tmux select-pane -T '1: GCS Launch' -t $SESSION_NAME:gcs.1
 tmux send-keys -t $SESSION_NAME:gcs.1 "cd /root/my_ros2_ws" C-m
 tmux send-keys -t $SESSION_NAME:gcs.1 "$SOURCE_CMD" C-m
 tmux send-keys -t $SESSION_NAME:gcs.1 "sleep 15 && ros2 launch gcs_pkg gcs_sim.launch.py \
+    model:=${DRONE1_MODEL_NAME} \
     drone_x:=${DRONE1_X} drone_y:=${DRONE1_Y} drone_z:=${DRONE1_Z} \
     peg_x:=${DRONE2_X}   peg_y:=${DRONE2_Y}   peg_z:=${DRONE2_Z}" C-m
 

@@ -132,9 +132,9 @@ class OffboardAdmittancePlanner(Node):
         # Cedevolezza desiderata: 3 N --> 8 cm di rimbalzo
         # Tempo di assestamento: 0.5 s (risposta reattiva ma stabile)
         # Smorzamento critico: niente rimbalzi sull'ostacolo
-        F_typ_z    = 8.0     # [N]  forza di contatto
-        delta_typ_z= 0.5   # [m]  rimbalzo desiderato a F_typ_z (--> rigidezza K)
-        Ta_z       = 1.0     # [s]  tempo assestamento al 5%
+        F_typ_z    = 1.0     # [N]  forza di contatto
+        delta_typ_z= 0.05   # [m]  rimbalzo desiderato a F_typ_z (--> rigidezza K)
+        Ta_z       = 0.8     # [s]  tempo assestamento al 5%
         zeta_z     = 1.1    # [-]  critico: smorzamento
 
 
@@ -272,9 +272,9 @@ class OffboardAdmittancePlanner(Node):
 
         """
         F_sensor = msg.force.z
-        alpha = 0.1
+        alpha = 0.2
         self.F_ext_sens = alpha * self.F_ext_sens + (1-alpha) * F_sensor
-        #self.F_ext_sens = F_sensor
+        #self.F_ext_sens = F_sensor          #no filter
         F_norm = np.abs(self.F_ext_sens)
 
         was_active = self.admittance_active
@@ -500,7 +500,7 @@ class OffboardAdmittancePlanner(Node):
         if abs(self.delta_p_s) > self.adm_max_delta:
             self.delta_p_s = np.sign(self.delta_p_s) * self.adm_max_delta
 
-        # -- Output in ENU (per setpoint PX4) --
+        # -- Output in ENU (per setpoint PX4) -- # asse z del sensore
         self.delta_p = R_sensor2enu[:, 2] * self.delta_p_s
         self.delta_v = R_sensor2enu[:, 2] * self.delta_v_s
 

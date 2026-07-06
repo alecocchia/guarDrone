@@ -6,7 +6,7 @@ from geometry_msgs.msg import PoseStamped, TwistStamped, Wrench, Vector3Stamped
 from std_msgs.msg import Float64MultiArray, Bool
 import numpy as np
 from math import atan2
-from drone_mpc_pkg.common import quat_to_R
+from utils_pkg.common import quat_to_R
 from scipy.spatial.transform import Rotation as Rot
 
 # --- PX4 MESSAGES IMPORTS ---
@@ -139,7 +139,7 @@ class Logger(Node):
 
         self.create_subscription(PoseStamped, '/peg_pose', self.cb_peg_pose, 10)
         self.create_subscription(Float64MultiArray, '/online_spherical_ref', self.cb_online_ref, 10)
-        self.create_subscription(Float64MultiArray, '/visual_ref',           self.cb_online_sph_ref, 10)
+        self.create_subscription(Float64MultiArray, '/online_visual_ref',       self.cb_online_sph_ref, 10)
         self.create_subscription(PoseStamped,  '/optimal_drone_pose',  self.cb_ref_pose,   10)
         self.create_subscription(PoseStamped,  '/camera_ref_pose',     self.cb_ref_pose,   10)
         self.create_subscription(TwistStamped, '/velocity_reference', self.cb_ref_twist,  10)

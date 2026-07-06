@@ -154,7 +154,7 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     # Elevazione: angolo dal piano XY verso l'alto (0=piano, +pi/2=zenit, -pi/2=nadir)
     r_xy = ca.sqrt(p_rel[0]**2 + p_rel[1]**2)
     gamma_raw = ca.atan2(p_rel[2], r_xy)
-    gamma_err = gamma_raw - gamma_ref_sym
+    gamma_err = min_angle(gamma_raw - gamma_ref_sym)
 
     # Yaw error: il drone deve puntare verso l'oggetto
     # La direzione desiderata è -p_rel (da drone verso oggetto)
