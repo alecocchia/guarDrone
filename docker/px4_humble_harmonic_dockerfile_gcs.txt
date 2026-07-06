@@ -27,7 +27,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && locale-gen en_US en_US.UTF-8 \
     && update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 \
     && add-apt-repository -y universe \
-    && pip3 install symforce \
     && rm -rf /var/lib/apt/lists/*
 
 # ROS2 Humble
@@ -86,20 +85,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN  git config --global --add safe.directory '*'
 USER root
 
-RUN apt-get update && apt-get install -y --no-install-recommends \ 
-    ros-humble-octomap-rviz-plugins  \
-    ros-humble-rtabmap-ros \
-    ros-humble-librealsense2* \
-    ros-humble-realsense2-* \  
-    && rm -rf /var/lib/apt/lists/*
+# c'era la parte relativa alla camera
 
+# CycloneDDS (per comunicazione multi-drone)
 RUN apt-get update && apt-get install -y --no-install-recommends \ 
     ros-humble-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Python deps per gcs_pkg (supervisor + logger)
+RUN pip3 install --break-system-packages numpy scipy
+
+# ros2_control (necessario per i pacchetti haptic Force Dimension)
+RUN apt-get update && apt-get install -y --no-install-recommends \  
     libccd-dev \
     libboost-thread-dev \
     libboost-system-dev \
@@ -121,8 +120,10 @@ RUN git clone --single-branch -b fcl-0.5 https://github.com/flexible-collision-l
 RUN  apt-get update && apt-get install -y --no-install-recommends \  
      ros-humble-navigation2 \
      ros-humble-nav2-bringup \
-     ros-humble-tf-transformations \ 
+     ros-humble-tf-transformations \
      ros-humble-robot-localization \
+     ros-humble-ros2-control \
+     ros-humble-ros2-controllers \
      python-is-python3 \
      && rm -rf /var/lib/apt/lists/*
 
@@ -139,63 +140,19 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install --break-system-packages ros2-unbag
 
-# Install ACADOS dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    cmake \
-    liblapack-dev \
-    libblas-dev \
-    libopenblas-dev \
-    gfortran \
-    libomp-dev \
-    && rm -rf /var/lib/apt/lists/*
-    
-# c'era il clone di UAV motion stack
-
-# === ACADOS Installation === 
-USER root
-WORKDIR /opt
-RUN git clone --recursive https://github.com/acados/acados.git
-
-WORKDIR /opt/acados
-RUN mkdir -p build && cd build && \
-    cmake .. \
-      -DCMAKE_INSTALL_PREFIX=/opt/acados \
-      -DACADOS_WITH_QPOASES=ON \
-      -DACADOS_WITH_OPENMP=ON \
-      -DBUILD_SHARED_LIBS=ON \
-      -DACADOS_INSTALL_DIR=/opt/acados \
-      -DBLASFEO_TARGET=GENERIC \
-      -DHPIPM_TARGET=GENERIC && \
-    make -j$(nproc) && make install
-
-ENV ACADOS_SOURCE_DIR="/opt/acados"
-ENV ACADOS_INSTALL_DIR="/opt/acados"
-ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/acados/lib
-ENV OMP_NUM_THREADS=4
-
-RUN pip3 install --upgrade --break-system-packages pip setuptools wheel \
-    && pip3 install --break-system-packages /opt/acados/interfaces/acados_template
-
-RUN mkdir -p /opt/acados/bin && \
-    curl -L https://github.com/acados/tera_renderer/releases/download/v0.2.0/t_renderer-v0.2.0-linux-amd64 \
-    -o /opt/acados/bin/t_renderer && \
-    chmod +x /opt/acados/bin/t_renderer
-   
-# Add acados library paths to bashrc
-RUN echo "export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH:/opt/acados/lib" >> /root/.bashrc
-
-# === GuarDrone ROS2 packages (sparse clone dal monorepo) ===
+# === GCS ROS2 packages (sparse clone dal monorepo) ===
 RUN git clone --depth 1 --filter=blob:none --sparse \
         -b master \
         https://github.com/alecocchia/guarDrone.git /tmp/guardrone \
     && cd /tmp/guardrone \
     && git sparse-checkout set \
         my_ros2_ws/src/utils_pkg \
-        my_ros2_ws/src/guadrone_pkg \
+        my_ros2_ws/src/gcs_pkg \
+        my_ros2_ws/src/haptic_device \
     && mkdir -p /root/my_ros2_ws/src \
     && cp -r /tmp/guardrone/my_ros2_ws/src/utils_pkg /root/my_ros2_ws/src/ \
-    && cp -r /tmp/guardrone/my_ros2_ws/src/guadrone_pkg /root/my_ros2_ws/src/ \
+    && cp -r /tmp/guardrone/my_ros2_ws/src/gcs_pkg /root/my_ros2_ws/src/ \
+    && cp -r /tmp/guardrone/my_ros2_ws/src/haptic_device /root/my_ros2_ws/src/ \
     && rm -rf /tmp/guardrone
 
 # Entrypoint automatico (con link a tmux.conf)
