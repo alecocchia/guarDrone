@@ -14,7 +14,7 @@ from scipy.spatial.transform import Rotation
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from px4_msgs.msg import VehicleControlMode, VehicleCommand, VehicleLocalPosition
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 from geometry_msgs.msg import PoseStamped
 from utils_pkg.common import min_angle
 
@@ -94,10 +94,16 @@ class SupervisorNode(Node):
         self.mission_start_received = False
         self.task_goal_pose_received = False
         self.mpc_ready = False
+
+        # Flag conferma operatore (da tastiera)
+        self._operator_confirmed = False
+        self.msg_cnt = 0
         
         # Subscriber for manual mission start
         self.create_subscription(Bool, '/mission/start', self.mission_start_cb, qos_latched)
         self.create_subscription(Bool, '/drone_planner_ready', self.mpc_ready_cb, qos_latched)
+        # Subscriber per comandi da tastiera dell'operatore
+        self.create_subscription(String, '/keyboard_input', self._keyboard_input_cb, 10)
 
         # Initial and final poses for interaction drone
         self.contact_point = np.array([self.peg_start_x, -55.95, 9.5])  # ENU
@@ -125,6 +131,18 @@ class SupervisorNode(Node):
     def mode1_cb(self, msg): self.drone1_mode = msg
     def mode2_cb(self, msg): self.drone2_mode = msg
 
+    def _keyboard_input_cb(self, msg):
+        """Callback per comandi da tastiera dell'operatore."""
+        cmd = msg.data.strip().lower()
+        if cmd == 'ok':
+            self._operator_confirmed = True
+            self.get_logger().info('Conferma operatore ricevuta.')
+        elif cmd == 'stop':
+            self.get_logger().error('COMANDO STOP RICEVUTO! Atterraggio d\'emergenza!')
+            self.publish_command(self.cmd_pub_1, 1, VehicleCommand.VEHICLE_CMD_NAV_LAND)
+            self.publish_command(self.cmd_pub_2, 2, VehicleCommand.VEHICLE_CMD_NAV_LAND)
+            self.state = 'EMERGENCY'
+
     def publish_command(self, publisher, target_sys, command, param1=0.0, param2=0.0):
         msg = VehicleCommand()
         msg.command = command
@@ -148,10 +166,16 @@ class SupervisorNode(Node):
                          self.drone2_local_pos.xy_valid and 
                          self.drone2_local_pos.z_valid)
 
-            if d1_ekf_ok and d2_ekf_ok:
-                self.get_logger().info("EKF Convergenti per entrambi. Passo a WAIT_START")
+            if d1_ekf_ok and d2_ekf_ok and self._operator_confirmed:
+                self.get_logger().info("EKF Convergenti per entrambi + conferma operatore. Passo a WAIT_START")
                 self.state = 'WAIT_START'
                 self.mission_start_received = True
+                self._operator_confirmed = False
+                self.msg_cnt = 0
+            elif d1_ekf_ok and d2_ekf_ok and not self._operator_confirmed:
+                if self.msg_cnt == 0:
+                    self.get_logger().info('EKF convergenti. In attesa conferma operatore ("ok") per procedere...')
+                    self.msg_cnt += 1
             else:
                 # Logghiamo cosa manca ogni 2 secondi
                 if not hasattr(self, 'last_log_time'):
@@ -219,8 +243,8 @@ class SupervisorNode(Node):
             self.get_logger().info(f"d1_up: {self.drone1_local_pos.z}")
             self.get_logger().info(f"d2_up: {self.drone2_local_pos.z}")
 
-            if d1_up and d2_up:
-                self.get_logger().info("Droni in quota! Disabilito traj planner camera e invio segnale di START all'MPC.")
+            if d1_up and d2_up and self._operator_confirmed:
+                self.get_logger().info("Droni in quota + conferma operatore! Disabilito traj planner camera e invio segnale di START all'MPC.")
                 
                 # Spegne offboard_trajectory_planner del camera drone
                 msg_traj = Bool()
@@ -234,7 +258,12 @@ class SupervisorNode(Node):
                 
                 self.task_started = True
                 self.state = 'MISSION_PREPARATION'
-
+                self._operator_confirmed = False
+                self.msg_cnt = 0
+            elif d1_up and d2_up and not self._operator_confirmed:
+                if self.msg_cnt == 0 :
+                    self.get_logger().info('Droni in quota. In attesa conferma operatore ("ok") per MISSION_PREPARATION...')
+        
         elif self.state == 'MISSION_PREPARATION':
             
             yaw_target = self.mission_start_yaw # ENU
@@ -283,9 +312,16 @@ class SupervisorNode(Node):
             yaw_is_aligned = abs(min_angle(d2_yaw_enu - yaw_target)) < 0.1
 
             
-            if drone_interaction_in_position and yaw_is_aligned:
-                self.get_logger().info("Drone interaction in posizione ed allineato al muro. Passo a MISSION.")
+            if drone_interaction_in_position and yaw_is_aligned and self._operator_confirmed:
+                self.get_logger().info("Drone interaction in posizione + conferma operatore. Passo a MISSION.")
                 self.state = 'MISSION'
+                self._operator_confirmed = False
+                self.msg_cnt  = 0
+            elif drone_interaction_in_position and yaw_is_aligned and not self._operator_confirmed:
+                if self.msg_cnt == 0:
+                    self.get_logger().info('Drone in posizione e allineato. In attesa conferma operatore ("ok") per MISSION...')
+                    self.msg_cnt += 1
+                
             else:
                 self.get_logger().info(f"In attesa che il drone interaction raggiunga la posizione di missione ed allineamento. D2: ({d2_x}, {d2_y}, {d2_z}) -> ({peg_target_x}, {peg_target_y}, {peg_target_z})")
 

@@ -64,14 +64,14 @@ tmux new-window -t $SESSION_NAME -n 'drone_interaction'
 # =============================================================================
 # 3. LAYOUT PANE
 #
-# Finestra GCS (4 pane):
+# Finestra GCS (5 pane):
 #  ┌──────────────────────┬──────────────────────┐
 #  │  Pane 0: MicroAgent  │  Pane 1: GCS Launch  │
 #  ├──────────────────────┼──────────────────────┤
 #  │  Pane 2: Haptic      │                      │
-#  ├──────────────────────┴──────────────────────┤
-#  │  Pane 3: Spare / Kill terminal              │
-#  └─────────────────────────────────────────────┘
+#  ├──────────────────────┼──────────────────────┤
+#  │  Pane 3: Keyboard    │  Pane 4: Spare/Kill  │
+#  └──────────────────────┴──────────────────────┘
 #
 # Finestre Drone (3 pane):
 #  ┌──────────────────────┬──────────────────────┐
@@ -81,13 +81,14 @@ tmux new-window -t $SESSION_NAME -n 'drone_interaction'
 #  └─────────────────────────────────────────────┘
 # =============================================================================
 
-# --- Layout GCS: 2x2 + 1 full-width in basso ---
+# --- Layout GCS: 2x2 + 2 affiancati in basso ---
 tmux split-window -h -t $SESSION_NAME:gcs.0          # Pane 0 (sx) | Pane 1 (dx)
 tmux split-window -v -t $SESSION_NAME:gcs.0          # Pane 0 (sx-top) | Pane 2 (sx-bot)
 tmux select-layout -t $SESSION_NAME:gcs tiled        # Equilibra i 4 riquadri in griglia 2x2
 tmux select-pane -t $SESSION_NAME:gcs.0
 tmux split-window -v -f -t $SESSION_NAME:gcs         # Pane 3: full-width in basso
 tmux resize-pane -t $SESSION_NAME:gcs.3 -y 10
+tmux split-window -h -t $SESSION_NAME:gcs.3           # Pane 3 (sx) | Pane 4 (dx) in basso
 
 # --- Layout finestre drone: 2 affiancati + 1 full-width in basso ---
 for WIN in 'guardrone' 'drone_interaction'; do
@@ -123,9 +124,17 @@ tmux send-keys -t $SESSION_NAME:gcs.2 "cd /root/my_ros2_ws" C-m
 tmux send-keys -t $SESSION_NAME:gcs.2 "$SOURCE_CMD" C-m
 tmux send-keys -t $SESSION_NAME:gcs.2 "sleep 5 && ros2 launch fd_haptic_joy haptic_sim.launch.py" C-m
 
-# --- Pane 3: Spare / Kill ---
-tmux select-pane -T '3: Spare' -t $SESSION_NAME:gcs.3
-tmux send-keys -t $SESSION_NAME:gcs.3 "cd /root/my_ros2_ws && $SOURCE_CMD && $KILL_ALIAS && clear" C-m
+# --- Pane 3: Keyboard Client (conferma operatore + stop) ---
+# Il nodo keyboard_client.py pubblica i comandi su /keyboard_input.
+# L'operatore scrive 'ok' per confermare una transizione di fase,
+# oppure 'stop' per un atterraggio d'emergenza.
+tmux select-pane -T '3: Keyboard Client' -t $SESSION_NAME:gcs.3
+tmux send-keys -t $SESSION_NAME:gcs.3 "cd /root/my_ros2_ws && $SOURCE_CMD && clear" C-m
+tmux send-keys -t $SESSION_NAME:gcs.3 "sleep 16 && ros2 run gcs_pkg keyboard_client.py" C-m
+
+# --- Pane 4: Spare / Kill ---
+tmux select-pane -T '4: Spare' -t $SESSION_NAME:gcs.4
+tmux send-keys -t $SESSION_NAME:gcs.4 "cd /root/my_ros2_ws && $SOURCE_CMD && $KILL_ALIAS && clear" C-m
 
 # =============================================================================
 # 5. FINESTRA 1 — GUARDRONE (Drone 1 — MPC + Camera)

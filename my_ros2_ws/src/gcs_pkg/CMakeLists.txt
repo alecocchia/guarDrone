@@ -37,6 +37,7 @@ ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   ${PROJECT_NAME}/supervisor.py
   ${PROJECT_NAME}/logger.py
+  ${PROJECT_NAME}/keyboard_client.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
