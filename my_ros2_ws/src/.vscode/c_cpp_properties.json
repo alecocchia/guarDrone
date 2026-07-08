@@ -8,7 +8,7 @@
       "includePath": [
         "/opt/ros/humble/include/**",
         "/home/usainbot/Desktop/CocchiaAlessandro/guarDrone/my_ros2_ws/src/gcs_pkg/include/**",
-        "/home/usainbot/Desktop/CocchiaAlessandro/guarDrone/my_ros2_ws/src/guadrone_pkg/include/**",
+        "/home/usainbot/Desktop/CocchiaAlessandro/guarDrone/my_ros2_ws/src/guardrone_pkg/include/**",
         "/home/usainbot/Desktop/CocchiaAlessandro/guarDrone/my_ros2_ws/src/haptic_device/fd_sdk_vendor/include/**",
         "/home/usainbot/Desktop/CocchiaAlessandro/guarDrone/my_ros2_ws/src/haptic_device/forcedimension_ros2/fd_controllers/ee_pose_broadcaster/include/**",
         "/home/usainbot/Desktop/CocchiaAlessandro/guarDrone/my_ros2_ws/src/haptic_device/forcedimension_ros2/fd_controllers/fd_clutch_broadcaster/include/**",

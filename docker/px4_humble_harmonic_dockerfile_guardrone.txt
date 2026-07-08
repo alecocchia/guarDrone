@@ -192,10 +192,10 @@ RUN git clone --depth 1 --filter=blob:none --sparse \
     && cd /tmp/guardrone \
     && git sparse-checkout set \
         my_ros2_ws/src/utils_pkg \
-        my_ros2_ws/src/guadrone_pkg \
+        my_ros2_ws/src/guardrone_pkg \
     && mkdir -p /root/my_ros2_ws/src \
     && cp -r /tmp/guardrone/my_ros2_ws/src/utils_pkg /root/my_ros2_ws/src/ \
-    && cp -r /tmp/guardrone/my_ros2_ws/src/guadrone_pkg /root/my_ros2_ws/src/ \
+    && cp -r /tmp/guardrone/my_ros2_ws/src/guardrone_pkg /root/my_ros2_ws/src/ \
     && rm -rf /tmp/guardrone
 
 # Entrypoint automatico (con link a tmux.conf)
