@@ -79,10 +79,18 @@ class MpcPlannerNode(Node):
         self.declare_parameter('moment_const', 0.016)
         self.declare_parameter('rp_limit', 45.0)
 
+
         mass = self.get_parameter('mass').value
         ixx = self.get_parameter('ixx').value
         iyy = self.get_parameter('iyy').value
         izz = self.get_parameter('izz').value
+        arm_l_x = self.get_parameter('arm_l_x').value
+        arm_l_y = self.get_parameter('arm_l_y').value
+        moment_const = self.get_parameter('moment_const').value        
+        self.U_F = self.get_parameter('f_max').value
+        self.U_TAU_X = arm_l_y * self.U_F / 2.0
+        self.U_TAU_Y = arm_l_x * self.U_F / 2.0
+        self.U_TAU_Z = moment_const * self.U_F
         start_x = self.get_parameter('start_x').value
         start_y = self.get_parameter('start_y').value
         start_z = self.get_parameter('start_z').value
@@ -580,17 +588,6 @@ class MpcPlannerNode(Node):
         return np.array([r_cyl_ref, beta_ref, z_ref])
 
     def configure_mpc(self):
-
-        # g0 importato da common.py        
-        f_max = self.get_parameter('f_max').value
-        arm_l_x = self.get_parameter('arm_l_x').value
-        arm_l_y = self.get_parameter('arm_l_y').value
-        moment_const = self.get_parameter('moment_const').value
-        
-        self.U_F = self.get_parameter('f_max').value
-        self.U_TAU_X = arm_l_y * f_max / 2.0
-        self.U_TAU_Y = arm_l_x * f_max / 2.0
-        self.U_TAU_Z = moment_const * f_max
 
         # Pesi normalizzati
         # [r_cyl_err, beta_err, z_err, yaw_err]
