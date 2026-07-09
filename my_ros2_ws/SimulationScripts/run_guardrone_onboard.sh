@@ -31,7 +31,7 @@ tmux split-window -v -t $SESSION_NAME:guardrone.2
 tmux select-layout -t $SESSION_NAME:guardrone tiled
 
 # =============================================================================
-# 3. POPOLAMENTO PANE (Tutti via docker exec LOCALE)
+# 3. POPOLAMENTO PANE (Tutti via docker exec locali)
 # =============================================================================
 # Variabile helper per semplificare i comandi dentro docker
 DOCKER_ROS_SETUP="source /opt/ros/humble/setup.bash && source /root/my_ros2_ws/install/setup.bash"
