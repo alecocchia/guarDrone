@@ -31,6 +31,16 @@ endif()
 # Rende importabile il modulo in tutti gli altri pacchetti
 ament_python_install_package(${PROJECT_NAME})
 
+
+# Rende disponibili i nodi eseguibili a "ros2 run" e ai launch file
+install(PROGRAMS
+  ${PROJECT_NAME}/unused/human_goal_node.py
+  ${PROJECT_NAME}/unused/geometric_controller.py
+  ${PROJECT_NAME}/unused/PID_controller.py
+  ${PROJECT_NAME}/unused/offboard_control.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 # ==========================================
 # PARTE C++ (Futuro)
 # ==========================================

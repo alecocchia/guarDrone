@@ -98,26 +98,26 @@ def main():
                   "Omega X [rad/s]", "Omega Y [rad/s]", "Omega Z [rad/s]"], 
            "Drone Velocities vs MPC Reference", ncols=3, use_tex=args.tex, block=block, fignum=3, task_start=task_start)
 
-    # --- FIGURE 4: Coordinate Sferiche (r, beta, gamma) vs Riferimento ---
+    # --- FIGURE 4: Coordinate Cilindriche (r_cyl, beta, z) vs Riferimento ---
     # Allineamento dell'azimut per evitare che ref e sim si sdoppino di 2*pi nel plot
-    beta_sim_unwrapped = np.unwrap(data['beta_sph'])
-    beta_diff_wrapped = (data['online_sph_ref'][:, 1] - data['beta_sph'] + np.pi) % (2 * np.pi) - np.pi
+    beta_sim_unwrapped = np.unwrap(data['beta_cyl'])
+    beta_diff_wrapped = (data['online_cyl_ref'][:, 1] - data['beta_cyl'] + np.pi) % (2 * np.pi) - np.pi
     beta_ref_aligned = beta_sim_unwrapped + beta_diff_wrapped
 
     fig4_data = [
-        {'sim': data['r_sph'],    'ref': data['online_sph_ref'][:, 0]},
+        {'sim': data['r_cyl'],    'ref': data['online_cyl_ref'][:, 0]},
         {'sim': beta_sim_unwrapped, 'ref': beta_ref_aligned},
-        {'sim': np.unwrap(data['gamma_sph']),'ref': np.unwrap(data['online_sph_ref'][:, 2])},
+        {'sim': data['z_cyl'],'ref': data['online_cyl_ref'][:, 2]},
     ]
     myPlot(t, fig4_data,
-           ["Distance r [m]", "Azimuth beta [rad]", "Elevation gamma [rad]"],
-           "Spherical PoV Tracking (World Frame)",
+           ["Distance r_cyl [m]", "Azimuth beta [rad]", "Elevation z [m]"],
+           "Cylindrical PoV Tracking (World Frame)",
            ncols=3, use_tex=args.tex, block=block, fignum=4, task_start=task_start)
 
     # --- FIGURE 5: Yaw Tracking (puntamento verso oggetto) ---
     yaw_actual  = data['rpy'][:, 2]
-    yaw_desired = np.arctan2(-data['r_sph'] * np.sin(data['beta_sph']),
-                             -data['r_sph'] * np.cos(data['beta_sph']))
+    yaw_desired = np.arctan2(-data['r_cyl'] * np.sin(data['beta_cyl']),
+                             -data['r_cyl'] * np.cos(data['beta_cyl']))
     # Nota: yaw_desired calcolato dal vettore drone->obj (= -p_rel direction)
     yaw_desired = np.arctan2(
         -(data['pos'][:, 1] - data['peg_pos'][:, 1]),
@@ -125,36 +125,36 @@ def main():
     )
     fig5_data = [
         {'sim': yaw_actual,          'ref': yaw_desired},
-        {'sim': data['yaw_err_sph'], 'ref': 0.0},
+        {'sim': data['yaw_err_cyl'], 'ref': 0.0},
     ]
     myPlot(t, fig5_data,
            ["Yaw Actual vs Desired [rad]", "Yaw Error [rad]"],
            "Yaw Tracking: Drone Pointing Toward Target",
            ncols=2, use_tex=args.tex, block=block, fignum=5, task_start=task_start)
 
-    # --- FIGURE 6: Errori di Tracking Primari (sferici + posizione + orientamento) ---
+    # --- FIGURE 6: Errori di Tracking Primari (cilindrici + posizione + orientamento) ---
     err_pos = np.linalg.norm(data['pos'][:, :2] - data['pref_pos'][:, :2], axis=1)
-    err_r   = np.abs(data['r_sph']    - data['online_sph_ref'][:, 0])
+    err_r   = np.abs(data['r_cyl']    - data['online_cyl_ref'][:, 0])
     err_beta  = np.abs(np.arctan2(
-        np.sin(data['beta_sph']  - data['online_sph_ref'][:, 1]),
-        np.cos(data['beta_sph']  - data['online_sph_ref'][:, 1])))
-    err_gamma = np.abs(data['gamma_sph'] - data['online_sph_ref'][:, 2])
-    err_yaw = np.abs(data['yaw_err_sph'])
+        np.sin(data['beta_cyl']  - data['online_cyl_ref'][:, 1]),
+        np.cos(data['beta_cyl']  - data['online_cyl_ref'][:, 1])))
+    err_z = np.abs(data['z_cyl'] - data['online_cyl_ref'][:, 2])
+    err_yaw = np.abs(data['yaw_err_cyl'])
     err_rp = np.linalg.norm(data['q'][:, 1:3], axis=1)  # qx, qy
 
     fig6_data = [
         {'sim': err_pos,   'ref': 0},
         {'sim': err_r,     'ref': 0},
         {'sim': err_beta,  'ref': 0},
-        {'sim': err_gamma, 'ref': 0},
+        {'sim': err_z, 'ref': 0},
         {'sim': err_yaw,   'ref': 0},
         {'sim': err_rp,    'ref': 0},
     ]
     myPlot(t, fig6_data,
-           ["Norm Pos Error XY [m]", "Distance Error |r_err| [m]",
-            "Azimuth Error |beta_err| [rad]", "Elevation Error |gamma_err| [rad]",
+           ["Norm Pos Error XY [m]", "Distance Error |r_cyl_err| [m]",
+            "Azimuth Error |beta_err| [rad]", "Elevation Error |z_err| [m]",
             "Yaw Error |yaw_err| [rad]", "Norm Roll/Pitch Error"],
-           "Primary Tracking Errors (Spherical)",
+           "Primary Tracking Errors (Cylindrical)",
            ncols=3, use_tex=args.tex, block=block, fignum=6, task_start=task_start)
 
     # --- FIGURE 7: Dynamic States Errors & Derivatives ---

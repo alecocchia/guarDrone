@@ -155,14 +155,14 @@ class MpcPlannerNode(Node):
         self.declare_parameter('haptic_transition_duration', 3.0)
         self.haptic_transition_duration = self.get_parameter('haptic_transition_duration').value
 
-        # Target PoV in coordinate sferiche: [r_ref, beta_ref, gamma_ref]
-        # r     = distanza 3D dall'oggetto [m]
-        # beta  = azimut del vettore drone->obj nel piano XY [rad]  (pan attorno all'oggetto)
-        # gamma = elevazione dal piano XY [rad]  (0=piano, +pi/2=zenit)
-        self.pov_target = np.array([2.0, np.pi, 0.0])  # default: 3m dietro, stessa quota
+        # Target PoV in coordinate cilindriche: [r_cyl_ref, beta_ref, z_ref]
+        # r_cyl = distanza 2D dall'oggetto nel piano XY [m]
+        # beta  = azimut del vettore drone->obj nel piano XY [rad] (pan attorno all'oggetto)
+        # z     = quota relativa rispetto all'oggetto [m]
+        self.pov_target = np.array([2.0, np.pi, 0.0])  # default: 2m dietro, stessa quota
         # Target autonomo pianificato (aggiornato SOLO da /pov_target, mai dall'haptic/joy)
         # Usato come destinazione dell'interpolazione quando return2autonomous=True
-        self.autonomous_sph_ref = self.pov_target.copy()
+        self.autonomous_cyl_ref = self.pov_target.copy()
 
         self.declare_parameter('return2autonomous', False)
         self.return2autonomous = self.get_parameter('return2autonomous').value
@@ -231,7 +231,7 @@ class MpcPlannerNode(Node):
         self.single_twist_pub = self.create_publisher(TwistStamped, '/optimal_drone_twist', 1)
         self.vel_ref_pub      = self.create_publisher(TwistStamped, '/velocity_reference',  1)
         self.tf_broadcaster   = tf2_ros.TransformBroadcaster(self)
-        self.ref_pub = self.create_publisher(Float64MultiArray, '/online_spherical_ref', 1)
+        self.ref_pub = self.create_publisher(Float64MultiArray, '/online_cylindrical_ref', 1)
         self.visual_ref_pub = self.create_publisher(Float64MultiArray, '/online_visual_ref', 1)
         self.actual_pov_pub = self.create_publisher(Float64MultiArray, '/actual_pov', 1)
 
@@ -484,10 +484,10 @@ class MpcPlannerNode(Node):
     def pov_target_callback(self, msg: Float64MultiArray):
         if len(msg.data) >= 4:
             with self.state_lock:
-                # Formato: [r_ref, beta_ref, gamma_ref]
+                # Formato: [r_cyl_ref, beta_ref, z_ref]
                 self.pov_target = np.array([msg.data[0], msg.data[1], msg.data[2]], dtype=float)
                 # Aggiorna anche il target autonomo puro (non modificabile da haptic/joy)
-                self.autonomous_sph_ref = self.pov_target.copy()
+                self.autonomous_cyl_ref = self.pov_target.copy()
 
     def haptic_ref_callback(self, msg: Float64MultiArray):
         # Formato atteso: [r, beta, gamma]
@@ -513,16 +513,16 @@ class MpcPlannerNode(Node):
     # ==================== Configurazione e Solve ====================
     def get_current_ref(self, xk):
         """
-        Calcola il riferimento sferico [r_ref, beta_ref, gamma_ref] con interpolazione
+        Calcola il riferimento cilindrico [r_cyl_ref, beta_ref, z_ref] con interpolazione
         tra controllo Manuale (Haptic/Joypad) e Traiettoria Autonoma.
 
-        Coordinate sferiche centrate sull'oggetto, vettore drone->oggetto:
-          r     = distanza 3D [m]
+        Coordinate cilindriche centrate sull'oggetto, vettore drone->oggetto:
+          r_cyl = distanza 2D nel piano XY [m]
           beta  = azimut nel piano XY [rad]  (orbita orizzontale)
-          gamma = elevazione dal piano XY [rad]  (0=piano, +pi/2=zenit)
+          z     = quota relativa [m]
 
         Se return2autonomous=True:
-          Al rilascio del comando manuale, il drone interpola verso autonomous_sph_ref
+          Al rilascio del comando manuale, il drone interpola verso autonomous_cyl_ref
           (la traiettoria pianificata da /pov_target, non modificata dall'haptic).
         Se return2autonomous=False (default):
           Al rilascio del comando manuale, il drone resta nella posizione lasciata
@@ -561,23 +561,23 @@ class MpcPlannerNode(Node):
         # return2autonomous=True  → interpola verso la traiettoria pianificata
         # return2autonomous=False → interpola verso l'ultima posizione manuale (= fermo)
         if self.return2autonomous:
-            auto_sph = self.autonomous_sph_ref.copy()
+            auto_cyl = self.autonomous_cyl_ref.copy()
         else:
-            auto_sph = self.pov_target.copy()  # aggiornato dall'haptic/joy → resta fermo
+            auto_cyl = self.pov_target.copy()  # aggiornato dall'haptic/joy → resta fermo
 
         if manual_pov is None:
-            manual_pov = auto_sph.copy()
+            manual_pov = auto_cyl.copy()
             alpha = 1.0
 
-        # --- Interpolazione lineare su r e gamma ---
-        r_ref     = (1 - alpha) * manual_pov[0] + alpha * auto_sph[0]
-        gamma_ref = (1 - alpha) * manual_pov[2] + alpha * auto_sph[2]
+        # --- Interpolazione lineare su r_cyl e z ---
+        r_cyl_ref = (1 - alpha) * manual_pov[0] + alpha * auto_cyl[0]
+        z_ref     = (1 - alpha) * manual_pov[2] + alpha * auto_cyl[2]
 
         # --- Interpolazione circolare su beta ---
-        diff_beta = wrap_pi(manual_pov[1] - auto_sph[1])
-        beta_ref  = wrap_pi(auto_sph[1] + (1 - alpha) * diff_beta)
+        diff_beta = wrap_pi(manual_pov[1] - auto_cyl[1])
+        beta_ref  = wrap_pi(auto_cyl[1] + (1 - alpha) * diff_beta)
 
-        return np.array([r_ref, beta_ref, gamma_ref])
+        return np.array([r_cyl_ref, beta_ref, z_ref])
 
     def configure_mpc(self):
 
@@ -593,11 +593,11 @@ class MpcPlannerNode(Node):
         self.U_TAU_Z = moment_const * f_max
 
         # Pesi normalizzati
-        # [r_err, beta_err, gamma_err, yaw_err]
-        R_SPH  = 2.0      # range distanza [m]
-        B_SPH  = np.pi/2  # range azimut [rad]
-        G_SPH  = np.pi/6  # range elevazione [rad]
-        Y_SPH  = np.pi/2  # range yaw [rad]
+        # [r_cyl_err, beta_err, z_err, yaw_err]
+        R_CYL  = 2.0      # range distanza [m]
+        B_CYL  = np.pi/2  # range azimut [rad]
+        Z_CYL  = 2.0      # range quota [m]
+        Y_CYL  = np.pi/2  # range yaw [rad]
 
         V       = np.array([1, 1, 1.5])
         ANG_DOT = np.array([0.5, 0.5, 2.0])
@@ -619,11 +619,11 @@ class MpcPlannerNode(Node):
         PesoForce  = PesoVis / 1000
         PesoTorque = PesoForce * 2
 
-        # Q sferica: [r_err, beta_err, gamma_err, yaw_err]
-        Q_sph = np.diag([PesoVis / R_SPH**2,
-                         PesoBeta  / B_SPH**2,
-                         PesoGamma / G_SPH**2,
-                         PesoYaw   / Y_SPH**2])
+        # Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
+        Q_cyl = np.diag([PesoVis / R_CYL**2,
+                         PesoBeta  / B_CYL**2,
+                         PesoGamma / Z_CYL**2,  # PesoGamma remains same variable but scales Z now
+                         PesoYaw   / Y_CYL**2])
 
         Q_vel     = np.diag([PesoVel]*3)    / np.array(V)**2
         Q_ang_dot = np.diag([PesoAngVel]*3) / np.array(ANG_DOT)**2
@@ -638,8 +638,8 @@ class MpcPlannerNode(Node):
                            PesoTorque / self.U_TAU_Z**2)
 
         R   = ca.diagcat(R_f, R_tau)
-        Q   = ca.diagcat(Q_sph, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
-        Q_e = ca.diagcat(2 * Q_sph, 2*Q_vel, 2*Q_ang_dot, 2*Q_acc, 2*Q_acc_ang)
+        Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
+        Q_e = ca.diagcat(2 * Q_cyl, 2*Q_vel, 2*Q_ang_dot, 2*Q_acc, 2*Q_acc_ang)
 
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
         u_max = np.array([self.U_F,  self.U_TAU_X,  self.U_TAU_Y,  self.U_TAU_Z])
@@ -651,7 +651,7 @@ class MpcPlannerNode(Node):
             model=self.model, x0=self.x0,
             p_obj=np.array([self.current_obj_pos]), Tf=self.Tp, ts=self.ts,
             W=W, W_e=W_e, u_min=u_min, u_max=u_max,
-            sph_ref=self.pov_target,
+            cyl_ref=self.pov_target,
             cam_offset_body=self.camera_offset
         )
 
@@ -667,11 +667,11 @@ class MpcPlannerNode(Node):
 
         self.publish_predicted_path_from_buffers()
 
-    def solve_MPC(self, xk, sph_ref, vel_ref, F_ext=None, Tau_ext=None):
-        """sph_ref = [r_ref, beta_ref, gamma_ref]"""
+    def solve_MPC(self, xk, cyl_ref, vel_ref, F_ext=None, Tau_ext=None):
+        """cyl_ref = [r_cyl_ref, beta_ref, z_ref]"""
         set_initial_state(self.ocp_solver, xk)
 
-        # Tutti gli errori sferici hanno riferimento 0 (sono già espressi come errore nel modello)
+        # Tutti gli errori cilindrici hanno riferimento 0 (sono già espressi come errore nel modello)
         yref_val = build_yref_online(self.y_idx, vel_ref, u_ref=self.u_hover)
         yref_e   = yref_val[:self.ny_e]
 
@@ -680,9 +680,9 @@ class MpcPlannerNode(Node):
         if Tau_ext is None:
             Tau_ext = np.zeros(3)
 
-        # Parametri (12): [p_obj(3), r_ref, beta_ref, gamma_ref, F_ext(3), Tau_ext(3)]
+        # Parametri (12): [p_obj(3), r_cyl_ref, beta_ref, z_ref, F_ext(3), Tau_ext(3)]
         params = np.zeros(12)
-        params[3:6] = sph_ref
+        params[3:6] = cyl_ref
         params[6:9] = F_ext
         params[9:12] = Tau_ext
 
@@ -783,14 +783,14 @@ class MpcPlannerNode(Node):
                 self.current_quat[0], self.current_quat[1], self.current_quat[2], self.current_quat[3],
                 self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2]
             ])
-            # Calcolo dei riferimenti sferici [r_ref, beta_ref, gamma_ref]
-            sph_ref = self.get_current_ref(xk)
+            # Calcolo dei riferimenti cilindrici [r_cyl_ref, beta_ref, z_ref]
+            cyl_ref = self.get_current_ref(xk)
             vel_ref = np.zeros(3)
 
             # Publish reference for monitoring
-            self.ref_pub.publish(Float64MultiArray(data=[float(x) for x in sph_ref]))
+            self.ref_pub.publish(Float64MultiArray(data=[float(x) for x in cyl_ref]))
 
-            # Calcola e pubblica il PoV attuale (sferico) basato sulla telecamera
+            # Calcola e pubblica il PoV attuale (cilindrico) basato sulla telecamera
             p_drone = xk[0:3]
             q_drone = xk[6:10]
             # Scipy Rotation.from_quat usa [x, y, z, w], CasADi usa [w, x, y, z]
@@ -799,19 +799,18 @@ class MpcPlannerNode(Node):
             
             p_obj_now = self.current_obj_pos
             p_rel = p_cam - p_obj_now
-            r_act    = float(np.linalg.norm(p_rel))
-            beta_act = float(np.arctan2(p_rel[1], p_rel[0]))
-            r_xy     = np.linalg.norm(p_rel[0:2])
-            gamma_act= float(np.arctan2(p_rel[2], r_xy + 1e-6))
+            r_cyl_act = float(np.linalg.norm(p_rel[0:2]))
+            beta_act  = float(np.arctan2(p_rel[1], p_rel[0]))
+            z_act     = float(p_rel[2])
             
             yaw_actual = self.current_rpy[2]
             yaw_desired = np.arctan2(-p_rel[1], -p_rel[0])
             yaw_err_act = float(np.arctan2(np.sin(yaw_actual - yaw_desired), np.cos(yaw_actual - yaw_desired)))
             
             actual_pov_msg = Float64MultiArray()
-            actual_pov_msg.data = [r_act, beta_act, gamma_act, yaw_err_act]
+            actual_pov_msg.data = [r_cyl_act, beta_act, z_act, yaw_err_act]
             self.actual_pov_pub.publish(actual_pov_msg)
-            self.visual_ref_pub.publish(Float64MultiArray(data=[float(x) for x in sph_ref]))
+            self.visual_ref_pub.publish(Float64MultiArray(data=[float(x) for x in cyl_ref]))
 
             # --- AGGIORNAMENTO MBE ---
             if self.last_u0_applied is not None:
@@ -835,7 +834,7 @@ class MpcPlannerNode(Node):
         
         try:
             t_start = time.perf_counter()
-            u0_new, x_seq_new, yref0, u_plan_new, x_plan_new = self.solve_MPC(xk, sph_ref, vel_ref, F_ext, Tau_ext)
+            u0_new, x_seq_new, yref0, u_plan_new, x_plan_new = self.solve_MPC(xk, cyl_ref, vel_ref, F_ext, Tau_ext)
             t_end = time.perf_counter()
             
             # Calcolo tempo di risoluzione dell'iterazione corrente dell'MPC 

@@ -43,11 +43,10 @@ public:
     this->declare_parameter("deadband", 0.005);
     this->declare_parameter("joy_scale", 15.0);
 
-    // Parametri integrazione PoV sferico
+    // Parametri integrazione PoV cilindrico
     this->declare_parameter("v_r_max", 1.2);    // velocità radiale max [m/s]
     this->declare_parameter("v_beta_max", 0.5); // velocità azimut max [rad/s]
-    this->declare_parameter("v_gamma_max",
-                            0.5); // velocità elevazione max [rad/s]
+    this->declare_parameter("v_z_max", 1.0); // velocità verticale max [m/s]
     this->declare_parameter("dt", 0.01);
 
     // Parametri Campo Potenziale (Force Feedback dai vincoli MPC)
@@ -104,13 +103,13 @@ public:
         "/peg_live_pose", 10);
 
     // Initial state
-    // Stato PoV in coordinate sferiche: [r, beta, gamma]
-    // r     = distanza 3D dall'oggetto [m]
+    // Stato PoV in coordinate cilindriche: [r_cyl, beta, z]
+    // r_cyl = distanza 2D dall'oggetto nel piano XY [m]
     // beta  = azimut nel piano XY [rad]  (orbita orizzontale)
-    // gamma = elevazione dal piano XY [rad]  (0=piano, +pi/2=zenit)
-    current_pov_ref_ = {3.0, M_PI, 0.0}; // default: 3m dietro, stessa quota
-    current_pov_vel_ = {0.0, 0.0, 0.0};  // [dr, d_beta, d_gamma]
-    actual_pov_ = {3.0, M_PI, 0.0, 0.0}; // [r, beta, gamma, yaw_err] dal drone
+    // z     = quota relativa [m]  (0=stessa quota)
+    current_pov_ref_ = {2.0, M_PI, 0.0}; // default: 2m dietro, stessa quota
+    current_pov_vel_ = {0.0, 0.0, 0.0};  // [dr_cyl, d_beta, d_z]
+    actual_pov_ = {2.0, M_PI, 0.0, 0.0}; // [r_cyl, beta, z, yaw_err] dal drone
     falcon_pos_ = {0.0, 0.0, 0.0};
     prev_falcon_pos_ = {0.0, 0.0, 0.0};
     falcon_vel_ = {0.0, 0.0, 0.0};
@@ -185,11 +184,11 @@ private:
   }
 
   void actual_pov_cb(const std_msgs::msg::Float64MultiArray::SharedPtr msg) {
-    // Formato atteso: [r, beta, gamma, yaw_err]
+    // Formato atteso: [r_cyl, beta, z, yaw_err]
     if (msg->data.size() >= 3) {
-      actual_pov_[0] = msg->data[0]; // r
+      actual_pov_[0] = msg->data[0]; // r_cyl
       actual_pov_[1] = msg->data[1]; // beta
-      actual_pov_[2] = msg->data[2]; // gamma
+      actual_pov_[2] = msg->data[2]; // z
     }
     if (msg->data.size() >= 4) {
       actual_pov_[3] = msg->data[3]; // yaw_err
@@ -198,9 +197,9 @@ private:
     // Se il pulsante non è premuto, il riferimento segue la posizione reale del
     // drone
     if (!button_pressed_) {
-      current_pov_ref_[0] = actual_pov_[0]; // r
+      current_pov_ref_[0] = actual_pov_[0]; // r_cyl
       current_pov_ref_[1] = actual_pov_[1]; // beta
-      current_pov_ref_[2] = actual_pov_[2]; // gamma
+      current_pov_ref_[2] = actual_pov_[2]; // z
       current_pov_vel_ = {0.0, 0.0, 0.0};
     }
   }
@@ -246,14 +245,15 @@ private:
     double max_f = this->get_parameter("max_force").as_double();
     double deadband = this->get_parameter("deadband").as_double();
     double dt = this->get_parameter("dt").as_double();
+    double alpha_filter = 0.0;
 
     // Calcola velocità istantanea filtrata dell' haptic per lo smorzamento
     // viscoso
     if (first_pose_received_) {
       for (int i = 0; i < 3; ++i) {
         double raw_vel = (falcon_pos_[i] - prev_falcon_pos_[i]) / dt;
-        falcon_vel_[i] = 0.8 * falcon_vel_[i] +
-                         0.2 * raw_vel; // Filtro passa-basso di 1° ordine
+        falcon_vel_[i] = alpha_filter * falcon_vel_[i] +
+                         (1.0 - alpha_filter) * raw_vel; // Filtro passa-basso di 1° ordine
         // falcon_vel_[i] = raw_vel;
         prev_falcon_pos_[i] = falcon_pos_[i];
       }
@@ -276,22 +276,24 @@ private:
     double limit_gamma_max = (fov_v / 2.0) * (M_PI / 180.0);
     double limit_yaw_max = (fov_h / 2.0) * (M_PI / 180.0);
 
-    // 1. Asse X: Forza repulsiva basata su distanza radiale r
-    double r_actual = actual_pov_[0]; // r [m]
+    // 1. Asse X: Forza repulsiva basata su distanza radiale r_cyl
+    double r_actual = actual_pov_[0]; // r_cyl [m]
     double dist_r_min =
         r_actual - r_min; // distanza attuale dal bordo del vincolo, >0 se
                           // sicuro, <0 se violato
     double f_rep_x = +repulsive_force(dist_r_min, r_min, act_ratio, k_rep,
                                       alpha / 2, max_rep);
 
-    // 2. Asse Z: Forza repulsiva basata su elevazione gamma (limite FoV
-    // verticale)
-    double gamma_act = actual_pov_[2];
-    double dist_gamma_top = limit_gamma_max - gamma_act;
-    double dist_gamma_bot = gamma_act - (-limit_gamma_max);
-    double f_rep_z_top = -repulsive_force(dist_gamma_top, limit_gamma_max,
+    // 2. Asse Z: Forza repulsiva basata sui limiti Z derivati dal FoV verticale
+    double z_act = actual_pov_[2];
+    double z_max = r_actual * std::tan(limit_gamma_max);
+    
+    double dist_z_top = z_max - z_act;
+    double dist_z_bot = z_act - (-z_max);
+
+    double f_rep_z_top = -repulsive_force(dist_z_top, z_max,
                                           act_ratio_cam, k_rep, alpha, max_rep);
-    double f_rep_z_bot = +repulsive_force(dist_gamma_bot, limit_gamma_max,
+    double f_rep_z_bot = +repulsive_force(dist_z_bot, z_max,
                                           act_ratio_cam, k_rep, alpha, max_rep);
     double f_rep_z = f_rep_z_top + f_rep_z_bot;
 
@@ -327,44 +329,42 @@ private:
     force_pub_->publish(force_msg);
 
     // =====================================================
-    // INTEGRAZIONE PoV sferico se il pulsante è premuto
-    // Mapping assi Falcon -> Coordinate Sferiche:
-    //   Falcon X (Avanti/Dietro)   -> dr     (zoom: avvicina/allontana)
+    // INTEGRAZIONE PoV cilindrico se il pulsante è premuto
+    // Mapping assi Falcon -> Coordinate Cilindriche:
+    //   Falcon X (Avanti/Dietro)   -> dr_cyl   (zoom: avvicina/allontana)
     //   Falcon Y (Destra/Sinistra) -> d_beta (orbita orizzontale)
-    //   Falcon Z (Su/Giù)          -> d_gamma(orbita verticale / elevazione)
+    //   Falcon Z (Su/Giù)          -> d_z      (quota relativa)
     // =====================================================
     if (button_pressed_) {
       double joy_scale = this->get_parameter("joy_scale").as_double();
       double v_r_max = this->get_parameter("v_r_max").as_double();
       double v_beta_max = this->get_parameter("v_beta_max").as_double();
-      double v_gamma_max = this->get_parameter("v_gamma_max").as_double();
+      double v_z_max = this->get_parameter("v_z_max").as_double();
 
       double dr_cmd =
           apply_deadband(falcon_pos_[0], deadband) * joy_scale * v_r_max;
       double dbeta_cmd =
           apply_deadband(falcon_pos_[1], deadband) * joy_scale * v_beta_max;
-      double dgamma_cmd =
-          apply_deadband(falcon_pos_[2], deadband) * joy_scale * v_gamma_max;
+      double dz_cmd =
+          apply_deadband(falcon_pos_[2], deadband) * joy_scale * v_z_max;
 
       current_pov_vel_[0] = dr_cmd;
       current_pov_vel_[1] = dbeta_cmd;
-      current_pov_vel_[2] = dgamma_cmd;
+      current_pov_vel_[2] = dz_cmd;
 
       // Integrazione
-      current_pov_ref_[0] += current_pov_vel_[0] * dt;          // r
-      current_pov_ref_[0] = std::max(0.5, current_pov_ref_[0]); // r >= 0.5 m
+      current_pov_ref_[0] += current_pov_vel_[0] * dt;          // r_cyl
+      current_pov_ref_[0] = std::max(0.5, current_pov_ref_[0]); // r_cyl >= 0.5 m
       current_pov_ref_[1] += current_pov_vel_[1] * dt;          // beta
       current_pov_ref_[1] =
           std::fmod(current_pov_ref_[1] + M_PI, 2.0 * M_PI); // wrap
       if (current_pov_ref_[1] < 0)
         current_pov_ref_[1] += 2.0 * M_PI;
       current_pov_ref_[1] -= M_PI;
-      current_pov_ref_[2] += current_pov_vel_[2] * dt; // gamma
-      current_pov_ref_[2] =
-          std::max(-M_PI / 2.0 + 0.05,
-                   std::min(M_PI / 2.0 - 0.05, current_pov_ref_[2])); // clamp
+      current_pov_ref_[2] += current_pov_vel_[2] * dt; // z
+      current_pov_ref_[2] = std::max(-10.0, std::min(10.0, current_pov_ref_[2])); // clamp z
 
-      // Pubblica: [r, beta, gamma]
+      // Pubblica: [r_cyl, beta, z]
       auto haptic_msg = std_msgs::msg::Float64MultiArray();
       haptic_msg.data.insert(haptic_msg.data.end(), current_pov_ref_.begin(),
                              current_pov_ref_.end());

@@ -84,7 +84,7 @@ class Logger(Node):
         # Liste per riferimenti e dati esterni
         self.pref_pos, self.pref_rpy, self.pref_q, self.vref, self.omegaref = [], [], [], [], []
         self.wrench_cmd, self.wrench_ref, self.wrench_target, self.t_ref = [], [], [], []
-        self.peg_pos, self.online_ref, self.online_sph_ref = [], [], []
+        self.peg_pos, self.online_ref, self.online_cyl_ref = [], [], []
         self.peg_ext_force = []
         self.estimated_wrench = []
         self.delta_p = []
@@ -95,8 +95,8 @@ class Logger(Node):
         self.peg_ref_pos = []     # riferimento nominale planner ammettenza (ENU)
 
         self.last_peg_pos = [0.0, 0.0, 0.0]
-        self.last_online_ref    = [0.0, 0.0, 0.0]   # [r_ref, beta_ref, gamma_ref]
-        self.last_online_sph_ref = [0.0, 0.0, 0.0]  # alias (stesso topic, tenuto per compatibilità)
+        self.last_online_ref    = [0.0, 0.0, 0.0]   # [r_cyl_ref, beta_ref, z_ref]
+        self.last_online_cyl_ref = [0.0, 0.0, 0.0]  # alias (stesso topic, tenuto per compatibilità)
         self.last_pref_pos, self.last_pref_rpy, self.last_pref_q = [0.0]*3, [0.0]*3, [1.0, 0.0, 0.0, 0.0]
         self.last_vref, self.last_omegaref = [0.0]*3, [0.0]*3
         
@@ -138,8 +138,8 @@ class Logger(Node):
         )
 
         self.create_subscription(PoseStamped, '/peg_pose', self.cb_peg_pose, 10)
-        self.create_subscription(Float64MultiArray, '/online_spherical_ref', self.cb_online_ref, 10)
-        self.create_subscription(Float64MultiArray, '/online_visual_ref',       self.cb_online_sph_ref, 10)
+        self.create_subscription(Float64MultiArray, '/online_cylindrical_ref', self.cb_online_ref, 10)
+        self.create_subscription(Float64MultiArray, '/online_visual_ref',       self.cb_online_cyl_ref, 10)
         self.create_subscription(PoseStamped,  '/optimal_drone_pose',  self.cb_ref_pose,   10)
         self.create_subscription(PoseStamped,  '/camera_ref_pose',     self.cb_ref_pose,   10)
         self.create_subscription(TwistStamped, '/velocity_reference', self.cb_ref_twist,  10)
@@ -245,7 +245,7 @@ class Logger(Node):
         self.wrench_target.append(self.last_w_target.copy())
         self.peg_pos.append(self.last_peg_pos)
         self.online_ref.append(self.last_online_ref)
-        self.online_sph_ref.append(self.last_online_ref)  # stesso dato, alias
+        self.online_cyl_ref.append(self.last_online_ref)  # stesso dato, alias
         self.haptic_force.append(self.last_haptic_force.copy())
         self.peg_ext_force.append(self.last_peg_ext_force.copy())
         self.estimated_wrench.append(self.last_estimated_wrench.copy())
@@ -268,9 +268,9 @@ class Logger(Node):
     def cb_online_ref(self, msg: Float64MultiArray):
         self.last_online_ref = list(msg.data)[:3]
 
-    def cb_online_sph_ref(self, msg: Float64MultiArray):
-        """Topic /visual_ref pubblica [r_ref, beta_ref, gamma_ref] — stessa cosa di online_ref."""
-        self.last_online_sph_ref = list(msg.data)[:3]
+    def cb_online_cyl_ref(self, msg: Float64MultiArray):
+        """Topic /visual_ref pubblica [r_cyl_ref, beta_ref, z_ref] — stessa cosa di online_ref."""
+        self.last_online_cyl_ref = list(msg.data)[:3]
 
     def cb_peg_odom(self, msg: VehicleOdometry):
         """Odometria del drone di interazione (px4_1) - converte NED→ENU con spawn offset."""
@@ -339,7 +339,7 @@ class Logger(Node):
         rpy = rot_flu2enu.as_euler('xyz')
         
         peg_pos = np.asarray(self.peg_pos)
-        online_sph_ref = np.asarray(self.online_sph_ref)
+        online_cyl_ref = np.asarray(self.online_cyl_ref)
         online_ref = np.asarray(self.online_ref)
         peg_ext_force = np.asarray(self.peg_ext_force)
         estimated_wrench = np.asarray(self.estimated_wrench)
@@ -357,26 +357,24 @@ class Logger(Node):
                 jerk[:, i] = np.gradient(acc[:, i], T_rel)
                 snap[:, i] = np.gradient(jerk[:, i], T_rel)
 
-        # 2. Coordinate sferiche nel mondo basate sulla TELECAMERA
+        # 2. Coordinate cilindriche nel mondo basate sulla TELECAMERA
         # Trasformiamo l'offset della telecamera (nel frame body FLU) nel frame ENU 
         # R_flu2enu ha shape (N, 3, 3) e self.cam_offset ha shape (3,)
         cam_offset_world = np.einsum('nij,j->ni', R_flu2enu, self.cam_offset)
         p_cam = pos + cam_offset_world
         p_rel_world = p_cam - peg_pos                           # camera - oggetto
-        r_sph   = np.linalg.norm(p_rel_world, axis=1)        # distanza 3D [m]
-        beta_sph  = np.arctan2(p_rel_world[:, 1],
+        r_cyl   = np.linalg.norm(p_rel_world[:, :2], axis=1)        # distanza 2D [m]
+        beta_cyl  = np.arctan2(p_rel_world[:, 1],
                                p_rel_world[:, 0])            # azimut [rad]
-        r_xy    = np.linalg.norm(p_rel_world[:, :2], axis=1)
-        gamma_sph = np.arctan2(p_rel_world[:, 2],
-                               np.clip(r_xy, 1e-6, None))    # elevazione [rad]
+        z_cyl = p_rel_world[:, 2]                            # elevazione Z [m]
 
         # Yaw attuale e yaw desiderato (puntare verso oggetto)
         yaw_actual   = rpy[:, 2]
         yaw_desired  = np.arctan2(-p_rel_world[:, 1], -p_rel_world[:, 0])
-        yaw_err_sph  = np.arctan2(np.sin(yaw_actual - yaw_desired),
+        yaw_err_cyl  = np.arctan2(np.sin(yaw_actual - yaw_desired),
                                   np.cos(yaw_actual - yaw_desired))
 
-        online_sph_ref = np.asarray(self.online_sph_ref)  # [r_ref, beta_ref, gamma_ref]
+        online_cyl_ref = np.asarray(self.online_cyl_ref)  # [r_cyl_ref, beta_ref, z_ref]
 
         out = dict(
             t=T_rel, t_ref=np.asarray(self.t_ref),
@@ -393,10 +391,10 @@ class Logger(Node):
             haptic_force=np.asarray(self.haptic_force),
             peg_pos=peg_pos,
             online_ref=np.asarray(self.online_ref),
-            online_sph_ref=online_sph_ref,
-            # Grandezze sferiche attuali
-            r_sph=r_sph, beta_sph=beta_sph, gamma_sph=gamma_sph,
-            yaw_err_sph=yaw_err_sph,
+            online_cyl_ref=online_cyl_ref,
+            # Grandezze cilindriche attuali
+            r_cyl=r_cyl, beta_cyl=beta_cyl, z_cyl=z_cyl,
+            yaw_err_cyl=yaw_err_cyl,
             peg_ext_force=peg_ext_force,
             estimated_wrench=estimated_wrench,
             delta_p=np.asarray(self.delta_p),

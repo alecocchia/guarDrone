@@ -131,10 +131,10 @@ class OffboardAdmittancePlanner(Node):
         # Forza tipica: 3 N (contatto leggero con la parete)
         # Cedevolezza desiderata: 3 N --> 8 cm di rimbalzo
         # Tempo di assestamento: 0.5 s (risposta reattiva ma stabile)
-        # Smorzamento critico: niente rimbalzi sull'ostacolo
-        F_typ_z    = 1.0     # [N]  forza di contatto
-        delta_typ_z= 0.05   # [m]  rimbalzo desiderato a F_typ_z (--> rigidezza K)
-        Ta_z       = 0.8     # [s]  tempo assestamento al 5%
+        # Smorzamento critico: niente rimbalzi sul muro
+        F_typ_z    = 0.2     # [N]  forza di contatto
+        delta_typ_z= 0.02   # [m]  rimbalzo desiderato a F_typ_z (--> rigidezza K)
+        Ta_z       = 0.3     # [s]  tempo assestamento al 5%
         zeta_z     = 1.1    # [-]  critico: smorzamento
 
 

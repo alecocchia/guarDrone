@@ -11,12 +11,12 @@ from scipy.spatial.transform import Rotation
 ##############  Estendere lo stato con tutti gli stati
 
 def build_yref_online(y_idx, vel_ref, u_ref=np.zeros(4)):
-    """Costruisce il vettore di riferimento online per la formulazione sferica.
-    Gli errori sferici (r_err, beta_err, gamma_err, yaw_err) hanno riferimento 0
+    """Costruisce il vettore di riferimento online per la formulazione cilindrica.
+    Gli errori cilindrici (r_cyl_err, beta_err, z_err, yaw_err) hanno riferimento 0
     perché sono già espressi come errore nel modello.
     """
     yref = np.zeros(y_idx["u"].stop)
-    yref[y_idx["sph"]]     = np.array([0.0, 0.0, 0.0, 0.0])  # [r_err, beta_err, gamma_err, yaw_err] → tutti zero
+    yref[y_idx["cyl"]]     = np.array([0.0, 0.0, 0.0, 0.0])  # [r_cyl_err, beta_err, z_err, yaw_err] → tutti zero
     yref[y_idx["vel"]]     = vel_ref
     yref[y_idx["ang_vel"]] = np.array([0.0, 0.0, 0.0])
     yref[y_idx["acc"]]     = np.array([0.0, 0.0, 0.0])
@@ -66,7 +66,7 @@ def set_initial_state(ocp_solver, xk):
 
 def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
                   u_min, u_max,
-                  sph_ref = np.zeros(3),
+                  cyl_ref = np.zeros(3),
                   cam_offset_body = np.zeros(3)):
     
     nx = model.x.rows()
@@ -120,19 +120,19 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     acc_ang_expr = xdot[10:13]
 
     '''
-                                            PROBLEMA IN COORDINATE SFERICHE
+                                            PROBLEMA IN COORDINATE CILINDRICHE
     Parametri del modello (12 totali):
       p[0:3] = p_obj   (posizione oggetto nel mondo)
-      p[3]   = r_ref   (distanza di riferimento)
+      p[3]   = r_cyl_ref (distanza di riferimento orizzontale)
       p[4]   = beta_ref  (azimut di riferimento, angolo nel piano XY)
-      p[5]   = gamma_ref (elevazione di riferimento, angolo dal piano XY)
+      p[5]   = z_ref     (quota di riferimento relativa)
       p[6:9] = F_ext
       p [9:12] = Tau_ext
     '''
     p_obj_expr = model.p[0:3]
-    r_ref_sym   = model.p[3]
-    beta_ref_sym = model.p[4]
-    gamma_ref_sym = model.p[5]
+    r_cyl_ref_sym = model.p[3]
+    beta_ref_sym  = model.p[4]
+    z_ref_sym     = model.p[5]
 
     F_ext = model.p[6:9]
     Tau_ext = model.p[9:12]
@@ -143,18 +143,16 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     # Vettore telecamera → oggetto nel frame mondo
     p_rel = p_cam_expr - p_obj_expr
 
-    # Distanza 3D: sempre > 0
-    r_sph = ca.norm_2(p_rel)
-    r_err = r_sph - r_ref_sym
+    # Distanza 2D (sul piano orizzontale): sempre > 0
+    r_cyl = ca.sqrt(p_rel[0]**2 + p_rel[1]**2)
+    r_cyl_err = r_cyl - r_cyl_ref_sym
 
     # Azimut: angolo del vettore drone -> obj nel piano XY (rad)
     beta_raw = ca.atan2(p_rel[1], p_rel[0])
     beta_err = min_angle(beta_raw - beta_ref_sym)
 
-    # Elevazione: angolo dal piano XY verso l'alto (0=piano, +pi/2=zenit, -pi/2=nadir)
-    r_xy = ca.sqrt(p_rel[0]**2 + p_rel[1]**2)
-    gamma_raw = ca.atan2(p_rel[2], r_xy)
-    gamma_err = min_angle(gamma_raw - gamma_ref_sym)
+    # Quota relativa: differenza lungo Z
+    z_err = p_rel[2] - z_ref_sym
 
     # Yaw error: il drone deve puntare verso l'oggetto
     # La direzione desiderata è -p_rel (da drone verso oggetto)
@@ -203,10 +201,10 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     ocp.solver_options.nlp_solver_type = 'SQP_RTI'
     #ocp.solver_options.globalization = 'MERIT_BACKTRACKING'
 
-    # --- Vincolo di sicurezza: distanza minima dall'oggetto (sempre r > 0, mai problemi di segno) ---
+    # --- Vincolo di sicurezza: distanza minima dall'oggetto ---
     r_min = 1.5  # [m] distanza minima di sicurezza
     h_expr = ca.vertcat(
-        r_sph - r_min,   # r >= r_min  (indice 0)
+        r_cyl - r_min,   # r_cyl >= r_min  (indice 0)
     )
     model.con_h_expr = h_expr
 
@@ -228,12 +226,12 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     '''
                                         COST FUNCTION               
     '''
-    # Cost function quantities — formulazione sferica mondiale
-    # [r_err, beta_err, gamma_err, yaw_err, vel, ang_vel, acc, acc_ang, jerk, snap, u]
+    # Cost function quantities — formulazione cilindrica mondiale
+    # [r_cyl_err, beta_err, z_err, yaw_err, vel, ang_vel, acc, acc_ang, jerk, snap, u]
     y_expr = ca.vertcat(
-        r_err,                          # Errore distanza 3D (>0 sempre)
+        r_cyl_err,                      # Errore distanza orizzontale
         beta_err,                       # Errore azimut (orbita orizzontale)
-        gamma_err,                      # Errore elevazione (orbita verticale)
+        z_err,                          # Errore quota verticale
         yaw_err,                        # Errore yaw (punta verso l'oggetto)
         v_expr,                         # Velocità
         ang_vel,                        # Velocità angolari
@@ -246,9 +244,9 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
 
     # Terminal cost expression
     y_expr_e = ca.vertcat(
-        r_err,
+        r_cyl_err,
         beta_err,
-        gamma_err,
+        z_err,
         yaw_err,
         v_expr,
         ang_vel,
@@ -268,12 +266,12 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     ocp.cost.set = True
     
     # Parametri del modello (12 totali):
-    # [p_obj(3), r_ref(1), beta_ref(1), gamma_ref(1), F_ext(3), Tau_ext(3)]
+    # [p_obj(3), r_cyl_ref(1), beta_ref(1), z_ref(1), F_ext(3), Tau_ext(3)]
     ocp.parameter_values = np.zeros(12)
     ocp.parameter_values[0:3] = p_obj[0,:]
-    ocp.parameter_values[3]   = sph_ref[0]   # r_ref
-    ocp.parameter_values[4]   = sph_ref[1]   # beta_ref
-    ocp.parameter_values[5]   = sph_ref[2]   # gamma_ref
+    ocp.parameter_values[3]   = cyl_ref[0]   # r_cyl_ref
+    ocp.parameter_values[4]   = cyl_ref[1]   # beta_ref
+    ocp.parameter_values[5]   = cyl_ref[2]   # z_ref
     ocp.parameter_values[6:9] = np.array([0,0,0]) # F_ext
     ocp.parameter_values[9:12] = np.array([0,0,0]) # Tau_ext
 
@@ -283,9 +281,9 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     
     u_ref = np.array(u_hovering.full().flatten())
 
-    # Indici del vettore y (formulazione sferica)
-    sph_ind     = slice(0, 4)                                    # [r_err, beta_err, gamma_err, yaw_err]
-    vel_ind     = slice(sph_ind.stop,     sph_ind.stop + 3)
+    # Indici del vettore y (formulazione cilindrica)
+    cyl_ind     = slice(0, 4)                                    # [r_cyl_err, beta_err, z_err, yaw_err]
+    vel_ind     = slice(cyl_ind.stop,     cyl_ind.stop + 3)
     ang_vel_ind = slice(vel_ind.stop,     vel_ind.stop + 3)
     acc_ind     = slice(ang_vel_ind.stop, ang_vel_ind.stop + 3)
     acc_ang_ind = slice(acc_ind.stop,     acc_ind.stop + 3)
@@ -294,7 +292,7 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     u_ind       = slice(snap_ind.stop,    snap_ind.stop + 4)
 
     y_idx = {
-        "sph":     sph_ind,      # [r_err, beta_err, gamma_err, yaw_err]
+        "cyl":     cyl_ind,      # [r_cyl_err, beta_err, z_err, yaw_err]
         "vel":     vel_ind,
         "ang_vel": ang_vel_ind,
         "acc":     acc_ind,
@@ -306,7 +304,7 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     ny   = y_expr.numel()
     ny_e = y_expr_e.numel()
 
-    # Tutti gli errori sferici sono già espressi come errore → riferimento = 0
+    # Tutti gli errori cilindrici sono già espressi come errore → riferimento = 0
     yref   = np.zeros(ny)
     yref[u_ind] = u_ref
 
