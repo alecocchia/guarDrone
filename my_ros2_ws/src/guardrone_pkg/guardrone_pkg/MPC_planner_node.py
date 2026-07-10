@@ -864,12 +864,18 @@ class MpcPlannerNode(Node):
                 if self.current_px4_thrust[2] == 0.0:
                     u_px4 = self.u_hover
                     
-                err_u = np.linalg.norm(u0 - u_px4)
-                if err_u < 2.0: # Soglia tolleranza Newton/Nm
-                    self.get_logger().info(f"Safe Switch OK! (err_u = {err_u:.2f}). L'MPC prende il controllo di PX4!")
+                err_thrust = abs(u0[0] - u_px4[0])
+                err_torque = np.linalg.norm(u0[1:4] - u_px4[1:4])
+                
+                # Thresholds
+                thrust_thresh = 2.0  # Newton (circa 10% della spinta di hovering)
+                torque_thresh = 0.2  # Nm (margine sufficiente per evitare scatti angolari)
+                
+                if err_thrust < thrust_thresh and err_torque < torque_thresh:
+                    self.get_logger().info(f"Safe Switch OK! (err_thrust={err_thrust:.2f}N, err_torque={err_torque:.3f}Nm). L'MPC prende il controllo di PX4!")
                     self.safety_switch_passed = True
                 else:
-                    self.get_logger().warn(f"Safe Switch FALLITO. (err_u = {err_u:.2f} > 2.0). Attendo convergenza MPC...", throttle_duration_sec=1.0)
+                    self.get_logger().warn(f"Safe Switch FALLITO. (err_thrust={err_thrust:.2f}N > {thrust_thresh} o err_torque={err_torque:.3f}Nm > {torque_thresh}). Attendo convergenza...", throttle_duration_sec=1.0)
                     return
 
             self.publish_optimal_wrench(u0)
