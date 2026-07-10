@@ -41,6 +41,7 @@ ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   ${PROJECT_NAME}/offboard_trajectory_planner.py
   ${PROJECT_NAME}/MPC_planner_node.py
+  ${PROJECT_NAME}/fake_publisher.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

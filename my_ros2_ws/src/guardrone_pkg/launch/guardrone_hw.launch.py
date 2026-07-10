@@ -111,6 +111,13 @@ def launch_setup(context, *args, **kwargs):
         ]
     )
 
+    fake_publisher_node = Node(
+        package='guardrone_pkg',
+        executable='fake_publisher.py',
+        name='fake_publisher_node',
+        output='screen'
+    )
+
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
@@ -121,6 +128,7 @@ def launch_setup(context, *args, **kwargs):
 
     return [
         guardrone_trajectory_planner,
+        fake_publisher_node,
         # MPC planner parte con un ritardo per dare tempo a PX4 di stabilizzarsi
         TimerAction(period=5.0, actions=[mpc_planner_node]),
         TimerAction(period=3.0, actions=[rviz_node]),
