@@ -13,7 +13,7 @@ Dipendenze progetto: drone_MPC_settings.py, MPC_main.py, common.py
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-from geometry_msgs.msg import PoseStamped, TwistStamped, TransformStamped, Wrench
+from geometry_msgs.msg import PoseStamped, TwistStamped, TransformStamped, Wrench, Vector3
 from nav_msgs.msg import Path
 from std_msgs.msg import Bool, Float64MultiArray, String
 
@@ -235,6 +235,7 @@ class MpcPlannerNode(Node):
 
         self.single_pose_pub  = self.create_publisher(PoseStamped,  '/optimal_drone_pose',  1)
         self.drone_pose_pub   = self.create_publisher(PoseStamped,  '/drone_pose',          1) # <--- Per RViz
+        self.drone_rpy_pub    = self.create_publisher(Vector3,      '/drone_rpy',           1)
         self.peg_pose_pub     = self.create_publisher(PoseStamped,  '/peg_pose',            1) # <--- Per RViz (Peg)
         self.single_twist_pub = self.create_publisher(TwistStamped, '/optimal_drone_twist', 1)
         self.vel_ref_pub      = self.create_publisher(TwistStamped, '/velocity_reference',  1)
@@ -488,6 +489,12 @@ class MpcPlannerNode(Node):
         drone_pose_msg.pose.position.z = t.transform.translation.z
         drone_pose_msg.pose.orientation = t.transform.rotation
         self.drone_pose_pub.publish(drone_pose_msg)
+        
+        drone_rpy_msg = Vector3()
+        drone_rpy_msg.x = self.current_rpy[0]
+        drone_rpy_msg.y = self.current_rpy[1]
+        drone_rpy_msg.z = self.current_rpy[2]
+        self.drone_rpy_pub.publish(drone_rpy_msg)
 
     def pov_target_callback(self, msg: Float64MultiArray):
         if len(msg.data) >= 4:

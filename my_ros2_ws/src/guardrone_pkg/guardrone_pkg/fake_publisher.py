@@ -46,7 +46,7 @@ class FakePublisherNode(Node):
         self.create_subscription(Bool, '/drone_planner_ready', self.mpc_ready_cb, qos_latched)
         
         # --- Parametri di volo ---
-        self.takeoff_alt_1 = 2.0  # Quota di decollo (ENU)
+        self.takeoff_alt_1 = 1.25  # Quota di decollo (ENU)
         
         # Variabili di stato interne
         self.drone1_local_pos = VehicleLocalPosition()
