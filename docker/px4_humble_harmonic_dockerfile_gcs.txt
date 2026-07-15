@@ -141,6 +141,7 @@ RUN apt-get update \
     && pip3 install --break-system-packages ros2-unbag
 
 # === GCS ROS2 packages (sparse clone dal monorepo) ===
+ARG CACHE_BUST=1
 RUN git clone --depth 1 --filter=blob:none --sparse \
         -b master \
         https://github.com/alecocchia/guarDrone.git /tmp/guardrone \
@@ -149,12 +150,19 @@ RUN git clone --depth 1 --filter=blob:none --sparse \
         my_ros2_ws/src/utils_pkg \
         my_ros2_ws/src/gcs_pkg \
         my_ros2_ws/src/haptic_device \
+        my_ros2_ws/SimulationScripts \
+        docker \
     && mkdir -p /root/my_ros2_ws/src \
     && cp -r /tmp/guardrone/my_ros2_ws/src/utils_pkg /root/my_ros2_ws/src/ \
     && cp -r /tmp/guardrone/my_ros2_ws/src/gcs_pkg /root/my_ros2_ws/src/ \
     && cp -r /tmp/guardrone/my_ros2_ws/src/haptic_device /root/my_ros2_ws/src/ \
+    && cp -r /tmp/guardrone/my_ros2_ws/SimulationScripts /root/my_ros2_ws/ \
+    && cp -r /tmp/guardrone/docker /root/ \
     && rm -rf /tmp/guardrone
-
+# Optitrack listener
+ARG GITHUB_TOKEN
+RUN git clone -b humble \
+        https://${GITHUB_TOKEN}@github.com/prisma-lab/optitrack_listener /root/my_ros2_ws/src/optitrack_listener
 # Entrypoint automatico (con link a tmux.conf)
 RUN echo '#!/bin/bash\n\
 set -e\n\

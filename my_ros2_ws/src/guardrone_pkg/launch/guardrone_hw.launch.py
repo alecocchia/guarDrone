@@ -111,12 +111,7 @@ def launch_setup(context, *args, **kwargs):
         ]
     )
 
-    fake_publisher_node = Node(
-        package='guardrone_pkg',
-        executable='fake_publisher.py',
-        name='fake_publisher_node',
-        output='screen'
-    )
+
 
     rviz_node = Node(
         package='rviz2',
@@ -128,7 +123,6 @@ def launch_setup(context, *args, **kwargs):
 
     return [
         guardrone_trajectory_planner,
-        fake_publisher_node,
         # MPC planner parte con un ritardo per dare tempo a PX4 di stabilizzarsi
         TimerAction(period=5.0, actions=[mpc_planner_node]),
         TimerAction(period=3.0, actions=[rviz_node]),
@@ -139,26 +133,26 @@ def generate_launch_description():
     return LaunchDescription([
         # === Parametri fisici del drone (da misurare sul drone reale) ===
         # TODO: aggiornare con i valori reali misurati
-        DeclareLaunchArgument('mass',    default_value='2.064',   description='Massa del drone [kg]'),
-        DeclareLaunchArgument('ixx',     default_value='0.0216',  description='Momento di inerzia Ixx [kg·m²]'),
-        DeclareLaunchArgument('iyy',     default_value='0.0216',  description='Momento di inerzia Iyy [kg·m²]'),
-        DeclareLaunchArgument('izz',     default_value='0.040',   description='Momento di inerzia Izz [kg·m²]'),
-        DeclareLaunchArgument('f_max',   default_value='34.0',    description='Spinta massima totale [N]'),
+        DeclareLaunchArgument('mass',    default_value='3.4',   description='Massa del drone [kg]'),
+        DeclareLaunchArgument('ixx',     default_value='0.0232',  description='Momento di inerzia Ixx [kg·m²]'),
+        DeclareLaunchArgument('iyy',     default_value='0.0224',  description='Momento di inerzia Iyy [kg·m²]'),
+        DeclareLaunchArgument('izz',     default_value='0.0405',   description='Momento di inerzia Izz [kg·m²]'),
+        DeclareLaunchArgument('f_max',   default_value='49.05',    description='Spinta massima totale [N]'),
         DeclareLaunchArgument('w_min',   default_value='150.0',   description='Velocità angolare minima motore [rad/s]'),
-        DeclareLaunchArgument('w_max',   default_value='1000.0',  description='Velocità angolare massima motore [rad/s]'),
-        DeclareLaunchArgument('arm_l_x', default_value='0.174',   description='Braccio motore asse X [m]'),
-        DeclareLaunchArgument('arm_l_y', default_value='0.174',   description='Braccio motore asse Y [m]'),
-        DeclareLaunchArgument('moment_const', default_value='0.016', description='Costante di momento motore'),
+        DeclareLaunchArgument('w_max',   default_value='1200.0',  description='Velocità angolare massima motore [rad/s]'),
+        DeclareLaunchArgument('arm_l_x', default_value='0.151',   description='Braccio motore asse X [m]'),
+        DeclareLaunchArgument('arm_l_y', default_value='0.160',   description='Braccio motore asse Y [m]'),
+        DeclareLaunchArgument('moment_const', default_value='0.0144', description='Costante di momento motore'),
 
         # === Parametri camera ===
-        DeclareLaunchArgument('cam_x',     default_value='0.0',  description='Offset camera X (body) [m]'),
+        DeclareLaunchArgument('cam_x',     default_value='0.105',  description='Offset camera X (body) [m]'),
         DeclareLaunchArgument('cam_y',     default_value='0.0',  description='Offset camera Y (body) [m]'),
-        DeclareLaunchArgument('cam_z',     default_value='0.0',  description='Offset camera Z (body) [m]'),
+        DeclareLaunchArgument('cam_z',     default_value='0.02',  description='Offset camera Z (body) [m]'),
         DeclareLaunchArgument('cam_roll',  default_value='0.0',  description='Rotazione camera roll [rad]'),
         DeclareLaunchArgument('cam_pitch', default_value='0.0',  description='Rotazione camera pitch [rad]'),
         DeclareLaunchArgument('cam_yaw',   default_value='0.0',  description='Rotazione camera yaw [rad]'),
-        DeclareLaunchArgument('fov_h',     default_value='80.0', description='FOV orizzontale camera [deg]'),
-        DeclareLaunchArgument('fov_v',     default_value='60.0', description='FOV verticale camera [deg]'),
+        DeclareLaunchArgument('fov_h',     default_value='87.0', description='FOV orizzontale camera [deg]'),
+        DeclareLaunchArgument('fov_v',     default_value='58.0', description='FOV verticale camera [deg]'),
 
         # === Controllo ===
         DeclareLaunchArgument('MPC_controller', default_value='1',
@@ -178,8 +172,8 @@ def generate_launch_description():
         DeclareLaunchArgument('peg_z', default_value='0.0'),
 
         # Parametri motore
-        DeclareLaunchArgument('cf', default_value='8.0e-4'),
-        DeclareLaunchArgument('ct', default_value='1.0e-5'),
+        DeclareLaunchArgument('cf', default_value='1.25e-5'),
+        DeclareLaunchArgument('ct', default_value='1.8e-7'),
         DeclareLaunchArgument('return2autonomous', default_value='False',
                               description='Se True, al rilascio del comando il drone torna alla traiettoria pianificata'),
 

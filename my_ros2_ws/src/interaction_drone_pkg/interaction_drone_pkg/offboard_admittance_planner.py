@@ -134,7 +134,7 @@ class OffboardAdmittancePlanner(Node):
         # Smorzamento critico: niente rimbalzi sul muro
         F_typ_z    = 0.2     # [N]  forza di contatto
         delta_typ_z= 0.02   # [m]  rimbalzo desiderato a F_typ_z (--> rigidezza K)
-        Ta_z       = 0.3     # [s]  tempo assestamento al 5%
+        Ta_z       = 0.5     # [s]  tempo assestamento al 5%
         zeta_z     = 1.1    # [-]  critico: smorzamento
 
 

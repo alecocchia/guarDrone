@@ -2,16 +2,16 @@
 
 # Script per il build del Docker con aggiornamento automatico del repository mpc_uav
 
-GITHUB_TOKEN=""
-DOCKERFILE="px4_humble_harmonic_dockerfile.txt"
-IMAGE_TAG="px4-img"
-REPO_URL="https://github.com/Simone-DAngelo/mpc_uav.git"
-BRANCH="2025_fix"
+GITHUB_TOKEN="INSERISCI_QUI_IL_TUO_TOKEN"
+DOCKERFILE="px4_humble_harmonic_dockerfile_gcs.txt"
+IMAGE_TAG="gcs_img"
+REPO_URL="https://github.com/prisma-lab/optitrack_listener"
+BRANCH="humble"
 
 echo "🔍 Controllo dell'ultimo commit del repository mpc_uav..."
 
-# Ottieni l'SHA dell'ultimo commit dal repository remoto
-REMOTE_SHA=$(git ls-remote ${REPO_URL} ${BRANCH} 2>/dev/null | cut -f1)
+# Ottieni l'SHA dell'ultimo commit dal repository remoto (usando il token!)
+REMOTE_SHA=$(git ls-remote "https://${GITHUB_TOKEN}@github.com/prisma-lab/optitrack_listener" ${BRANCH} 2>/dev/null | cut -f1)
 
 if [ -z "$REMOTE_SHA" ]; then
     echo "❌ Impossibile ottenere l'SHA del repository remoto. Uso timestamp come cache buster."
@@ -27,7 +27,7 @@ echo "🐳 Esecuzione del docker build..."
 # Esegui il build con i build arguments necessari
 docker build \
     --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" \
-    --build-arg MPC_UAV_CACHE_BUST="$CACHE_BUST" \
+    --build-arg CACHE_BUST="$CACHE_BUST" \
     -t "$IMAGE_TAG" \
     -f "$DOCKERFILE" \
     .

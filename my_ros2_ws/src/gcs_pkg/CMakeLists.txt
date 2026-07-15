@@ -38,6 +38,8 @@ install(PROGRAMS
   ${PROJECT_NAME}/supervisor.py
   ${PROJECT_NAME}/logger.py
   ${PROJECT_NAME}/keyboard_client.py
+  ${PROJECT_NAME}/fake_publisher.py
+  ${PROJECT_NAME}/PX4_odom_publisher.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

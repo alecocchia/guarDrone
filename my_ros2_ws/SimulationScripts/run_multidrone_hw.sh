@@ -14,6 +14,8 @@
 
 SESSION_NAME="drone_hw"
 
+FAKE_PUBLISHER="true" # set "false" when using the real supervisor
+
 # =============================================================================
 # CONFIGURAZIONE RETE E SSH
 # =============================================================================
@@ -77,9 +79,11 @@ WS_DIR="${HOME}/guarDrone/my_ros2_ws"
 LOCAL_SOURCE="source /opt/ros/humble/setup.bash && [ -f ${WS_DIR}/install/setup.bash ] && source ${WS_DIR}/install/setup.bash"
 
 # Pane 0: GCS Launch (supervisor + logger)
+# NOTA: Per testare SOLO il drone MPC senza l'interaction drone reale, usa:
+# ros2 launch gcs_pkg gcs_hw.launch.py use_fake_supervisor:=true
 tmux select-pane -T '0: GCS Launch' -t $SESSION_NAME:gcs.0
 tmux send-keys -t $SESSION_NAME:gcs.0 "cd ${WS_DIR} && ${LOCAL_SOURCE}" C-m
-tmux send-keys -t $SESSION_NAME:gcs.0 "ros2 launch gcs_pkg gcs_sim.launch.py" C-m # TODO: creare gcs_hw.launch.py
+tmux send-keys -t $SESSION_NAME:gcs.0 "ros2 launch gcs_pkg gcs_hw.launch.py use_fake_supervisor:=${FAKE_PUBLISHER}" C-m
 
 # Pane 1: Haptic
 tmux select-pane -T '1: Haptic' -t $SESSION_NAME:gcs.1

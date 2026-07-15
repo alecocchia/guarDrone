@@ -1,33 +1,34 @@
 #!/bin/bash
 # =============================================================================
-# run_guardrone_cnt.sh — Avvia il container Docker per il drone GuarDrone (REAL)
+# run_gcs_cnt.sh — Avvia il container Docker per la Ground Control Station (GCS)
 #
-# Prerequisiti sul PC del drone (LattePanda 3 Delta):
+# Prerequisiti sul PC GCS:
 #   1. Docker installato
 #   2. Repo clonato con sparse-checkout:
 #        git clone --depth 1 --filter=blob:none --sparse \
 #            -b master https://github.com/alecocchia/guarDrone.git ~/guarDrone
 #        cd ~/guarDrone
 #        git sparse-checkout set \
-#            my_ros2_ws/src/guardrone_pkg \
+#            my_ros2_ws/src/gcs_pkg \
 #            my_ros2_ws/src/utils_pkg \
-#            docker
-#	     my_ros2_ws/SimulationScripts
+#            my_ros2_ws/src/haptic_device \
+#            docker \
+#            my_ros2_ws/SimulationScripts
 #
 #   3. Per aggiornare i sorgenti: cd ~/guarDrone && git pull
 #
 # Uso:
-#   ./run_guardrone_cnt.sh
+#   ./run_gcs_cnt.sh
 # =============================================================================
 
 set -e
 
 # === CONFIGURAZIONE ===
-CONTAINER_NAME="guardrone-cnt"
-IMAGE_NAME="guardrone_img"
-ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-22} # POCHO
+CONTAINER_NAME="gcs_cnt"
+IMAGE_NAME="gcs_img"
+ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-14}
 
-# === TROVA LA CARTELLA guarDrone (sparse-checkout) ===
+# === TROVA LE CARTELLA gcs_pkg e optitrack_listener (sparse-checkout)===
 HOST_GUARDRONE_DIR=$(find "/home/${USER}" -maxdepth 4 -type d -iname "guarDrone" -print -quit 2>/dev/null)
 
 if [ -z "$HOST_GUARDRONE_DIR" ]; then
@@ -36,21 +37,21 @@ if [ -z "$HOST_GUARDRONE_DIR" ]; then
     echo "          git clone --depth 1 --filter=blob:none --sparse \\"
     echo "              -b master https://github.com/alecocchia/guarDrone.git ~/guarDrone"
     echo "          cd ~/guarDrone && git sparse-checkout set \\"
-    echo "              my_ros2_ws/src/guardrone_pkg my_ros2_ws/src/utils_pkg"
+    echo "              my_ros2_ws/src/gcs_pkg my_ros2_ws/src/utils_pkg my_ros2_ws/src/haptic_device docker my_ros2_ws/SimulationScripts"
     exit 1
 else
     echo "[INFO] Trovata cartella guarDrone in: $HOST_GUARDRONE_DIR"
 fi
 
 # === VERIFICA CHE I PKG ESISTANO (sparse-checkout) ===
-for PKG in guardrone_pkg utils_pkg; do
+for PKG in gcs_pkg utils_pkg haptic_device; do
     if [ ! -d "${HOST_GUARDRONE_DIR}/my_ros2_ws/src/${PKG}" ]; then
         echo "[ERROR] Pacchetto '${PKG}' non trovato in ${HOST_GUARDRONE_DIR}/my_ros2_ws/src/"
         echo "        Verificare il sparse-checkout: cd ${HOST_GUARDRONE_DIR} && git sparse-checkout list"
         exit 1
     fi
 done
-echo "[INFO] Pacchetti guardrone_pkg e utils_pkg trovati."
+echo "[INFO] Pacchetti gcs_pkg, utils_pkg e haptic_device trovati."
 
 echo "---------------------------------------------------"
 
@@ -71,7 +72,7 @@ xhost +local:docker 2>/dev/null || echo "[WARN] xhost non disponibile, GUI potre
 echo "---------------------------------------------------"
 echo "[INFO] Avvio container '${CONTAINER_NAME}' dall'immagine '${IMAGE_NAME}'"
 echo "[INFO] ROS_DOMAIN_ID=${ROS_DOMAIN_ID}"
-echo "[INFO] Volume mount: guardrone_pkg, utils_pkg"
+echo "[INFO] Volume mount: gcs_pkg, utils_pkg, haptic_device, SimulationScripts, docker"
 echo "---------------------------------------------------"
 
 # === RUN CONTAINER ===
@@ -80,9 +81,11 @@ docker run --rm -it --privileged \
     --network host \
     -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
     -v "/dev:/dev" \
-    -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/src/guardrone_pkg:/root/my_ros2_ws/src/guardrone_pkg:rw" \
     -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/src/utils_pkg:/root/my_ros2_ws/src/utils_pkg:rw" \
+    -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/src/gcs_pkg:/root/my_ros2_ws/src/gcs_pkg:rw" \
+    -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/src/haptic_device:/root/my_ros2_ws/src/haptic_device:rw" \
     -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/SimulationScripts:/root/my_ros2_ws/SimulationScripts:rw" \
+    -v "${HOST_GUARDRONE_DIR}/docker:/root/docker:rw" \
     --env="DISPLAY=${DISPLAY}" \
     -e ROS_DOMAIN_ID=${ROS_DOMAIN_ID} \
     -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \

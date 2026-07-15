@@ -341,7 +341,7 @@ class SupervisorNode(Node):
             elif not self.task_goal_pose_received and self.task_started:
                 msg_peg_target = PoseStamped()
                 msg_peg_target.pose.position.x = float(self.contact_point[0])
-                msg_peg_target.pose.position.y = float(self.contact_point[1])   #-55.91 for contact with wall;-14 for testing teleoperation with cube, -1.91
+                msg_peg_target.pose.position.y = float(self.contact_point[1]+1.5)   #-55.91 for contact with wall;-14 for testing teleoperation with cube, -1.91
                 msg_peg_target.pose.position.z = float(self.contact_point[2])
                 
                 # Impostazione del target di yaw desiderato (in radianti)
