@@ -76,6 +76,9 @@ echo "[INFO] Volume mount: gcs_pkg, utils_pkg, haptic_device, SimulationScripts,
 echo "---------------------------------------------------"
 
 # === RUN CONTAINER ===
+# Nota: .ssh viene montato in /tmp/ssh-host e copiato con i permessi corretti all'avvio.
+# Il mount diretto a /root/.ssh con :ro causa "Bad owner or permissions" perche'
+# i file risultano di proprieta' dell'utente host (UID != 0) dentro il container root.
 docker run --rm -it --privileged \
     ${DRI_FLAGS} \
     --network host \
@@ -86,7 +89,7 @@ docker run --rm -it --privileged \
     -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/src/haptic_device:/root/my_ros2_ws/src/haptic_device:rw" \
     -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/SimulationScripts:/root/my_ros2_ws/SimulationScripts:rw" \
     -v "${HOST_GUARDRONE_DIR}/docker:/root/docker:rw" \
-    -v "${HOME}/.ssh:/root/.ssh:ro" \
+    -v "${HOME}/.ssh:/tmp/ssh-host:ro" \
     --env="DISPLAY=${DISPLAY}" \
     -e ROS_DOMAIN_ID=${ROS_DOMAIN_ID} \
     -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
@@ -94,5 +97,11 @@ docker run --rm -it --privileged \
     -e LD_LIBRARY_PATH=/opt/acados/lib \
     -w /root/my_ros2_ws \
     --name=${CONTAINER_NAME} \
-    ${IMAGE_NAME} bash
+    ${IMAGE_NAME} bash -c "
+        cp -r /tmp/ssh-host /root/.ssh &&
+        chmod 700 /root/.ssh &&
+        chmod 600 /root/.ssh/* 2>/dev/null || true &&
+        chmod 644 /root/.ssh/*.pub 2>/dev/null || true &&
+        exec bash"
+
 

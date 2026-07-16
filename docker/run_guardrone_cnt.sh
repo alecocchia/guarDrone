@@ -24,7 +24,7 @@ set -e
 
 # === CONFIGURAZIONE ===
 CONTAINER_NAME="guardrone-cnt"
-IMAGE_NAME="guardrone_img"
+IMAGE_NAME="guardrone_nmpc_img"
 ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-22} # POCHO
 
 # === TROVA LA CARTELLA guarDrone (sparse-checkout) ===
