@@ -16,7 +16,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPo
 from px4_msgs.msg import VehicleControlMode, VehicleCommand, VehicleLocalPosition
 from std_msgs.msg import Bool, String
 from geometry_msgs.msg import PoseStamped
-from utils_pkg.common import min_angle
+from utils_pkg.utils_np import min_angle
 
 class SupervisorNode(Node):
     def __init__(self):

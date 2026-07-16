@@ -86,6 +86,7 @@ docker run --rm -it --privileged \
     -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/src/haptic_device:/root/my_ros2_ws/src/haptic_device:rw" \
     -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/SimulationScripts:/root/my_ros2_ws/SimulationScripts:rw" \
     -v "${HOST_GUARDRONE_DIR}/docker:/root/docker:rw" \
+    -v "${HOME}/.ssh:/root/.ssh:ro" \
     --env="DISPLAY=${DISPLAY}" \
     -e ROS_DOMAIN_ID=${ROS_DOMAIN_ID} \
     -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
@@ -94,3 +95,4 @@ docker run --rm -it --privileged \
     -w /root/my_ros2_ws \
     --name=${CONTAINER_NAME} \
     ${IMAGE_NAME} bash
+

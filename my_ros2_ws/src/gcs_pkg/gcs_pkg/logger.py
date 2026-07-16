@@ -6,7 +6,7 @@ from geometry_msgs.msg import PoseStamped, TwistStamped, Wrench, Vector3Stamped
 from std_msgs.msg import Float64MultiArray, Bool
 import numpy as np
 from math import atan2
-from utils_pkg.common import quat_to_R
+from utils_pkg.utils_np import quat_to_R
 from scipy.spatial.transform import Rotation as Rot
 
 # --- PX4 MESSAGES IMPORTS ---

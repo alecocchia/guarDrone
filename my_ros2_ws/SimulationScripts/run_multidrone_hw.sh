@@ -20,18 +20,14 @@ FAKE_PUBLISHER="true" # set "false" when using the real supervisor
 # CONFIGURAZIONE RETE E SSH
 # =============================================================================
 # Modifica questi parametri con gli IP e gli username corretti dei LattePanda
-GD_USER="Dummy" # utente del LattePanda guardrone
-GD_IP="192.168.1.X"
+GD_USER="dummy" # utente del LattePanda guardrone
+GD_IP="192.168.3.22"
 GD_CONTAINER="guardrone-cnt"
 
 ID_USER="bho" # Sostituire con l'utente reale del drone interaction
 ID_IP="192.168.1.Y"
 ID_CONTAINER="boh" # TODO: Aggiornare col nome del container del secondo drone
 
-# Comandi base per entrare nel container via SSH ed eseguire codice ROS2
-# Usa -t per allocare uno pseudo-TTY (necessario per docker exec -it e per vedere l'output pulito)
-GD_EXEC="ssh -t ${GD_USER}@${GD_IP} 'docker exec -it ${GD_CONTAINER} bash -c \"source /opt/ros/humble/setup.bash && source /root/my_ros2_ws/install/setup.bash && "
-ID_EXEC="ssh -t ${ID_USER}@${ID_IP} 'docker exec -it ${ID_CONTAINER} bash -c \"source /opt/ros/humble/setup.bash && source /root/my_ros2_ws/install/setup.bash && "
 
 # Comando di chiusura sessione locale
 KILL_ALIAS="alias aaa='tmux list-panes -s -F \"#{pane_id}\" | grep -v \$(tmux display-message -p \"#{pane_id}\") | xargs -I {} tmux send-keys -t {} C-c && echo \"Attendendo 5s...\" && sleep 5 && tmux kill-server'"
@@ -75,7 +71,7 @@ done
 # 4. FINESTRA 0 — GCS (LOCALE)
 # =============================================================================
 # I path locali presumono che il ws sia in ~/guarDrone/my_ros2_ws
-WS_DIR="${HOME}/guarDrone/my_ros2_ws"
+WS_DIR="${HOME}/my_ros2_ws"
 LOCAL_SOURCE="source /opt/ros/humble/setup.bash && [ -f ${WS_DIR}/install/setup.bash ] && source ${WS_DIR}/install/setup.bash"
 
 # Pane 0: GCS Launch (supervisor + logger)
@@ -101,21 +97,47 @@ tmux send-keys -t $SESSION_NAME:gcs.3 "cd ${WS_DIR} && ${LOCAL_SOURCE} && $KILL_
 tmux send-keys -t $SESSION_NAME:gcs.3 "echo 'Usa il comando aaa per killare tutto in sicurezza.'" C-m
 
 # =============================================================================
-# 5. FINESTRA 1 — GUARDRONE (SSH)
+# 5. FINESTRA 1 — GUARDRONE (SSH persistente)
 # =============================================================================
-# Pane 0: MicroXRCE-DDS Agent via SSH -> Docker
-tmux select-pane -T '0: MicroAgent (SSH)' -t $SESSION_NAME:guardrone.0
+# Strategia: ogni pane apre una sessione SSH stabile sul drone.
+# I comandi successivi vengono inviati step-by-step al processo remoto.
+# I sleep servono ad aspettare che ogni step precedente sia completato.
+
+# --- Pane 0: Avvio container + MicroXRCE-DDS Agent ---
+tmux select-pane -T '0: Container + MicroAgent' -t $SESSION_NAME:guardrone.0
+# Step 1: Connessione SSH al drone (host LattePanda)
+tmux send-keys -t $SESSION_NAME:guardrone.0 "ssh dummy@${GD_IP}" C-m
+sleep 3
+# Step 2: Avvio container in modalita' detached (non bloccante)
+tmux send-keys -t $SESSION_NAME:guardrone.0 "bash ~/guarDrone/docker/run_guardrone_cnt.sh -d" C-m
+sleep 10
+# Step 3: Entrata nel container
+tmux send-keys -t $SESSION_NAME:guardrone.0 "docker exec -it ${GD_CONTAINER} bash" C-m
+sleep 2
+# Step 4: Avvio MicroXRCE-DDS Agent (dentro il container)
 # TODO: Controllare la porta seriale esatta (/dev/ttyUSB0 o /dev/ttyACM0 o /dev/ttyS0) e il baudrate (es. 921600 o 115200)
-tmux send-keys -t $SESSION_NAME:guardrone.0 "ssh -t ${GD_USER}@${GD_IP} 'docker exec -it ${GD_CONTAINER} MicroXRCEAgent serial --dev /dev/ttyUSB0 -b 921600'" C-m
+tmux send-keys -t $SESSION_NAME:guardrone.0 "MicroXRCEAgent serial --dev /dev/ttyUSB0 -b 921600" C-m
 
-# Pane 1: Launch MPC Node via SSH -> Docker
-tmux select-pane -T '1: GuaDrone Launch (SSH)' -t $SESSION_NAME:guardrone.1
-# La stringa termina con "'", che chiude il bash -c "..." e poi il comando ssh '...'
-tmux send-keys -t $SESSION_NAME:guardrone.1 "${GD_EXEC} ros2 launch guardrone_pkg guardrone_hw.launch.py\"'" C-m
+# --- Pane 1: Launch nodi ROS2 del GuarDrone ---
+tmux select-pane -T '1: GuarDrone Launch' -t $SESSION_NAME:guardrone.1
+# Step 1: Connessione SSH al drone
+tmux send-keys -t $SESSION_NAME:guardrone.1 "ssh dummy@${GD_IP}" C-m
+sleep 3
+# Step 2: Entrata nel container (il container e' gia' avviato dal Pane 0)
+tmux send-keys -t $SESSION_NAME:guardrone.1 "docker exec -it ${GD_CONTAINER} bash" C-m
+sleep 2
+# Step 3: Source degli ambienti ROS2 e avvio del launch file
+tmux send-keys -t $SESSION_NAME:guardrone.1 "source /opt/ros/humble/setup.bash && source /root/my_ros2_ws/install/setup.bash" C-m
+sleep 1
+tmux send-keys -t $SESSION_NAME:guardrone.1 "ros2 launch guardrone_pkg guardrone_hw.launch.py" C-m
 
-# Pane 2: Terminale interattivo nel container via SSH
-tmux select-pane -T '2: Interactive Shell (SSH)' -t $SESSION_NAME:guardrone.2
-tmux send-keys -t $SESSION_NAME:guardrone.2 "ssh -t ${GD_USER}@${GD_IP} 'docker exec -it ${GD_CONTAINER} bash'" C-m
+# --- Pane 2: Shell interattiva nel container (per debug manuale) ---
+tmux select-pane -T '2: Interactive Shell' -t $SESSION_NAME:guardrone.2
+# Step 1: Connessione SSH al drone
+tmux send-keys -t $SESSION_NAME:guardrone.2 "ssh dummy@${GD_IP}" C-m
+sleep 3
+# Step 2: Entrata nel container
+tmux send-keys -t $SESSION_NAME:guardrone.2 "docker exec -it ${GD_CONTAINER} bash" C-m
 
 # =============================================================================
 # 6. FINESTRA 2 — DRONE INTERACTION (SSH)
