@@ -120,12 +120,12 @@ tmux select-pane -T '0: Container + MicroAgent' -t $SESSION_NAME:guardrone.0
 tmux select-pane -T '1: GuarDrone Launch' -t $SESSION_NAME:guardrone.1
 (
     tmux send-keys -t $SESSION_NAME:guardrone.1 "ssh dummy@${GD_IP}" C-m
-    sleep 3
-    # Il container e' gia' avviato dal Pane 0 (che parte in parallelo con sleep 10)
-    # Qui aspettiamo lo stesso tempo per sicurezza
+    # Aspetta che il container sia avviato dal Pane 0:
+    # Pane 0: sleep 3 (SSH) + sleep 10 (container start) + margine = ~15s totali
+    sleep 15
     tmux send-keys -t $SESSION_NAME:guardrone.1 "docker exec -it ${GD_CONTAINER} bash" C-m
-    sleep 13
-    tmux send-keys -t $SESSION_NAME:guardrone.1 "source /opt/ros/humble/setup.bash && source /root/my_ros2_ws/install/setup.bash" C-m
+    sleep 2
+    tmux send-keys -t $SESSION_NAME:guardrone.1 "colcon build && source /opt/ros/humble/setup.bash && source /root/my_ros2_ws/install/setup.bash" C-m
     sleep 1
     tmux send-keys -t $SESSION_NAME:guardrone.1 "ros2 launch guardrone_pkg guardrone_hw.launch.py" C-m
 ) &
@@ -134,9 +134,11 @@ tmux select-pane -T '1: GuarDrone Launch' -t $SESSION_NAME:guardrone.1
 tmux select-pane -T '2: Interactive Shell' -t $SESSION_NAME:guardrone.2
 (
     tmux send-keys -t $SESSION_NAME:guardrone.2 "ssh dummy@${GD_IP}" C-m
-    sleep 13
+    # Stesso wait del Pane 1
+    sleep 15
     tmux send-keys -t $SESSION_NAME:guardrone.2 "docker exec -it ${GD_CONTAINER} bash" C-m
 ) &
+
 
 # =============================================================================
 # 6. FINESTRA 2 — DRONE INTERACTION (SSH)

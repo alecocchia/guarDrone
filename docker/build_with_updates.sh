@@ -1,6 +1,8 @@
 #!/bin/bash
 
-# Script per il build del Docker con aggiornamento automatico del repository mpc_uav
+# Script per il build del Docker con aggiornamento automatico del repository optitrack_listener di prisma-lab
+
+# Inserire token
 
 GITHUB_TOKEN="INSERISCI_QUI_IL_TUO_TOKEN"
 DOCKERFILE="px4_humble_harmonic_dockerfile_gcs.txt"

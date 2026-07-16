@@ -26,7 +26,7 @@ set -e
 # === CONFIGURAZIONE ===
 CONTAINER_NAME="gcs_cnt"
 IMAGE_NAME="gcs_img"
-ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-14}
+ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-22}
 
 # === TROVA LE CARTELLA gcs_pkg e optitrack_listener (sparse-checkout)===
 HOST_GUARDRONE_DIR=$(find "/home/${USER}" -maxdepth 4 -type d -iname "guarDrone" -print -quit 2>/dev/null)
