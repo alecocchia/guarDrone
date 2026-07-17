@@ -28,16 +28,16 @@ class FakePublisherNode(Node):
         )
         
         # --- Publishers ---
-        # 1. Odometria fittizia per il peg
+        # 1 - Odometria fittizia per il peg
         self.odom_pub = self.create_publisher(VehicleOdometry, '/px4_1/fmu/out/vehicle_odometry', px4_qos_profile)
-        # 2. Controllo task e logging
+        # 2 - Inizio task mpc e logging
         self.task_start_pub = self.create_publisher(Bool, '/mpc_task/start', qos_latched)
         self.logging_start_pub = self.create_publisher(Bool, '/logging/start', qos_latched)
-        # 3. Offboard Trajectory Planner e POV
+        # 3 - Offboard Trajectory Planner e POV
         self.cam_target_pub = self.create_publisher(PoseStamped, '/camera_target_pose', 10)
         self.cam_traj_enabled_pub = self.create_publisher(Bool, '/camera_traj_enabled', 10)
         self.pov_pub = self.create_publisher(Float64MultiArray, '/pov_target', 10)
-        # 4. PX4 Commands (Arm, Offboard)
+        # 4 - PX4 Commands (Arm, Offboard)
         self.cmd_pub_1 = self.create_publisher(VehicleCommand, '/fmu/in/vehicle_command', px4_qos_profile)
         
         # --- Subscribers ---
@@ -180,7 +180,7 @@ class FakePublisherNode(Node):
                 
         elif self.state == 'TAKEOFF_MONITOR':
             # drone1_local_pos.z è NED (negativo verso l'alto)
-            d1_up = abs(-self.drone1_local_pos.z - self.takeoff_alt_1) < 0.2
+            d1_up = abs(-self.drone1_local_pos.z - self.takeoff_alt_1) < 0.025
             
             if d1_up:
                 self.get_logger().info("Drone in quota (2m) raggiunto! Switch da Trajectory Planner a MPC.")

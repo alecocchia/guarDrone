@@ -1,0 +1,11 @@
+<CycloneDDS>
+ <Domain id="any">
+    <General>
+     <Interfaces>
+      <NetworkInterface address="192.168.3.14"/>
+     </Interfaces>
+     <AllowMulticast>default</AllowMulticast>
+    </General>
+
+ </Domain>
+</CycloneDDS>

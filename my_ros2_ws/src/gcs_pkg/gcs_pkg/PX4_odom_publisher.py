@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
 import numpy as np
@@ -35,7 +36,7 @@ class PX4VisualOdomPublisher(Node):
 
         self.optitrack_odom_sub = self.create_subscription(
             Odometry, 
-            '/optitrack/odometry', 
+            '/optitrack/body_2/odometry', 
             self.optitrack_odom_cb, 
             self.qos
         )

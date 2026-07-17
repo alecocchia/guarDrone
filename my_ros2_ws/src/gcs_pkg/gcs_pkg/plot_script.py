@@ -45,7 +45,7 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--log", type=str, default="/tmp/sim_run.npz")
+    ap.add_argument("--log", type=str, default="/tmp/hw_run.npz")
     ap.add_argument("--tex", action="store_true")
     ap.add_argument("--save", action="store_true")
     ap.add_argument("--all", action="store_true", help="Show all figures at once (default is sequential)")
