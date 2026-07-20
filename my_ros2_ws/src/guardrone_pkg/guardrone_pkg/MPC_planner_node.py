@@ -601,12 +601,12 @@ class MpcPlannerNode(Node):
         R_CYL  = 2.0      # range distanza [m]
         B_CYL  = np.pi/2  # range azimut [rad]
         Z_CYL  = 2.0      # range quota [m]
-        Y_CYL  = np.pi/2  # range yaw [rad]
+        Y_CYL  = np.pi  # range yaw [rad]
 
-        V       = np.array([1, 1, 1.5])
-        ANG_DOT = np.array([0.5, 0.5, 2.0])
-        ACC     = np.array([2.0, 2.0, 3.0])
-        ACC_ANG = np.array([1.0, 1.0, 3.0])
+        V       = np.array([0.4, 0.4, 0.6])
+        ANG_DOT = np.array([0.15, 0.15, 0.3])
+        ACC     = np.array([0.5, 0.5, 1.0])
+        ACC_ANG = np.array([1.0, 1.0, 1.0])
         JERK    = 10.0
         SNAP    = 200.0
 
@@ -614,14 +614,14 @@ class MpcPlannerNode(Node):
         PesoBeta   = PesoVis
         PesoGamma  = PesoVis
         PesoYaw    = PesoVis
-        PesoVel    = PesoVis / 50
-        PesoAngVel = PesoVis / 50
-        PesoAcc    = PesoVis / 50
-        PesoAngAcc = PesoVis / 50
+        PesoVel    = PesoVis / 20
+        PesoAngVel = PesoVis / 20
+        PesoAcc    = PesoVis / 30
+        PesoAngAcc = PesoVis / 30
         PesoJerk   = PesoAcc / 10
         PesoSnap   = PesoJerk / 2
-        PesoForce  = PesoVis / 1000
-        PesoTorque = PesoForce * 2
+        PesoForce  = PesoVis / 500
+        PesoTorque = PesoForce * 1.5
 
         # Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
         Q_cyl = np.diag([PesoVis / R_CYL**2,
