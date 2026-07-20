@@ -117,7 +117,7 @@ class FakePublisherNode(Node):
         # posizione di hovering a [0, 0, 2] (cioè dove ha fatto il takeoff), 
         # senza avere problemi di singolarità atan2 per r=0.
         pov_msg = Float64MultiArray()
-        pov_msg.data = [2.0, math.pi, 0.0, 0.0] 
+        pov_msg.data = [2.0, -math.pi/2, 0.0, 0.0] 
         self.pov_pub.publish(pov_msg)
         
         # =========================================================================
