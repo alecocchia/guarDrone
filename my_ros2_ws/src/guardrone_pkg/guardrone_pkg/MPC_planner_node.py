@@ -79,6 +79,20 @@ class MpcPlannerNode(Node):
         self.declare_parameter('moment_const', 0.016)
         self.declare_parameter('rp_limit', 45.0)
 
+        # === MPC Weights ===
+        self.declare_parameter('mpc_weights.PesoVis', 100.0)
+        self.declare_parameter('mpc_weights.PesoBeta', 100.0)
+        self.declare_parameter('mpc_weights.PesoGamma', 100.0)
+        self.declare_parameter('mpc_weights.PesoYaw', 100.0)
+        self.declare_parameter('mpc_weights.PesoVel', 2.5)
+        self.declare_parameter('mpc_weights.PesoAngVel', 3.3333333333333335)
+        self.declare_parameter('mpc_weights.PesoAcc', 1.25)
+        self.declare_parameter('mpc_weights.PesoAngAcc', 1.6666666666666667)
+        self.declare_parameter('mpc_weights.PesoJerk', 0.625)
+        self.declare_parameter('mpc_weights.PesoSnap', 0.3125)
+        self.declare_parameter('mpc_weights.PesoForce', 0.1)
+        self.declare_parameter('mpc_weights.PesoTorque', 0.15)
+
 
         mass = self.get_parameter('mass').value
         ixx = self.get_parameter('ixx').value
@@ -610,18 +624,18 @@ class MpcPlannerNode(Node):
         JERK    = 10.0
         SNAP    = 200.0
 
-        PesoVis    = 100    # radius
-        PesoBeta   = PesoVis
-        PesoGamma  = PesoVis
-        PesoYaw    = PesoVis
-        PesoVel    = PesoVis / 40
-        PesoAngVel = PesoVis / 30
-        PesoAcc    = PesoVis / 80
-        PesoAngAcc = PesoVis / 60
-        PesoJerk   = PesoAcc / 2
-        PesoSnap   = PesoJerk / 2
-        PesoForce  = PesoVis / 1000
-        PesoTorque = PesoForce * 1.5
+        PesoVis    = self.get_parameter('mpc_weights.PesoVis').value
+        PesoBeta   = self.get_parameter('mpc_weights.PesoBeta').value
+        PesoGamma  = self.get_parameter('mpc_weights.PesoGamma').value
+        PesoYaw    = self.get_parameter('mpc_weights.PesoYaw').value
+        PesoVel    = self.get_parameter('mpc_weights.PesoVel').value
+        PesoAngVel = self.get_parameter('mpc_weights.PesoAngVel').value
+        PesoAcc    = self.get_parameter('mpc_weights.PesoAcc').value
+        PesoAngAcc = self.get_parameter('mpc_weights.PesoAngAcc').value
+        PesoJerk   = self.get_parameter('mpc_weights.PesoJerk').value
+        PesoSnap   = self.get_parameter('mpc_weights.PesoSnap').value
+        PesoForce  = self.get_parameter('mpc_weights.PesoForce').value
+        PesoTorque = self.get_parameter('mpc_weights.PesoTorque').value
 
         # Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
         Q_cyl = np.diag([PesoVis / R_CYL**2,

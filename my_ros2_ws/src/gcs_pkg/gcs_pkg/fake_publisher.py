@@ -54,6 +54,8 @@ class FakePublisherNode(Node):
         self.drone1_mode = VehicleControlMode()
         self.mpc_ready = False
         self.user_ok = False
+        self.wait_msg_printed = False
+        self.switch_msg_printed = False
         
         self.state = 'WAIT_EKF'
         self.wait_ticks = 0
@@ -139,7 +141,7 @@ class FakePublisherNode(Node):
                 
         elif self.state == 'WAIT_START':
             if self.mpc_ready:
-                if not getattr(self, 'wait_msg_printed', False):
+                if not self.wait_msg_printed:
                     self.get_logger().info("Planner di takeoff pronto. Digita 'ok' (e premi invio) sul terminale GCS per autorizzare il decollo.")
                     self.wait_msg_printed = True
                 
@@ -181,22 +183,26 @@ class FakePublisherNode(Node):
         elif self.state == 'TAKEOFF_MONITOR':
             # drone1_local_pos.z è NED (negativo verso l'alto)
             d1_up = abs(-self.drone1_local_pos.z - self.takeoff_alt_1) < 0.025
-            
+
             if d1_up:
-                self.get_logger().info("Drone in quota (2m) raggiunto! Switch da Trajectory Planner a MPC.")
-                
-                # 1. Spegne offboard trajectory planner
-                msg_traj = Bool()
-                msg_traj.data = False
-                self.cam_traj_enabled_pub.publish(msg_traj)
-                
-                # 2. Avvia MPC
-                msg_start = Bool()
-                msg_start.data = True
-                self.task_start_pub.publish(msg_start)
-                
-                self.state = 'MISSION'
-                self.get_logger().info("MISSIONE AVVIATA. Hovering mantenuto tramite MPC.")
+                if not self.switch_msg_printed:
+                    self.get_logger().info("Drone in quota! Switch da Trajectory Planner a MPC pronto. Dare ok da tastiera")
+                    self.switch_msg_printed = True
+                    
+                if self.user_ok:
+                    self.user_ok = False # Consuma il comando
+                    # 1. Spegne offboard trajectory planner
+                    msg_traj = Bool()
+                    msg_traj.data = False
+                    self.cam_traj_enabled_pub.publish(msg_traj)
+            
+                    # 2. Avvia MPC
+                    msg_start = Bool()
+                    msg_start.data = True
+                    self.task_start_pub.publish(msg_start)
+                    
+                    self.state = 'MISSION'
+                    self.get_logger().info("MISSIONE AVVIATA. Hovering mantenuto tramite MPC.")
                 
         elif self.state == 'MISSION':
             # Il loop principale a 50Hz continua a mandare pov_target e odometria peg

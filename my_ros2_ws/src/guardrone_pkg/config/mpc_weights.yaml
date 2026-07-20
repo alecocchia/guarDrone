@@ -1,0 +1,15 @@
+/**:
+  ros__parameters:
+    mpc_weights:
+      PesoVis: 100.0
+      PesoBeta: 100.0
+      PesoGamma: 100.0
+      PesoYaw: 100.0
+      PesoVel: 2.5
+      PesoAngVel: 3.3333333333333335
+      PesoAcc: 1.25
+      PesoAngAcc: 1.6666666666666667
+      PesoJerk: 0.625
+      PesoSnap: 0.3125
+      PesoForce: 0.1
+      PesoTorque: 0.15
