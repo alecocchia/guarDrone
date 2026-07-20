@@ -376,6 +376,12 @@ class Logger(Node):
 
         online_cyl_ref = np.asarray(self.online_cyl_ref)  # [r_cyl_ref, beta_ref, z_ref]
 
+        # 3. Target Cartesiano della Telecamera
+        p_cam_target = np.zeros_like(p_cam)
+        p_cam_target[:, 0] = peg_pos[:, 0] + online_cyl_ref[:, 0] * np.cos(online_cyl_ref[:, 1])
+        p_cam_target[:, 1] = peg_pos[:, 1] + online_cyl_ref[:, 0] * np.sin(online_cyl_ref[:, 1])
+        p_cam_target[:, 2] = peg_pos[:, 2] + online_cyl_ref[:, 2]
+
         out = dict(
             t=T_rel, t_ref=np.asarray(self.t_ref),
             pos=pos, rpy=rpy, q=q,
@@ -392,6 +398,7 @@ class Logger(Node):
             peg_pos=peg_pos,
             online_ref=np.asarray(self.online_ref),
             online_cyl_ref=online_cyl_ref,
+            p_cam=p_cam, p_cam_target=p_cam_target,
             # Grandezze cilindriche attuali
             r_cyl=r_cyl, beta_cyl=beta_cyl, z_cyl=z_cyl,
             yaw_err_cyl=yaw_err_cyl,

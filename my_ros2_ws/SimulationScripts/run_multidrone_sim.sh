@@ -38,6 +38,8 @@ DRONE2_Z=${DRONE2_Z:-4.52}
 DRONE2_YAW=${DRONE2_YAW:-0.0}
 DRONE2_MODEL_NAME=${DRONE2_MODEL_NAME:-"x500_interaction"}
 
+USE_FAKE=${USE_FAKE:-"false"}
+
 WORLD_NAME=${WORLD_NAME:-"bridge_inspection_gazebo"}
 
 # Comando di source ROS2 + workspace (usato in ogni pane)
@@ -59,7 +61,9 @@ tmux set-option -t $SESSION_NAME pane-border-status top
 # =============================================================================
 # La finestra 0 'gcs' è già stata creata con new-session.
 tmux new-window -t $SESSION_NAME -n 'guardrone'
-tmux new-window -t $SESSION_NAME -n 'drone_interaction'
+if [ "$USE_FAKE" != "true" ]; then
+    tmux new-window -t $SESSION_NAME -n 'drone_interaction'
+fi
 
 # =============================================================================
 # 3. LAYOUT PANE
@@ -91,7 +95,13 @@ tmux resize-pane -t $SESSION_NAME:gcs.3 -y 10
 tmux split-window -h -t $SESSION_NAME:gcs.3           # Pane 3 (sx) | Pane 4 (dx) in basso
 
 # --- Layout finestre drone: 2 affiancati + 1 full-width in basso ---
-for WIN in 'guardrone' 'drone_interaction'; do
+if [ "$USE_FAKE" = "true" ]; then
+    WINS=('guardrone')
+else
+    WINS=('guardrone' 'drone_interaction')
+fi
+
+for WIN in "${WINS[@]}"; do
     tmux split-window -h -t $SESSION_NAME:$WIN.0       # Pane 0 (sx) | Pane 1 (dx)
     tmux select-pane -t $SESSION_NAME:$WIN.0
     tmux split-window -v -f -t $SESSION_NAME:$WIN      # Pane 2: full-width in basso
@@ -111,7 +121,7 @@ tmux send-keys -t $SESSION_NAME:gcs.0 "MicroXRCEAgent udp4 -p 8888" C-m
 tmux select-pane -T '1: GCS Launch' -t $SESSION_NAME:gcs.1
 tmux send-keys -t $SESSION_NAME:gcs.1 "cd /root/my_ros2_ws" C-m
 tmux send-keys -t $SESSION_NAME:gcs.1 "$SOURCE_CMD" C-m
-tmux send-keys -t $SESSION_NAME:gcs.1 "sleep 15 && ros2 launch gcs_pkg gcs_sim.launch.py \
+tmux send-keys -t $SESSION_NAME:gcs.1 "sleep 15 && ros2 launch gcs_pkg gcs_sim.launch.py use_fake:=${USE_FAKE} \
     model:=${DRONE1_MODEL_NAME} \
     drone_x:=${DRONE1_X} drone_y:=${DRONE1_Y} drone_z:=${DRONE1_Z} \
     peg_x:=${DRONE2_X}   peg_y:=${DRONE2_Y}   peg_z:=${DRONE2_Z}" C-m
@@ -165,6 +175,7 @@ tmux send-keys -t $SESSION_NAME:guardrone.2 "cd /root/my_ros2_ws && $SOURCE_CMD 
 # =============================================================================
 # 6. FINESTRA 2 — DRONE INTERACTION (Drone 2 — Ammettenza)
 # =============================================================================
+if [ "$USE_FAKE" != "true" ]; then
 
 # --- Pane 0: PX4 SITL Drone 2 — STANDALONE (si aggancia a Gazebo esistente) ---
 # PX4_GZ_STANDALONE=1: non lancia un nuovo Gazebo.
@@ -195,5 +206,7 @@ tmux send-keys -t $SESSION_NAME:drone_interaction.2 "cd /root/my_ros2_ws && $SOU
 # =============================================================================
 # 7. ATTACH: apre sulla finestra gcs
 # =============================================================================
+fi
+
 tmux select-window -t $SESSION_NAME:gcs
 tmux attach-session -t $SESSION_NAME

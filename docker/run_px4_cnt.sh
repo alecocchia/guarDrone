@@ -59,4 +59,4 @@ $GPU_FLAGS \
 -e LD_LIBRARY_PATH=/opt/acados/lib \
 -w /root/my_ros2_ws \
 --network host \
---name=px4-cnt guardrone_nmpc_img:latest bash
+--name=px4-cnt guardrone_img:latest bash

@@ -79,20 +79,6 @@ class MpcPlannerNode(Node):
         self.declare_parameter('moment_const', 0.016)
         self.declare_parameter('rp_limit', 45.0)
 
-        # === MPC Weights ===
-        self.declare_parameter('mpc_weights.PesoVis', 100.0)
-        self.declare_parameter('mpc_weights.PesoBeta', 100.0)
-        self.declare_parameter('mpc_weights.PesoGamma', 100.0)
-        self.declare_parameter('mpc_weights.PesoYaw', 100.0)
-        self.declare_parameter('mpc_weights.PesoVel', 2.5)
-        self.declare_parameter('mpc_weights.PesoAngVel', 3.3333333333333335)
-        self.declare_parameter('mpc_weights.PesoAcc', 1.25)
-        self.declare_parameter('mpc_weights.PesoAngAcc', 1.6666666666666667)
-        self.declare_parameter('mpc_weights.PesoJerk', 0.625)
-        self.declare_parameter('mpc_weights.PesoSnap', 0.3125)
-        self.declare_parameter('mpc_weights.PesoForce', 0.1)
-        self.declare_parameter('mpc_weights.PesoTorque', 0.15)
-
 
         mass = self.get_parameter('mass').value
         ixx = self.get_parameter('ixx').value
@@ -155,6 +141,15 @@ class MpcPlannerNode(Node):
         self.first_odom_received = False  
         self.planner_ready_published = False   
         self.startup_counter = 0               
+
+        # Matrici fisse di conversione frame
+        self.M_ned2enu = np.array([[0.0, 1.0, 0.0], 
+                              [1.0, 0.0, 0.0], 
+                              [0.0, 0.0, -1.0]])
+                              
+        self.M_frd2flu = np.array([[1.0, 0.0, 0.0], 
+                              [0.0, -1.0, 0.0], 
+                              [0.0, 0.0, -1.0]])
 
         self.mpc_path_published = False
 
@@ -321,28 +316,19 @@ class MpcPlannerNode(Node):
         q_scipy = [msg.q[1], msg.q[2], msg.q[3], msg.q[0]] 
         R_frd2ned = Rotation.from_quat(q_scipy).as_matrix()
 
-        # Matrici fisse di conversione frame
-        M_ned2enu = np.array([[0.0, 1.0, 0.0], 
-                              [1.0, 0.0, 0.0], 
-                              [0.0, 0.0, -1.0]])
-                              
-        M_frd2flu = np.array([[1.0, 0.0, 0.0], 
-                              [0.0, -1.0, 0.0], 
-                              [0.0, 0.0, -1.0]])
-
-        R_flu2enu = M_ned2enu @ R_frd2ned @ M_frd2flu
+        R_flu2enu = self.M_ned2enu @ R_frd2ned @ self.M_frd2flu
         rot_flu2enu = Rotation.from_matrix(R_flu2enu)
         
         with self.state_lock:
             # Posizione: NED → ENU con offset
-            pos_enu = M_ned2enu @ np.array([msg.position[0], msg.position[1], msg.position[2]])
+            pos_enu = self.M_ned2enu @ np.array([msg.position[0], msg.position[1], msg.position[2]])
             self.current_obj_pos = pos_enu + self.peg_offset
             
             # Velocità: NED → ENU
-            self.current_obj_vel[:] = M_ned2enu @ np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]])
+            self.current_obj_vel[:] = self.M_ned2enu @ np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]])
             
             # Velocità angolare: FRD → FLU
-            self.current_obj_ang_vel[:] = M_frd2flu @ np.array([msg.angular_velocity[0], msg.angular_velocity[1], msg.angular_velocity[2]])
+            self.current_obj_ang_vel[:] = self.M_frd2flu @ np.array([msg.angular_velocity[0], msg.angular_velocity[1], msg.angular_velocity[2]])
             
             # Orientamento in RPY
             self.current_obj_rpy[:] = rot_flu2enu.as_euler('xyz')
@@ -411,25 +397,16 @@ class MpcPlannerNode(Node):
         q_scipy = [msg.q[1], msg.q[2], msg.q[3], msg.q[0]] 
         R_frd2ned = Rotation.from_quat(q_scipy).as_matrix()
 
-        # Matrici fisse di conversione frame
-        M_ned2enu = np.array([[0.0, 1.0, 0.0], 
-                              [1.0, 0.0, 0.0], 
-                              [0.0, 0.0, -1.0]])
-                              
-        M_frd2flu = np.array([[1.0, 0.0, 0.0], 
-                              [0.0, -1.0, 0.0], 
-                              [0.0, 0.0, -1.0]])
-
         # R_flu2enu (body→world per MPC): catena FLU→FRD→NED→ENU
         # M_frd2flu ortogonale, quindi M_flu2frd = M_frd2flu
-        R_flu2enu = M_ned2enu @ R_frd2ned @ M_frd2flu
+        R_flu2enu = self.M_ned2enu @ R_frd2ned @ self.M_frd2flu
         
         rot_flu2enu = Rotation.from_matrix(R_flu2enu)
         q_flu2enu = rot_flu2enu.as_quat() # [x, y, z, w] (formato scipy)
 
         with self.state_lock:
             # Posizione: NED → ENU (M_ned2enu @ [N,E,D] = [E,N,-D])
-            self.current_position[:] = M_ned2enu @ np.array([msg.position[0], msg.position[1], msg.position[2]])
+            self.current_position[:] = self.M_ned2enu @ np.array([msg.position[0], msg.position[1], msg.position[2]])
             # Aggiungiamo lo spawn offset per posizionare il drone globalmente (fix RViz e Planner)
             self.current_position[0] += self.get_parameter('start_x').value
             self.current_position[1] += self.get_parameter('start_y').value
@@ -455,9 +432,9 @@ class MpcPlannerNode(Node):
             self.current_rpy[:] = rot_flu2enu.as_euler('xyz')
 
             # Velocità lineare: NED → ENU
-            self.current_raw_vel[:] = M_ned2enu @ np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]]).T
+            self.current_raw_vel[:] = self.M_ned2enu @ np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]]).T
             
-            self.current_ang_vel[:] = M_frd2flu @ np.array([msg.angular_velocity[0], msg.angular_velocity[1], msg.angular_velocity[2]]).T
+            self.current_ang_vel[:] = self.M_frd2flu @ np.array([msg.angular_velocity[0], msg.angular_velocity[1], msg.angular_velocity[2]]).T
             
             self.px4_odom_timestamp_us = msg.timestamp  # Timestamp PX4 in microsecondi
             
@@ -612,30 +589,30 @@ class MpcPlannerNode(Node):
 
         # Pesi normalizzati
         # [r_cyl_err, beta_err, z_err, yaw_err]
-        R_CYL  = 2.0      # range distanza [m]
+        R_CYL  = 1.0      # range distanza [m]
         B_CYL  = np.pi/2  # range azimut [rad]
-        Z_CYL  = 2.0      # range quota [m]
+        Z_CYL  = 1.0      # range quota [m]
         Y_CYL  = np.pi/2  # range yaw [rad]
 
         V       = np.array([0.4, 0.4, 0.6])
-        ANG_DOT = np.array([0.15, 0.15, 0.3])
-        ACC     = np.array([0.5, 0.5, 1.0])
-        ACC_ANG = np.array([1.0, 1.0, 1.0])
+        ANG_DOT = np.array([0.15, 0.15, 0.5])
+        ACC     = np.array([0.6, 0.6, 1.0])
+        ACC_ANG = np.array([0.3, 0.3, 1.0])
         JERK    = 10.0
         SNAP    = 200.0
 
-        PesoVis    = self.get_parameter('mpc_weights.PesoVis').value
-        PesoBeta   = self.get_parameter('mpc_weights.PesoBeta').value
-        PesoGamma  = self.get_parameter('mpc_weights.PesoGamma').value
-        PesoYaw    = self.get_parameter('mpc_weights.PesoYaw').value
-        PesoVel    = self.get_parameter('mpc_weights.PesoVel').value
-        PesoAngVel = self.get_parameter('mpc_weights.PesoAngVel').value
-        PesoAcc    = self.get_parameter('mpc_weights.PesoAcc').value
-        PesoAngAcc = self.get_parameter('mpc_weights.PesoAngAcc').value
-        PesoJerk   = self.get_parameter('mpc_weights.PesoJerk').value
-        PesoSnap   = self.get_parameter('mpc_weights.PesoSnap').value
-        PesoForce  = self.get_parameter('mpc_weights.PesoForce').value
-        PesoTorque = self.get_parameter('mpc_weights.PesoTorque').value
+        PesoVis    = 100    # radius
+        PesoBeta   = PesoVis
+        PesoGamma  = PesoVis
+        PesoYaw    = PesoVis
+        PesoVel    = PesoVis / 40
+        PesoAngVel = PesoVis / 30
+        PesoAcc    = PesoVis / 80
+        PesoAngAcc = PesoVis / 40
+        PesoJerk   = PesoAcc / 5
+        PesoSnap   = PesoJerk / 2
+        PesoForce  = PesoVis / 1000
+        PesoTorque = PesoForce * 1.5
 
         # Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
         Q_cyl = np.diag([PesoVis / R_CYL**2,

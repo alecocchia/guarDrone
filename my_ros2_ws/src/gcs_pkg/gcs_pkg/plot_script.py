@@ -45,7 +45,7 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--log", type=str, default="/tmp/hw_run.npz")
+    ap.add_argument("--log", type=str, default="/tmp/sim_run.npz")
     ap.add_argument("--tex", action="store_true")
     ap.add_argument("--save", action="store_true")
     ap.add_argument("--all", action="store_true", help="Show all figures at once (default is sequential)")
@@ -98,7 +98,18 @@ def main():
                   "Omega X [rad/s]", "Omega Y [rad/s]", "Omega Z [rad/s]"], 
            "Drone Velocities vs MPC Reference", ncols=3, use_tex=args.tex, block=block, fignum=3, task_start=task_start)
 
-    # --- FIGURE 4: Coordinate Cilindriche (r_cyl, beta, z) vs Riferimento ---
+    # --- FIGURE 4: Riferimento Cartesiano Camera vs Posizione Effettiva Camera ---
+    # Usiamo direttamente p_cam e p_cam_target salvati dal logger.py
+    # Questi tengono conto correttamente sia dell'offset della telecamera sia della dinamica vera e propria.
+    fig_cart_ref_data = [
+        {'sim': data['p_cam'][:, 0], 'ref': data['p_cam_target'][:, 0]},
+        {'sim': data['p_cam'][:, 1], 'ref': data['p_cam_target'][:, 1]},
+        {'sim': data['p_cam'][:, 2], 'ref': data['p_cam_target'][:, 2]}
+    ]
+    myPlot(t, fig_cart_ref_data, ["Cam X [m]", "Cam Y [m]", "Cam Z [m]"], 
+           "Camera Cartesian Position vs Derived Target", ncols=3, use_tex=args.tex, block=block, fignum=4, task_start=task_start)
+
+    # --- FIGURE 5: Coordinate Cilindriche (r_cyl, beta, z) vs Riferimento ---
     # Allineamento dell'azimut per evitare che ref e sim si sdoppino di 2*pi nel plot
     beta_sim_unwrapped = np.unwrap(data['beta_cyl'])
     beta_diff_wrapped = (data['online_cyl_ref'][:, 1] - data['beta_cyl'] + np.pi) % (2 * np.pi) - np.pi
@@ -112,9 +123,9 @@ def main():
     myPlot(t, fig4_data,
            ["Distance r_cyl [m]", "Azimuth beta [rad]", "Elevation z [m]"],
            "Cylindrical PoV Tracking (World Frame)",
-           ncols=3, use_tex=args.tex, block=block, fignum=4, task_start=task_start)
+           ncols=3, use_tex=args.tex, block=block, fignum=5, task_start=task_start)
 
-    # --- FIGURE 5: Yaw Tracking (puntamento verso oggetto) ---
+    # --- FIGURE 6: Yaw Tracking (puntamento verso oggetto) ---
     yaw_actual  = data['rpy'][:, 2]
     yaw_desired = np.arctan2(-data['r_cyl'] * np.sin(data['beta_cyl']),
                              -data['r_cyl'] * np.cos(data['beta_cyl']))
@@ -170,7 +181,7 @@ def main():
     ]
     myPlot(t, fig7_data, ["Norm Vel Error [m/s]", "Norm Omega Error [rad/s]", "Norm Acc [m/s^2]",
                "Norm AngAcc [rad/s^2]", "Norm Jerk [m/s^3]", "Norm Snap [m/s^4]"], 
-           "Dynamic States Errors and Derivatives", ncols=3, use_tex=args.tex, block=block, fignum=7, task_start=task_start)
+           "Dynamic States Errors and Derivatives", ncols=3, use_tex=args.tex, block=block, fignum=13, task_start=task_start)
 
     # --- FIGURE 8: Wrench ---
     fig8_data = [
@@ -180,7 +191,7 @@ def main():
         {'sim': data['wrench_cmd'][:, 3], 'ref': data['wrench_target'][:, 3]}
     ]
     myPlot(t, fig8_data, ["Force Z (Thrust) [N]", "Torque X [Nm]", "Torque Y [Nm]", "Torque Z [Nm]"], 
-           f"Control Wrench (Hover Force = {mass*g:.2f}N)", ncols=2, use_tex=args.tex, block=block, fignum=8, task_start=task_start)
+           f"Control Wrench (Hover Force = {mass*g:.2f}N)", ncols=2, use_tex=args.tex, block=block, fignum=13, task_start=task_start)
 
     # --- FIGURE 9: Haptic Forces ---
     if 'haptic_force' in data.files:
@@ -190,7 +201,7 @@ def main():
             {'sim': data['haptic_force'][:, 2], 'ref': 0.0}
         ]
         myPlot(t, fig9_data, ["Force X (Zoom) [N]", "Force Y (Pan) [N]", "Force Z (Altitude) [N]"], 
-               "Haptic Feedback Forces Transmitted to haptic device", ncols=3, use_tex=args.tex, block=block, fignum=9, task_start=task_start)
+               "Haptic Feedback Forces Transmitted to haptic device", ncols=3, use_tex=args.tex, block=block, fignum=13, task_start=task_start)
 
     # --- FIGURE 10: Individual Linear and Angular Accelerations ---
     fig10_data = [
@@ -204,7 +215,7 @@ def main():
     myPlot(t, fig10_data, 
            ["Linear Acc X [m/s^2]", "Linear Acc Y [m/s^2]", "Linear Acc Z [m/s^2]", 
             "Angular Acc X [rad/s^2]", "Angular Acc Y [rad/s^2]", "Angular Acc Z [rad/s^2]"], 
-           "Drone Linear and Angular Accelerations", ncols=3, use_tex=args.tex, block=block, fignum=10, task_start=task_start)
+           "Drone Linear and Angular Accelerations", ncols=3, use_tex=args.tex, block=block, fignum=13, task_start=task_start)
 
     # --- FIGURE 11: Peg External Forces ---
     if 'peg_ext_force' in data.files:
@@ -215,7 +226,7 @@ def main():
         ]
         myPlot(t, fig11_data, 
                ["Force X (Sensor) [N]", "Force Y (Sensor) [N]", "Force Z (Sensor) [N]"], 
-               "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=11, task_start=task_start)
+               "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=13, task_start=task_start)
 
     # --- FIGURE 12: Admittance delta_p (spostamento di ammettenza in ENU) ---
     if 'delta_p' in data.files:
@@ -231,7 +242,7 @@ def main():
                [r"$\Delta p_x$ [m] (ENU)", r"$\Delta p_y$ [m] (ENU)", r"$\Delta p_z$ [m] (ENU)",
                 r"$\|\Delta p\|$ [m]"],
                "Admittance Displacement $\\Delta p$ (ENU frame)",
-               ncols=2, use_tex=args.tex, block=block, fignum=12, task_start=task_start)
+               ncols=2, use_tex=args.tex, block=block, fignum=13, task_start=task_start)
 
     # --- FIGURE 12b: delta_p in terna SENSORE ---
     if 'delta_p_sensor' in data.files:
@@ -247,7 +258,7 @@ def main():
                [r"$\Delta p_{sx}$ [m] (Sensor X)", r"$\Delta p_{sy}$ [m] (Sensor Y)",
                 r"$\Delta p_{sz}$ [m] (Sensor Z)", r"$\|\Delta p_s\|$ [m]"],
                "Admittance Displacement in Sensor Frame",
-               ncols=2, use_tex=args.tex, block=block, fignum=121, task_start=task_start)
+               ncols=2, use_tex=args.tex, block=block, fignum=131, task_start=task_start)
 
     # --- FIGURE 13: Confronto ||delta_p|| vs ||F_ext|| ---
     if 'delta_p' in data.files and 'peg_ext_force' in data.files:

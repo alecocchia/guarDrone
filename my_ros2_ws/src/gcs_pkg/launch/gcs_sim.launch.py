@@ -7,6 +7,7 @@ import sys
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
+from launch.conditions import IfCondition, UnlessCondition
 from launch_ros.actions import Node
 
 try:
@@ -29,12 +30,15 @@ def launch_setup(context, *args, **kwargs):
     peg_y   = LaunchConfiguration('peg_y')
     peg_z   = LaunchConfiguration('peg_z')
 
+    use_fake = LaunchConfiguration('use_fake')
+
     supervisor_node = Node(
         package='gcs_pkg',
         executable='supervisor.py',
         name='supervisor_node',
         output='screen',
         emulate_tty=True,
+        condition=UnlessCondition(use_fake),
         parameters=[{
             'use_sim_time': True,
             'takeoff_alt_1': 4.52 + 3.0,   # [m] ENU: quota decollo GuaDrone
@@ -69,13 +73,34 @@ def launch_setup(context, *args, **kwargs):
         }],
     )
 
-    return [supervisor_node, data_logger]
+    # NODO: FAKE PUBLISHER (usato per testare solo il GuaDrone, simula l'interaction drone e il supervisor)
+    fake_publisher_node = Node(
+        package='gcs_pkg',
+        executable='fake_publisher.py',
+        name='fake_publisher_node',
+        output='screen',
+        condition=IfCondition(use_fake),
+        parameters=[{
+            'use_sim_time': True,
+            'takeoff_alt_1': 4.52 + 3.0,
+            'cam_start_x': drone_x,
+            'cam_start_y': drone_y,
+            'cam_start_z': drone_z,
+            'peg_start_x': peg_x,
+            'peg_start_y': peg_y,
+            'peg_start_z': peg_z,
+        }]
+    )
+
+    return [supervisor_node, fake_publisher_node, data_logger]
 
 
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('model', default_value='x500_depth',
                               description='Modello Gazebo del GuaDrone (per ricavare offset camera)'),
+        DeclareLaunchArgument('use_fake', default_value='false',
+                              description='Usa fake_publisher invece del supervisor e drone2'),
         # --- Pose iniziali (devono corrispondere a quelle usate negli altri launch) ---
         DeclareLaunchArgument('drone_x',   default_value='-4.0'),
         DeclareLaunchArgument('drone_y',   default_value='-53.0'),

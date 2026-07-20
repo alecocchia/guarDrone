@@ -1,5 +1,5 @@
 # file: guardrone_sim.launch.py
-# Launch file dedicato alla simulazione del GuarDrone (Drone 1 - MPC + Camera).
+# Launch file dedicato alla simulazione del GuaDrone (Drone 1 - MPC + Camera).
 # Avvia: MPC_planner_node, guarDrone_trajectory_planner, ros_gz_bridge, rviz2.
 
 import os
@@ -30,18 +30,16 @@ def launch_setup(context, *args, **kwargs):
     if auto_fmax == 0:
         auto_fmax = auto_mass * 9.81 * 2.0
 
-    print(f"\n[GuarDrone SIM] Modello: {model_name}")
-    print(f"[GuarDrone SIM] Massa: {auto_mass:.4f} kg | F_max: {auto_fmax:.2f} N")
-    print(f"[GuarDrone SIM] Inerzia (Ixx,Iyy,Izz): {auto_inertia}")
-    print(f"[GuarDrone SIM] FOV Camera (H,V): {auto_fov_h:.1f}, {auto_fov_v:.1f} deg\n")
+    print(f"\n[GuaDrone SIM] Modello: {model_name}")
+    print(f"[GuaDrone SIM] Massa: {auto_mass:.4f} kg | F_max: {auto_fmax:.2f} N")
+    print(f"[GuaDrone SIM] Inerzia (Ixx,Iyy,Izz): {auto_inertia}")
+    print(f"[GuaDrone SIM] FOV Camera (H,V): {auto_fov_h:.1f}, {auto_fov_v:.1f} deg\n")
 
     # --- PERCORSI ---
     guardrone_pkg_dir = get_package_share_directory('guardrone_pkg')
     # Il bridge.yaml e rviz vivono in guardrone_pkg
     bridge_config_file = os.path.join(guardrone_pkg_dir, 'config', 'bridge.yaml')
     rviz_config_file   = os.path.join(guardrone_pkg_dir, 'config', 'rviz_config_file.rviz')
-    drone_params_file = os.path.join(guardrone_pkg_dir, 'config', 'drone_parameters_sim.yaml')
-    mpc_weights_file = os.path.join(guardrone_pkg_dir, 'config', 'mpc_weights.yaml')
 
     # --- ARGOMENTI POSE ---
     drone_x   = LaunchConfiguration('drone_x')
@@ -51,6 +49,8 @@ def launch_setup(context, *args, **kwargs):
     peg_x     = LaunchConfiguration('peg_x')
     peg_y     = LaunchConfiguration('peg_y')
     peg_z     = LaunchConfiguration('peg_z')
+    cf        = LaunchConfiguration('cf')
+    ct        = LaunchConfiguration('ct')
 
     # --- NODI ---
 
@@ -60,24 +60,23 @@ def launch_setup(context, *args, **kwargs):
         name='MPC_planner_node',
         output='screen',
         emulate_tty=True,
-        parameters=[
-            drone_params_file,
-            mpc_weights_file,
-            {
-                'use_sim_time': True,
-                'mass': auto_mass,
-                'ixx': auto_inertia[0], 'iyy': auto_inertia[1], 'izz': auto_inertia[2],
-                'f_max': auto_fmax,
-                'cam_x': auto_cam[0], 'cam_y': auto_cam[1], 'cam_z': auto_cam[2],
-                'cam_roll': auto_cam_rpy[0], 'cam_pitch': auto_cam_rpy[1], 'cam_yaw': auto_cam_rpy[2],
-                'fov_h': auto_fov_h, 'fov_v': auto_fov_v,
-                'start_x': drone_x, 'start_y': drone_y, 'start_z': drone_z,
-                'start_yaw': drone_yaw,
-                'peg_x': peg_x, 'peg_y': peg_y, 'peg_z': peg_z,
-                'w_min': auto_wmin, 'w_max': auto_wmax,
-                'arm_l_x': auto_lx, 'arm_l_y': auto_ly, 'moment_const': auto_mc,
-            }
-        ]
+        parameters=[{
+            'use_sim_time': True,
+            'control_flag': LaunchConfiguration('MPC_controller'),
+            'mass': auto_mass,
+            'ixx': auto_inertia[0], 'iyy': auto_inertia[1], 'izz': auto_inertia[2],
+            'cf': cf, 'ct': ct,
+            'f_max': auto_fmax,
+            'cam_x': auto_cam[0], 'cam_y': auto_cam[1], 'cam_z': auto_cam[2],
+            'cam_roll': auto_cam_rpy[0], 'cam_pitch': auto_cam_rpy[1], 'cam_yaw': auto_cam_rpy[2],
+            'fov_h': auto_fov_h, 'fov_v': auto_fov_v,
+            'start_x': drone_x, 'start_y': drone_y, 'start_z': drone_z,
+            'start_yaw': drone_yaw,
+            'peg_x': peg_x, 'peg_y': peg_y, 'peg_z': peg_z,
+            'w_min': auto_wmin, 'w_max': auto_wmax,
+            'arm_l_x': auto_lx, 'arm_l_y': auto_ly, 'moment_const': auto_mc,
+            'return2autonomous': LaunchConfiguration('return2autonomous'),
+        }]
     )
 
     guardrone_trajectory_planner = Node(
@@ -126,12 +125,13 @@ def launch_setup(context, *args, **kwargs):
 
 def generate_launch_description():
     return LaunchDescription([
-        # Modello PX4/Gazebo del GuarDrone
+        # Modello PX4/Gazebo del GuaDrone
         DeclareLaunchArgument('model',          default_value='x500_depth',
-                              description='Modello Gazebo del GuarDrone (es. x500_depth)'),
+                              description='Modello Gazebo del GuaDrone (es. x500_depth)'),
+        DeclareLaunchArgument('MPC_controller', default_value='1'),
         DeclareLaunchArgument('controller',     default_value='2'),
         DeclareLaunchArgument('enable_rviz',    default_value='true'),
-        # Posa iniziale GuarDrone
+        # Posa iniziale GuaDrone
         DeclareLaunchArgument('drone_x',   default_value='-4.0'),
         DeclareLaunchArgument('drone_y',   default_value='-53.0'),
         DeclareLaunchArgument('drone_z',   default_value='4.52'),
@@ -140,5 +140,10 @@ def generate_launch_description():
         DeclareLaunchArgument('peg_x', default_value='-1.0'),
         DeclareLaunchArgument('peg_y', default_value='-55.0'),
         DeclareLaunchArgument('peg_z', default_value='4.52'),
+        # Parametri motore
+        DeclareLaunchArgument('cf', default_value='8.0e-4'),
+        DeclareLaunchArgument('ct', default_value='1.0e-5'),
+        DeclareLaunchArgument('return2autonomous', default_value='False',
+                              description='Se True, al rilascio del comando il drone torna alla traiettoria pianificata'),
         OpaqueFunction(function=launch_setup)
     ])

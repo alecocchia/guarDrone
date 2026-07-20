@@ -47,7 +47,21 @@ class FakePublisherNode(Node):
         self.create_subscription(String, '/keyboard_input', self.keyboard_cb, 10)
         
         # --- Parametri di volo ---
-        self.takeoff_alt_1 = 1.25  # Quota di decollo (ENU)
+        self.declare_parameter('takeoff_alt_1', 4.52+3.0)
+        self.declare_parameter('cam_start_x', 0.0)
+        self.declare_parameter('cam_start_y', 0.0)
+        self.declare_parameter('cam_start_z', 4.52)
+        self.declare_parameter('peg_start_x', 0.0)
+        self.declare_parameter('peg_start_y', 0.0)
+        self.declare_parameter('peg_start_z', 4.52)
+
+        self.takeoff_alt_1 = self.get_parameter('takeoff_alt_1').value
+        self.cam_start_x = self.get_parameter('cam_start_x').value
+        self.cam_start_y = self.get_parameter('cam_start_y').value
+        self.cam_start_z = self.get_parameter('cam_start_z').value
+        self.peg_start_x = self.get_parameter('peg_start_x').value
+        self.peg_start_y = self.get_parameter('peg_start_y').value
+        self.peg_start_z = self.get_parameter('peg_start_z').value
         
         # Variabili di stato interne
         self.drone1_local_pos = VehicleLocalPosition()
@@ -102,10 +116,12 @@ class FakePublisherNode(Node):
         odom_msg.timestamp = int(now.nanoseconds / 1000)
         
         # Posizione del peg (coordinate NED).
-        # Impostiamo il peg 2m "davanti" (North) e a 2m di quota (Up = -2.0 NED)
-        # Cosi', se il drone sta all'origine in XY, il peg_drone è a [2, 0, 2] in ENU.
-        odom_msg.position = [2.0, 0.0, -float(self.takeoff_alt_1)]
-        odom_msg.q = [1.0, 0.0, 0.0, 0.0] 
+        # L'odometria PX4 è locale rispetto al punto di spawn.
+        # Il peg deve essere in hovering esattamente sopra il suo punto di spawn,
+        # quindi N=0, E=0. La quota locale (D) è negativo (takeoff_alt_1 - peg_start_z).
+        local_z = float(self.takeoff_alt_1 - self.peg_start_z)
+        odom_msg.position = [0.0, 0.0, -local_z]
+        odom_msg.q = [1.0, 0.0, 0.0, 0.0]
         odom_msg.velocity = [0.0, 0.0, 0.0]
         odom_msg.angular_velocity = [0.0, 0.0, 0.0]
         self.odom_pub.publish(odom_msg)
@@ -113,13 +129,15 @@ class FakePublisherNode(Node):
         # =========================================================================
         # 2) PUBBLICAZIONE POV TARGET (50Hz)
         # =========================================================================
-        # Se il peg è a X=2 e il drone è a X=0, il drone è "dietro" al peg di 2m.
-        # r_cyl = 2.0, beta = Pi rad. Z rel = 0.
-        # Con questo target, il drone l'MPC cercherà di mantenere la
-        # posizione di hovering a [0, 0, 2] (cioè dove ha fatto il takeoff), 
-        # senza avere problemi di singolarità atan2 per r=0.
+        # Calcoliamo la distanza e l'angolo esatti tra i due punti di spawn
+        # per far sì che il drone rimanga in perfetto hovering dove si trova!
+        dx = float(self.cam_start_x - self.peg_start_x)
+        dy = float(self.cam_start_y - self.peg_start_y)
+        r_hover = math.sqrt(dx**2 + dy**2)
+        beta_hover = math.atan2(dy, dx)
+        
         pov_msg = Float64MultiArray()
-        pov_msg.data = [2.0, -math.pi/2, 0.0, 0.0] 
+        pov_msg.data = [r_hover, beta_hover, 0.0, 0.0] 
         self.pov_pub.publish(pov_msg)
         
         # =========================================================================
@@ -152,8 +170,8 @@ class FakePublisherNode(Node):
                     # Invia target di decollo
                     cam_pose = PoseStamped()
                     cam_pose.header.frame_id = 'world'
-                    cam_pose.pose.position.x = 0.0
-                    cam_pose.pose.position.y = 0.0
+                    cam_pose.pose.position.x = float(self.cam_start_x)
+                    cam_pose.pose.position.y = float(self.cam_start_y)
                     cam_pose.pose.position.z = float(self.takeoff_alt_1)
                     self.cam_target_pub.publish(cam_pose)
                     
@@ -181,8 +199,8 @@ class FakePublisherNode(Node):
                 self.state = 'TAKEOFF_MONITOR'
                 
         elif self.state == 'TAKEOFF_MONITOR':
-            # drone1_local_pos.z è NED (negativo verso l'alto)
-            d1_up = abs(-self.drone1_local_pos.z - self.takeoff_alt_1) < 0.025
+            # drone1_local_pos.z è NED (negativo verso l'alto). Essendo un valore locale, è relativo a cam_start_z
+            d1_up = abs(-self.drone1_local_pos.z - (self.takeoff_alt_1 - self.cam_start_z)) < 0.1
 
             if d1_up:
                 if not self.switch_msg_printed:
