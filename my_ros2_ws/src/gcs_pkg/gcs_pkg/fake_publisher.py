@@ -6,7 +6,7 @@ import math
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from px4_msgs.msg import VehicleOdometry, VehicleLocalPosition, VehicleControlMode, VehicleCommand
-from std_msgs.msg import Bool, Float64MultiArray
+from std_msgs.msg import Bool, Float64MultiArray, String
 from geometry_msgs.msg import PoseStamped
 import numpy as np
 
@@ -28,22 +28,23 @@ class FakePublisherNode(Node):
         )
         
         # --- Publishers ---
-        # 1. Odometria fittizia per il peg
+        # 1 - Odometria fittizia per il peg
         self.odom_pub = self.create_publisher(VehicleOdometry, '/px4_1/fmu/out/vehicle_odometry', px4_qos_profile)
-        # 2. Controllo task e logging
+        # 2 - Inizio task mpc e logging
         self.task_start_pub = self.create_publisher(Bool, '/mpc_task/start', qos_latched)
         self.logging_start_pub = self.create_publisher(Bool, '/logging/start', qos_latched)
-        # 3. Offboard Trajectory Planner e POV
+        # 3 - Offboard Trajectory Planner e POV
         self.cam_target_pub = self.create_publisher(PoseStamped, '/camera_target_pose', 10)
         self.cam_traj_enabled_pub = self.create_publisher(Bool, '/camera_traj_enabled', 10)
         self.pov_pub = self.create_publisher(Float64MultiArray, '/pov_target', 10)
-        # 4. PX4 Commands (Arm, Offboard)
+        # 4 - PX4 Commands (Arm, Offboard)
         self.cmd_pub_1 = self.create_publisher(VehicleCommand, '/fmu/in/vehicle_command', px4_qos_profile)
         
         # --- Subscribers ---
         self.create_subscription(VehicleLocalPosition, '/fmu/out/vehicle_local_position', self.pos1_cb, px4_qos_profile)
         self.create_subscription(VehicleControlMode, '/fmu/out/vehicle_control_mode', self.mode1_cb, px4_qos_profile)
         self.create_subscription(Bool, '/drone_planner_ready', self.mpc_ready_cb, qos_latched)
+        self.create_subscription(String, '/keyboard_input', self.keyboard_cb, 10)
         
         # --- Parametri di volo ---
         self.takeoff_alt_1 = 1.25  # Quota di decollo (ENU)
@@ -52,6 +53,7 @@ class FakePublisherNode(Node):
         self.drone1_local_pos = VehicleLocalPosition()
         self.drone1_mode = VehicleControlMode()
         self.mpc_ready = False
+        self.user_ok = False
         
         self.state = 'WAIT_EKF'
         self.wait_ticks = 0
@@ -69,6 +71,11 @@ class FakePublisherNode(Node):
         if msg.data and not self.mpc_ready:
             self.mpc_ready = True
             self.get_logger().info("Segnale MPC Pronto ricevuto!")
+
+    def keyboard_cb(self, msg):
+        if msg.data.strip().lower() == 'ok':
+            self.user_ok = True
+            self.get_logger().info("Comando OK ricevuto dal terminale GCS!")
 
     def publish_command(self, command, param1=0.0, param2=0.0):
         msg = VehicleCommand()
@@ -132,27 +139,33 @@ class FakePublisherNode(Node):
                 
         elif self.state == 'WAIT_START':
             if self.mpc_ready:
-                self.get_logger().info("Inizio missione automatica. Invio target di takeoff e passo ad ARM_OFFBOARD.")
+                if not getattr(self, 'wait_msg_printed', False):
+                    self.get_logger().info("Planner di takeoff pronto. Digita 'ok' (e premi invio) sul terminale GCS per autorizzare il decollo.")
+                    self.wait_msg_printed = True
                 
-                # Invia target di decollo
-                cam_pose = PoseStamped()
-                cam_pose.header.frame_id = 'world'
-                cam_pose.pose.position.x = 0.0
-                cam_pose.pose.position.y = 0.0
-                cam_pose.pose.position.z = float(self.takeoff_alt_1)
-                self.cam_target_pub.publish(cam_pose)
-                
-                # Accende il trajectory planner
-                msg_traj = Bool()
-                msg_traj.data = True
-                self.cam_traj_enabled_pub.publish(msg_traj)
-                
-                # Segnale di logging start
-                log_start_msg = Bool()
-                log_start_msg.data = True
-                self.logging_start_pub.publish(log_start_msg)
-                
-                self.state = 'ARM_OFFBOARD'
+                if self.user_ok:
+                    self.user_ok = False # Consuma il comando
+                    self.get_logger().info("Inizio missione automatica. Invio target di takeoff e passo ad ARM_OFFBOARD.")
+                    
+                    # Invia target di decollo
+                    cam_pose = PoseStamped()
+                    cam_pose.header.frame_id = 'world'
+                    cam_pose.pose.position.x = 0.0
+                    cam_pose.pose.position.y = 0.0
+                    cam_pose.pose.position.z = float(self.takeoff_alt_1)
+                    self.cam_target_pub.publish(cam_pose)
+                    
+                    # Accende il trajectory planner
+                    msg_traj = Bool()
+                    msg_traj.data = True
+                    self.cam_traj_enabled_pub.publish(msg_traj)
+                    
+                    # Segnale di logging start
+                    log_start_msg = Bool()
+                    log_start_msg.data = True
+                    self.logging_start_pub.publish(log_start_msg)
+                    
+                    self.state = 'ARM_OFFBOARD'
                 
         elif self.state == 'ARM_OFFBOARD':
             d1_ready = (self.drone1_mode.flag_control_offboard_enabled and self.drone1_mode.flag_armed)
@@ -167,7 +180,7 @@ class FakePublisherNode(Node):
                 
         elif self.state == 'TAKEOFF_MONITOR':
             # drone1_local_pos.z è NED (negativo verso l'alto)
-            d1_up = abs(-self.drone1_local_pos.z - self.takeoff_alt_1) < 0.2
+            d1_up = abs(-self.drone1_local_pos.z - self.takeoff_alt_1) < 0.025
             
             if d1_up:
                 self.get_logger().info("Drone in quota (2m) raggiunto! Switch da Trajectory Planner a MPC.")

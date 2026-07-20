@@ -26,7 +26,8 @@ set -e
 # === CONFIGURAZIONE ===
 CONTAINER_NAME="gcs_cnt"
 IMAGE_NAME="gcs_img"
-ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-14}
+ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-22}
+CYCLONE_URI="file:///root/my_ros2_ws/src/gcs_pkg/gcs_pkg/cyclonedds_config.xml"
 
 # === TROVA LE CARTELLA gcs_pkg e optitrack_listener (sparse-checkout)===
 HOST_GUARDRONE_DIR=$(find "/home/${USER}" -maxdepth 4 -type d -iname "guarDrone" -print -quit 2>/dev/null)
@@ -95,6 +96,7 @@ docker run --rm -it --privileged \
     -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
     -e XDG_RUNTIME_DIR="/tmp/runtime-root" \
     -e LD_LIBRARY_PATH=/opt/acados/lib \
+    -e CYCLONEDDS_URI=${CYCLONE_URI} \
     -w /root/my_ros2_ws \
     --name=${CONTAINER_NAME} \
     ${IMAGE_NAME} bash -c "

@@ -111,7 +111,18 @@ def launch_setup(context, *args, **kwargs):
         ]
     )
 
-
+    # --- NODO OPTITRACK (de-commentare in presenza di OptiTrack) ---
+    # optitrack_node = Node(
+    #     package='optitrack_listener',
+    #     executable='optitrack_listener',
+    #     name='optitrack_listener',
+    #     output='screen',
+    #     parameters=[{
+    #         'use_sim_time': False,
+    #         'drone_name': 'guardrone', # Nome del rigid body definito su Motive
+    #         'px4_ns': '',              # Namespace per mappare su /fmu/in/vehicle_visual_odometry
+    #     }]
+    # )
 
     rviz_node = Node(
         package='rviz2',
