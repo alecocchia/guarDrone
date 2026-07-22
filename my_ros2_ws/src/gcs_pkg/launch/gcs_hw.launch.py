@@ -51,7 +51,17 @@ def launch_setup(context, *args, **kwargs):
         executable='fake_publisher.py',
         name='fake_publisher_node',
         output='screen',
-        condition=IfCondition(use_fake)
+        condition=IfCondition(use_fake),
+        parameters=[{
+            'use_sim_time': False,
+            'takeoff_alt_1': 1.5,   # [m] Quota di decollo reale per GuaDrone
+            'cam_start_x': drone_x,
+            'cam_start_y': drone_y,
+            'cam_start_z': drone_z,
+            'peg_start_x': peg_x,
+            'peg_start_y': peg_y,
+            'peg_start_z': peg_z,
+        }],
     )
 
     # NODO: LOGGER

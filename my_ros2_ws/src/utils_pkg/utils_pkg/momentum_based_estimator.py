@@ -34,11 +34,11 @@ class MomentumBasedEstimator:
     def update(self, v_k, w_k, quat_k, Fz_prev, tau_prev):
         """ Esegue il passo di integrazione di Eulero in avanti a (1/ts) Hz """
         
-        # 1. Quantità di moto attuali (dai sensori)
+        # Quantità di moto attuali (dai sensori)
         p_T = self.mass * np.array(v_k)
         p_R = self.J @ np.array(w_k)
 
-        # 2. Termini Noti (Wrench Nominale)
+        # Termini Noti (Wrench Nominale)
         # Nota: quat_k arriva dall'MPC come [w, x, y, z]. SciPy vuole [x, y, z, w].
         q_scipy = [quat_k[1], quat_k[2], quat_k[3], quat_k[0]]
         Rb = Rotation.from_quat(q_scipy).as_matrix()
@@ -49,14 +49,14 @@ class MomentumBasedEstimator:
         # Coppia nominale (body) = Coppia netta - Effetto di Coriolis
         tau_nom = np.array(tau_prev) - np.cross(w_k, self.J @ w_k)
 
-        # 3. Aggiornamento Derivate (Sistema dinamico)
+        # Aggiornamento derivate (sistema dinamico)
         dI_T = F_nom + self.r_T
         dr_T = self.K1 * (-self.r_T + self.K2 * (p_T - self.I_T))
 
         dI_R = tau_nom + self.r_R
         dr_R = self.K1 * (-self.r_R + self.K2 * (p_R - self.I_R))
 
-        # 4. Integrazione nel tempo (Metodo di Eulero in avanti)
+        # Integrazione nel tempo (Metodo di Eulero in avanti)
         self.I_T += dI_T * self.ts
         self.r_T += dr_T * self.ts
 
