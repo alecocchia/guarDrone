@@ -370,17 +370,20 @@ class Logger(Node):
 
         # Yaw attuale e yaw desiderato (puntare verso oggetto)
         yaw_actual   = rpy[:, 2]
-        yaw_desired  = np.arctan2(-p_rel_world[:, 1], -p_rel_world[:, 0])
+        yaw_desired  = beta_cyl + np.pi
         yaw_err_cyl  = np.arctan2(np.sin(yaw_actual - yaw_desired),
                                   np.cos(yaw_actual - yaw_desired))
 
         online_cyl_ref = np.asarray(self.online_cyl_ref)  # [r_cyl_ref, beta_ref, z_ref]
+        r_cyl_ref = online_cyl_ref[:, 0]
+        beta_ref = online_cyl_ref[:, 1]
+        z_ref = online_cyl_ref[:, 2]
 
         # 3. Target Cartesiano della Telecamera
         p_cam_target = np.zeros_like(p_cam)
-        p_cam_target[:, 0] = peg_pos[:, 0] + online_cyl_ref[:, 0] * np.cos(online_cyl_ref[:, 1])
-        p_cam_target[:, 1] = peg_pos[:, 1] + online_cyl_ref[:, 0] * np.sin(online_cyl_ref[:, 1])
-        p_cam_target[:, 2] = peg_pos[:, 2] + online_cyl_ref[:, 2]
+        p_cam_target[:, 0] = peg_pos[:, 0] + r_cyl_ref * np.cos(beta_ref)
+        p_cam_target[:, 1] = peg_pos[:, 1] + r_cyl_ref * np.sin(beta_ref)
+        p_cam_target[:, 2] = peg_pos[:, 2] + z_ref
 
         out = dict(
             t=T_rel, t_ref=np.asarray(self.t_ref),

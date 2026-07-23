@@ -83,12 +83,15 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{
             'use_sim_time': True,
             'takeoff_alt_1': 4.52 + 3.0,
-            'cam_start_x': drone_x,
-            'cam_start_y': drone_y,
-            'cam_start_z': drone_z,
+            'guardrone_start_x': drone_x,
+            'guardrone_start_y': drone_y,
+            'guardrone_start_z': drone_z,
             'peg_start_x': peg_x,
             'peg_start_y': peg_y,
             'peg_start_z': peg_z,
+            'cam_offset_x': auto_cam[0],
+            'cam_offset_y': auto_cam[1],
+            'cam_offset_z': auto_cam[2],
         }]
     )
 

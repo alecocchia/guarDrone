@@ -104,7 +104,7 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     w_expr = model.x[10:13]
     ang_vel = w_expr
 
-    # Rotazione body→world — IMPORTANTE: usa q_norm (normalizzato) per coerenza con yaw.
+    # Rotazione body→world — IMPORTANTE: usa q_norm (normalizzato)
     # R_expr e yaw devono venire dallo stesso quaternione, altrimenti
     # p_cam_expr e yaw_desired divergono generando un yaw_err residuo artificiale.
     R_expr = quat_to_R(q_norm)
@@ -156,7 +156,7 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
 
     # Yaw error: il drone deve puntare verso l'oggetto
     # La direzione desiderata è -p_rel (da drone verso oggetto)
-    yaw_desired = ca.atan2(-p_rel[1], -p_rel[0])
+    yaw_desired = beta_raw + np.pi
     yaw_err = min_angle(yaw - yaw_desired)
 
     #########################################################################################################                   

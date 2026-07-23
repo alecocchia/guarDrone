@@ -123,8 +123,9 @@ class MpcPlannerNode(Node):
 
 
         # === Tempo/Orizzonte ===
-        self.ts = 0.01             # 100 Hz
-        self.N_horiz = 50          # Orizzonte di predizione (numero di campioni)
+        self.Hz = 100.0
+        self.ts = 1.0/self.Hz             # 250 Hz
+        self.N_horiz = 30          # Orizzonte di predizione (numero di campioni)
         self.Tp = self.N_horiz * self.ts  # Tempo totale dell'orizzonte 
 
         self.path_pub_counter = 0  # Contatore per limitare la frequenza di pubblicazione del path
@@ -382,14 +383,18 @@ class MpcPlannerNode(Node):
 
     def thrust_out_cb(self, msg):
         # I valori in uscita da PX4 sono normalizzati [-1, 1]. In NED, Z=-1 significa full thrust verso l'alto.
-        self.current_px4_thrust[0] = msg.xyz[0] * self.U_F
-        self.current_px4_thrust[1] = msg.xyz[1] * self.U_F
-        self.current_px4_thrust[2] = -msg.xyz[2] * self.U_F
+        self.current_px4_thrust =  self.M_frd2flu @ msg.xyz 
+        
+        self.current_px4_thrust[0] *= self.U_F
+        self.current_px4_thrust[1] *= self.U_F
+        self.current_px4_thrust[2] *= self.U_F
 
     def torque_out_cb(self, msg):
-        self.current_px4_torque[0] = msg.xyz[0] * self.U_TAU_X
-        self.current_px4_torque[1] = msg.xyz[1] * self.U_TAU_Y
-        self.current_px4_torque[2] = msg.xyz[2] * self.U_TAU_Z
+        self.current_px4_torque =  self.M_frd2flu @ msg.xyz 
+        
+        self.current_px4_torque[0] *=  self.U_TAU_X
+        self.current_px4_torque[1] *=  self.U_TAU_Y
+        self.current_px4_torque[2] *=  self.U_TAU_Z
 
     def odom_callback(self, msg: VehicleOdometry):
         # Quaternione PX4: rappresenta R_frd2ned (body FRD → world NED)
@@ -580,7 +585,7 @@ class MpcPlannerNode(Node):
         z_ref     = (1 - alpha) * manual_pov[2] + alpha * auto_cyl[2]
 
         # --- Interpolazione circolare su beta ---
-        diff_beta = wrap_pi(manual_pov[1] - auto_cyl[1])
+        diff_beta = manual_pov[1] - auto_cyl[1]
         beta_ref  = wrap_pi(auto_cyl[1] + (1 - alpha) * diff_beta)
 
         return np.array([r_cyl_ref, beta_ref, z_ref])
@@ -605,13 +610,13 @@ class MpcPlannerNode(Node):
         PesoBeta   = PesoVis
         PesoGamma  = PesoVis
         PesoYaw    = PesoVis
-        PesoVel    = PesoVis / 40
-        PesoAngVel = PesoVis / 30
-        PesoAcc    = PesoVis / 80
+        PesoVel    = PesoVis / 20
+        PesoAngVel = PesoVis / 20
+        PesoAcc    = PesoVis / 40
         PesoAngAcc = PesoVis / 40
         PesoJerk   = PesoAcc / 5
         PesoSnap   = PesoJerk / 2
-        PesoForce  = PesoVis / 1000
+        PesoForce  = PesoVis / 500
         PesoTorque = PesoForce * 1.5
 
         # Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
@@ -799,9 +804,9 @@ class MpcPlannerNode(Node):
             z_act     = float(p_rel[2])
             
             yaw_actual = self.current_rpy[2]
-            yaw_desired = np.arctan2(-p_rel[1], -p_rel[0])
-            yaw_err_act = float(np.arctan2(np.sin(yaw_actual - yaw_desired), np.cos(yaw_actual - yaw_desired)))
-            
+            yaw_desired = beta_act + np.pi
+            yaw_err_act = wrap_pi(yaw_actual - yaw_desired)
+                        
             actual_pov_msg = Float64MultiArray()
             actual_pov_msg.data = [r_cyl_act, beta_act, z_act, yaw_err_act]
             self.actual_pov_pub.publish(actual_pov_msg)
