@@ -388,7 +388,6 @@ class MpcPlannerNode(Node):
 
     # Prox due funzioni sono usate per check sullo switch all'MPC
     def thrust_out_cb(self, msg):
-<<<<<<< HEAD
         # I valori in uscita da PX4 sono normalizzati [-1, 1]. In NED, Z=-1 significa full thrust verso l'alto.
         self.current_px4_thrust =  self.M_frd2flu @ msg.xyz 
         
@@ -402,18 +401,6 @@ class MpcPlannerNode(Node):
         self.current_px4_torque[0] *=  self.U_TAU_X
         self.current_px4_torque[1] *=  self.U_TAU_Y
         self.current_px4_torque[2] *=  self.U_TAU_Z
-=======
-        # Conversione da FRD (PX4) a FLU (MPC) e denormalizzazione:
-        self.current_px4_thrust_flu = self.M_frd2flu @ np.array([msg.xyz[0], msg.xyz[1], msg.xyz[2]])
-        self.current_px4_thrust_flu[2] *= self.U_F
-
-    def torque_out_cb(self, msg):
-        # Conversione da FRD (PX4) a FLU (MPC) e denormalizzazione:
-        self.current_px4_torque_flu = self.M_frd2flu @ np.array([msg.xyz[0], msg.xyz[1], msg.xyz[2]])
-        self.current_px4_torque_flu[0] *= self.U_TAU_X
-        self.current_px4_torque_flu[1] *= self.U_TAU_Y
-        self.current_px4_torque_flu[2] *= self.U_TAU_Z
->>>>>>> 0f53cea52a0c23dbbd293d9dd0c87b9e0c449241
 
     def odom_callback(self, msg: VehicleOdometry):
         # Quaternione PX4: rappresenta R_frd2ned (body FRD → world NED)
@@ -820,18 +807,14 @@ class MpcPlannerNode(Node):
             p_rel = p_obj_now - p_cam
             r_cyl_act = float(np.linalg.norm(p_rel[0:2]))
             beta_act  = float(np.arctan2(p_rel[1], p_rel[0]))
+
+#################### CONTROLLARE STO SEGNO 
             z_act     = -float(p_rel[2])
             
             yaw_actual = self.current_rpy[2]
-<<<<<<< HEAD
             yaw_desired = beta_act + np.pi
             yaw_err_act = wrap_pi(yaw_actual - yaw_desired)
                         
-=======
-            yaw_desired = np.arctan2(p_rel[1], p_rel[0])
-            yaw_err_act = float(np.arctan2(np.sin(yaw_actual - yaw_desired), np.cos(yaw_actual - yaw_desired)))
-            
->>>>>>> 0f53cea52a0c23dbbd293d9dd0c87b9e0c449241
             actual_pov_msg = Float64MultiArray()
             actual_pov_msg.data = [r_cyl_act, beta_act, z_act, yaw_err_act]
             self.actual_pov_pub.publish(actual_pov_msg)

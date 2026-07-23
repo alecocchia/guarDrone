@@ -155,13 +155,8 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     z_err = z_ref_sym - p_rel[2]
     # Yaw error: il drone deve puntare verso l'oggetto
     # La direzione desiderata è -p_rel (da drone verso oggetto)
-<<<<<<< HEAD
     yaw_desired = beta_raw + np.pi
     yaw_err = min_angle(yaw - yaw_desired)
-=======
-    yaw_desired = ca.atan2(p_rel[1], p_rel[0])
-    yaw_err = min_angle(yaw_desired - yaw)
->>>>>>> 0f53cea52a0c23dbbd293d9dd0c87b9e0c449241
 
     #########################################################################################################                   
     #Jerk
