@@ -136,7 +136,7 @@ class FakePublisherNode(Node):
         now = self.get_clock().now()
         
         # =========================================================================
-        # 1) PUBBLICAZIONE COSTANTE ODOMETRIA PEG (50Hz)
+        # PUBBLICAZIONE COSTANTE ODOMETRIA PEG (50Hz)
         # =========================================================================
         odom_msg = VehicleOdometry()
         odom_msg.timestamp = int(now.nanoseconds / 1000)

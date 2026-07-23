@@ -141,23 +141,27 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     p_cam_expr = p_expr + R_expr @ ca.DM(cam_offset_body)
 
     # Vettore telecamera → oggetto nel frame mondo
-    p_rel = p_cam_expr - p_obj_expr
+    p_rel = p_obj_expr - p_cam_expr
 
     # Distanza 2D (sul piano orizzontale): sempre > 0
     r_cyl = ca.sqrt(p_rel[0]**2 + p_rel[1]**2)
-    r_cyl_err = r_cyl - r_cyl_ref_sym
+    r_cyl_err = r_cyl_ref_sym - r_cyl
 
     # Azimut: angolo del vettore drone -> obj nel piano XY (rad)
     beta_raw = ca.atan2(p_rel[1], p_rel[0])
-    beta_err = min_angle(beta_raw - beta_ref_sym)
+    beta_err = min_angle(beta_ref_sym - beta_raw)
 
     # Quota relativa: differenza lungo Z
-    z_err = p_rel[2] - z_ref_sym
-
+    z_err = z_ref_sym - p_rel[2]
     # Yaw error: il drone deve puntare verso l'oggetto
     # La direzione desiderata è -p_rel (da drone verso oggetto)
+<<<<<<< HEAD
     yaw_desired = beta_raw + np.pi
     yaw_err = min_angle(yaw - yaw_desired)
+=======
+    yaw_desired = ca.atan2(p_rel[1], p_rel[0])
+    yaw_err = min_angle(yaw_desired - yaw)
+>>>>>>> 0f53cea52a0c23dbbd293d9dd0c87b9e0c449241
 
     #########################################################################################################                   
     #Jerk

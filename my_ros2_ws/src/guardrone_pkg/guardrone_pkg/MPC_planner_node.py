@@ -123,9 +123,14 @@ class MpcPlannerNode(Node):
 
 
         # === Tempo/Orizzonte ===
+<<<<<<< HEAD
         self.Hz = 100.0
         self.ts = 1.0/self.Hz             # 250 Hz
         self.N_horiz = 30          # Orizzonte di predizione (numero di campioni)
+=======
+        self.ts = 0.005             # 100 Hz
+        self.N_horiz = 50          # Orizzonte di predizione (numero di campioni)
+>>>>>>> 0f53cea52a0c23dbbd293d9dd0c87b9e0c449241
         self.Tp = self.N_horiz * self.ts  # Tempo totale dell'orizzonte 
 
         self.path_pub_counter = 0  # Contatore per limitare la frequenza di pubblicazione del path
@@ -136,12 +141,12 @@ class MpcPlannerNode(Node):
         self.mbe = MomentumBasedEstimator(mass, ixx, iyy, izz, self.ts, g0)
 
         # === Stato MPC / loop ===
-        self.acados_solver_ready = False
-        self.obj_state_received = False
-        self.start_received = False
-        self.first_odom_received = False  
-        self.planner_ready_published = False   
-        self.startup_counter = 0               
+        self.acados_solver_ready = False    # true quando la configurazione dell'MPC è pronta 
+        self.obj_state_received = False     # true quando ricevuto lo stato del peg
+        self.start_received = False         # true quando ricevuto il comando di start dal supervisor
+        self.first_odom_received = False    # true quando ricevuto la prima odometria del drone
+        self.planner_ready_published = False    # true quando pubblicato il segnale di pronto al supervisor
+        self.startup_counter = 0                # contatore per limitare la frequenza di pubblicazione del path
 
         # Matrici fisse di conversione frame
         self.M_ned2enu = np.array([[0.0, 1.0, 0.0], 
@@ -293,8 +298,8 @@ class MpcPlannerNode(Node):
             callback_group=self.callback_group
         )
 
-        self.current_px4_thrust = np.zeros(3)
-        self.current_px4_torque = np.zeros(3)
+        self.current_px4_thrust_flu = np.zeros(3)
+        self.current_px4_torque_flu = np.zeros(3)
         self.safety_switch_passed = False
 
         self.get_logger().info("MPC Node avviato. In attesa...")
@@ -381,7 +386,9 @@ class MpcPlannerNode(Node):
         self.destroy_subscription(self.start_subscription)
 
 
+    # Prox due funzioni sono usate per check sullo switch all'MPC
     def thrust_out_cb(self, msg):
+<<<<<<< HEAD
         # I valori in uscita da PX4 sono normalizzati [-1, 1]. In NED, Z=-1 significa full thrust verso l'alto.
         self.current_px4_thrust =  self.M_frd2flu @ msg.xyz 
         
@@ -395,6 +402,18 @@ class MpcPlannerNode(Node):
         self.current_px4_torque[0] *=  self.U_TAU_X
         self.current_px4_torque[1] *=  self.U_TAU_Y
         self.current_px4_torque[2] *=  self.U_TAU_Z
+=======
+        # Conversione da FRD (PX4) a FLU (MPC) e denormalizzazione:
+        self.current_px4_thrust_flu = self.M_frd2flu @ np.array([msg.xyz[0], msg.xyz[1], msg.xyz[2]])
+        self.current_px4_thrust_flu[2] *= self.U_F
+
+    def torque_out_cb(self, msg):
+        # Conversione da FRD (PX4) a FLU (MPC) e denormalizzazione:
+        self.current_px4_torque_flu = self.M_frd2flu @ np.array([msg.xyz[0], msg.xyz[1], msg.xyz[2]])
+        self.current_px4_torque_flu[0] *= self.U_TAU_X
+        self.current_px4_torque_flu[1] *= self.U_TAU_Y
+        self.current_px4_torque_flu[2] *= self.U_TAU_Z
+>>>>>>> 0f53cea52a0c23dbbd293d9dd0c87b9e0c449241
 
     def odom_callback(self, msg: VehicleOdometry):
         # Quaternione PX4: rappresenta R_frd2ned (body FRD → world NED)
@@ -569,8 +588,8 @@ class MpcPlannerNode(Node):
             alpha, manual_pov = alpha_j, self.joy_pov
 
         # --- Scelta del target autonomo ---
-        # return2autonomous=True  → interpola verso la traiettoria pianificata
-        # return2autonomous=False → interpola verso l'ultima posizione manuale (= fermo)
+        # return2autonomous=True  - interpola verso la traiettoria pianificata
+        # return2autonomous=False - interpola verso l'ultima posizione manuale (= fermo)
         if self.return2autonomous:
             auto_cyl = self.autonomous_cyl_ref.copy()
         else:
@@ -798,15 +817,21 @@ class MpcPlannerNode(Node):
             p_cam = p_drone + Rb @ self.camera_offset
             
             p_obj_now = self.current_obj_pos
-            p_rel = p_cam - p_obj_now
+            p_rel = p_obj_now - p_cam
             r_cyl_act = float(np.linalg.norm(p_rel[0:2]))
             beta_act  = float(np.arctan2(p_rel[1], p_rel[0]))
-            z_act     = float(p_rel[2])
+            z_act     = -float(p_rel[2])
             
             yaw_actual = self.current_rpy[2]
+<<<<<<< HEAD
             yaw_desired = beta_act + np.pi
             yaw_err_act = wrap_pi(yaw_actual - yaw_desired)
                         
+=======
+            yaw_desired = np.arctan2(p_rel[1], p_rel[0])
+            yaw_err_act = float(np.arctan2(np.sin(yaw_actual - yaw_desired), np.cos(yaw_actual - yaw_desired)))
+            
+>>>>>>> 0f53cea52a0c23dbbd293d9dd0c87b9e0c449241
             actual_pov_msg = Float64MultiArray()
             actual_pov_msg.data = [r_cyl_act, beta_act, z_act, yaw_err_act]
             self.actual_pov_pub.publish(actual_pov_msg)
@@ -861,18 +886,18 @@ class MpcPlannerNode(Node):
 
             # Safe Switch Check
             if not getattr(self, 'safety_switch_passed', False):
-                u_px4 = np.array([self.current_px4_thrust[2], self.current_px4_torque[0], self.current_px4_torque[1], self.current_px4_torque[2]])
+                u_px4 = np.array([self.current_px4_thrust_flu[2], self.current_px4_torque_flu[0], self.current_px4_torque_flu[1], self.current_px4_torque_flu[2]])
                 
                 # Se non riceviamo dati da PX4, usiamo hover come fallback
-                if self.current_px4_thrust[2] == 0.0:
+                if self.current_px4_thrust_flu[2] == 0.0:
                     u_px4 = self.u_hover
                     
                 err_thrust = abs(u0[0] - u_px4[0])
                 err_torque = np.linalg.norm(u0[1:4] - u_px4[1:4])
                 
                 # Thresholds
-                thrust_thresh = 2.0  # Newton (circa 10% della spinta di hovering)
-                torque_thresh = 0.2  # Nm (margine sufficiente per evitare scatti angolari)
+                thrust_thresh = 10  # Newton (circa 10% della spinta di hovering)
+                torque_thresh = 10  # Nm (margine sufficiente per evitare scatti angolari)
                 
                 if err_thrust < thrust_thresh and err_torque < torque_thresh:
                     self.get_logger().info(f"Safe Switch OK! (err_thrust={err_thrust:.2f}N, err_torque={err_torque:.3f}Nm). L'MPC prende il controllo di PX4!")

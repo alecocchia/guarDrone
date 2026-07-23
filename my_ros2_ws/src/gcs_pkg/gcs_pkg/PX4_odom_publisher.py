@@ -18,6 +18,8 @@ class PX4VisualOdomPublisher(Node):
             [1.0, 0.0, 0.0], 
             [0.0, 0.0, -1.0]
         ])
+
+        self.M_enu2ned = self.M_ned2enu.T
                               
         # Matrice di trasformazione dal corpo FLU al corpo FRD
         self.M_frd2flu = np.array([
@@ -25,6 +27,9 @@ class PX4VisualOdomPublisher(Node):
             [0.0, -1.0,  0.0], 
             [0.0,  0.0, -1.0]
         ])
+
+        self.M_flu2frd = self.M_frd2flu.T
+        self.optitrack2enu = np.array([[1,0,0],[0,0,1],[0,-1,0]]).T
 
         # Profilo QoS del tipo "sensor_data"
         self.qos = QoSProfile(
@@ -57,7 +62,10 @@ class PX4VisualOdomPublisher(Node):
             msg.pose.pose.position.y,
             msg.pose.pose.position.z
         ])
-        p_ned = self.M_ned2enu @ p_enu
+
+        p_enu = self.optitrack2enu @ p_enu.T
+        
+        p_ned = self.M_enu2ned @ p_enu.T
 
         # trasformazione dell'Orientamento (FLU -> FRD e ENU -> NED)
         # SciPy utilizza il formato dei quaternioni [x, y, z, w]
@@ -69,10 +77,12 @@ class PX4VisualOdomPublisher(Node):
         ]
         
         # converte il quaternione OptiTrack in matrice di rotazione
-        R_flu2enu = Rotation.from_quat(q_enu).as_matrix()
+        R_flu2optitrack = Rotation.from_quat(q_enu).as_matrix()
+        R_flu2enu = self.optitrack2enu @ R_flu2optitrack
         
         # applica le matrici fisse: R_ned2frd = M_world * R_flu2enu * M_body
-        R_frd2ned = self.M_ned2enu @ R_flu2enu @ self.M_frd2flu
+        R_frd2ned = self.M_frd2flu @ R_flu2enu @ self.M_enu2ned
+        self.M_ned2enu @ R_flu2enu @ self.M_frd2flu
         
         # riconverte la matrice corretta in quaternione
         q_frd2ned_scipy = Rotation.from_matrix(R_frd2ned).as_quat()
