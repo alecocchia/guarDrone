@@ -141,7 +141,7 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     p_cam_expr = p_expr + R_expr @ ca.DM(cam_offset_body)
 
     # Vettore telecamera → oggetto nel frame mondo
-    p_rel = p_obj_expr - p_cam_expr
+    p_rel = p_cam_expr - p_obj_expr
 
     # Distanza 2D (sul piano orizzontale): sempre > 0
     r_cyl = ca.sqrt(p_rel[0]**2 + p_rel[1]**2)
@@ -149,7 +149,7 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
 
     # Azimut: angolo del vettore drone -> obj nel piano XY (rad)
     beta_raw = ca.atan2(p_rel[1], p_rel[0])
-    beta_err = min_angle(beta_ref_sym - beta_raw)
+    beta_err = min_angle(beta_raw - beta_ref_sym)
 
     # Quota relativa: differenza lungo Z
     z_err = z_ref_sym - p_rel[2]

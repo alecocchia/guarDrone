@@ -13,6 +13,7 @@
 #            my_ros2_ws/src/utils_pkg \
 #            docker
 #	     my_ros2_ws/SimulationScripts
+#	     my_ros2_ws/HardwareScripts
 #
 #   3. Per aggiornare i sorgenti: cd ~/guarDrone && git pull
 #
@@ -83,6 +84,7 @@ docker run --rm -it --privileged \
     -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/src/guardrone_pkg:/root/my_ros2_ws/src/guardrone_pkg:rw" \
     -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/src/utils_pkg:/root/my_ros2_ws/src/utils_pkg:rw" \
     -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/SimulationScripts:/root/my_ros2_ws/SimulationScripts:rw" \
+    -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/SimulationScripts:/root/my_ros2_ws/HardwareScripts:rw" \
     --env="DISPLAY=${DISPLAY}" \
     -e ROS_DOMAIN_ID=${ROS_DOMAIN_ID} \
     -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \

@@ -6,8 +6,8 @@ import math
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from px4_msgs.msg import VehicleOdometry, VehicleLocalPosition, VehicleControlMode, VehicleCommand
-from std_msgs.msg import Bool, Float64MultiArray, String
-from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import Bool, Float64MultiArray, String, Float64
+from geometry_msgs.msg import PoseStamped, TwistStamped
 import numpy as np
 from scipy.spatial.transform import Rotation
 
@@ -40,6 +40,12 @@ class FakePublisherNode(Node):
         self.pov_pub = self.create_publisher(Float64MultiArray, '/pov_target', 10)
         # PX4 Commands (Arm, Offboard)
         self.cmd_pub_1 = self.create_publisher(VehicleCommand, '/fmu/in/vehicle_command', px4_qos_profile)
+        # Stato attuale drone peg (ENU) — in sim: posizione fissa di hovering
+        # In real: pubblicato da offboard_admittance_planner
+        self.peg_actual_pose_pub     = self.create_publisher(PoseStamped,  '/peg_actual_pose',     10)
+        self.peg_actual_vel_pub      = self.create_publisher(TwistStamped, '/peg_actual_velocity', 10)
+        self.peg_actual_yaw_pub      = self.create_publisher(Float64,      '/peg_actual_yaw',      10)
+        self.peg_actual_yaw_rate_pub = self.create_publisher(Float64,      '/peg_actual_yaw_rate', 10)
         
         # --- Subscribers ---
         self.create_subscription(VehicleLocalPosition, '/fmu/out/vehicle_local_position', self.pos1_cb, px4_qos_profile)
@@ -134,6 +140,7 @@ class FakePublisherNode(Node):
 
     def timer_callback(self):
         now = self.get_clock().now()
+        stamp = now.to_msg()
         
         # =========================================================================
         # PUBBLICAZIONE COSTANTE ODOMETRIA PEG (50Hz)
@@ -151,7 +158,38 @@ class FakePublisherNode(Node):
         odom_msg.velocity = [0.0, 0.0, 0.0]
         odom_msg.angular_velocity = [0.0, 0.0, 0.0]
         self.odom_pub.publish(odom_msg)
-        
+
+        # =========================================================================
+        # PUBBLICAZIONE STATO ATTUALE PEG IN ENU (50Hz)
+        # Nella sim il peg è fermo in hovering: posizione fissa, vel/yaw/yaw_rate = 0
+        # Nella configurazione reale questi topic sono pubblicati da offboard_admittance_planner
+        # =========================================================================
+        # Posizione ENU del peg: M_ned2enu @ [0,0,-local_z] + [peg_start_x, peg_start_y, peg_start_z]
+        #   = [0, 0, local_z] + [peg_start_x, peg_start_y, peg_start_z]
+        #   = [peg_start_x, peg_start_y, takeoff_alt_1]
+        peg_pose_msg = PoseStamped()
+        peg_pose_msg.header.stamp = stamp
+        peg_pose_msg.header.frame_id = 'world'
+        peg_pose_msg.pose.position.x = float(self.peg_start_x)
+        peg_pose_msg.pose.position.y = float(self.peg_start_y)
+        peg_pose_msg.pose.position.z = float(self.takeoff_alt_1)
+        peg_pose_msg.pose.orientation.w = 1.0  # identità (yaw=0)
+        self.peg_actual_pose_pub.publish(peg_pose_msg)
+
+        peg_vel_msg = TwistStamped()
+        peg_vel_msg.header.stamp = stamp
+        peg_vel_msg.header.frame_id = 'world'
+        # velocità = 0 (hovering)
+        self.peg_actual_vel_pub.publish(peg_vel_msg)
+
+        yaw_msg = Float64()
+        yaw_msg.data = 0.0
+        self.peg_actual_yaw_pub.publish(yaw_msg)
+
+        yaw_rate_msg = Float64()
+        yaw_rate_msg.data = 0.0
+        self.peg_actual_yaw_rate_pub.publish(yaw_rate_msg)
+
         # =========================================================================
         # 2) PUBBLICAZIONE POV TARGET (50Hz)
         # =========================================================================
@@ -216,11 +254,15 @@ class FakePublisherNode(Node):
                     self.get_logger().info("Inizio missione automatica. Invio target di takeoff e passo ad ARM_OFFBOARD.")
                     
                     # Invia target di decollo
+                    # Il drone BODY deve salire a (takeoff_alt_1 - cam_offset_z) in modo
+                    # che la CAMERA (offset in z rispetto al body) si trovi esattamente
+                    # a takeoff_alt_1, allineata con il peg.
+                    cam_body_takeoff_z = float(self.takeoff_alt_1 - self.cam_offset_z)
                     cam_pose = PoseStamped()
                     cam_pose.header.frame_id = 'world'
                     cam_pose.pose.position.x = float(self.guardrone_start_x)
                     cam_pose.pose.position.y = float(self.guardrone_start_y)
-                    cam_pose.pose.position.z = float(self.takeoff_alt_1)
+                    cam_pose.pose.position.z = cam_body_takeoff_z
                     self.cam_target_pub.publish(cam_pose)
                     
                     # Accende il trajectory planner
@@ -247,8 +289,9 @@ class FakePublisherNode(Node):
                 self.state = 'TAKEOFF_MONITOR'
                 
         elif self.state == 'TAKEOFF_MONITOR':
-            # drone1_local_pos.z è NED (negativo verso l'alto). Essendo un valore locale, è relativo a cam_start_z
-            d1_up = abs(-self.drone1_local_pos.z - (self.takeoff_alt_1 - self.guardrone_start_z)) < 0.1
+            # drone1_local_pos.z è NED (negativo verso l'alto). Essendo un valore locale, è relativo a guardrone_start_z.
+            # La quota target per il body è (takeoff_alt_1 - cam_offset_z).
+            d1_up = abs(-self.drone1_local_pos.z - (self.takeoff_alt_1 - self.cam_offset_z - self.guardrone_start_z)) < 0.1
 
             if d1_up:
                 if not self.switch_msg_printed:

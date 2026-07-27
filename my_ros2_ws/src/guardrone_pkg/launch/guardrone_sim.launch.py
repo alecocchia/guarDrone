@@ -37,10 +37,8 @@ def launch_setup(context, *args, **kwargs):
 
     # --- PERCORSI ---
     guardrone_pkg_dir = get_package_share_directory('guardrone_pkg')
-    # Il bridge.yaml e rviz vivono in guardrone_pkg
+    # Il bridge.yaml vive in guardrone_pkg
     bridge_config_file = os.path.join(guardrone_pkg_dir, 'config', 'bridge.yaml')
-    rviz_config_file   = os.path.join(guardrone_pkg_dir, 'config', 'rviz_config_file.rviz')
-
     # --- ARGOMENTI POSE ---
     drone_x   = LaunchConfiguration('drone_x')
     drone_y   = LaunchConfiguration('drone_y')
@@ -106,20 +104,13 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{'use_sim_time': True}]
     )
 
-    rviz_node = Node(
-        package='rviz2',
-        executable='rviz2',
-        name='rviz2',
-        arguments=['-d', rviz_config_file],
-        condition=IfCondition(LaunchConfiguration('enable_rviz'))
-    )
+
 
     return [
         ros_gz_bridge,
         guardrone_trajectory_planner,
         # MPC planner parte con un ritardo per dare tempo a PX4 e bridge di stabilizzarsi
         TimerAction(period=10.0, actions=[mpc_planner_node]),
-        TimerAction(period=5.0,  actions=[rviz_node]),
     ]
 
 
@@ -130,7 +121,6 @@ def generate_launch_description():
                               description='Modello Gazebo del GuaDrone (es. x500_depth)'),
         DeclareLaunchArgument('MPC_controller', default_value='1'),
         DeclareLaunchArgument('controller',     default_value='2'),
-        DeclareLaunchArgument('enable_rviz',    default_value='true'),
         # Posa iniziale GuaDrone
         DeclareLaunchArgument('drone_x',   default_value='-4.0'),
         DeclareLaunchArgument('drone_y',   default_value='-53.0'),

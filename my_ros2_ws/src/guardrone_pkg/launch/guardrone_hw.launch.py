@@ -52,7 +52,6 @@ def launch_setup(context, *args, **kwargs):
 
     # --- PERCORSI ---
     guardrone_pkg_dir = get_package_share_directory('guardrone_pkg')
-    rviz_config_file = os.path.join(guardrone_pkg_dir, 'config', 'rviz_config_file.rviz')
 
     # --- ARGOMENTI POSE ---
     drone_x   = LaunchConfiguration('drone_x')
@@ -111,39 +110,16 @@ def launch_setup(context, *args, **kwargs):
         ]
     )
 
-    # --- NODO OPTITRACK (de-commentare in presenza di OptiTrack) ---
-    # optitrack_node = Node(
-    #     package='optitrack_listener',
-    #     executable='optitrack_listener',
-    #     name='optitrack_listener',
-    #     output='screen',
-    #     parameters=[{
-    #         'use_sim_time': False,
-    #         'drone_name': 'guardrone', # Nome del rigid body definito su Motive
-    #         'px4_ns': '',              # Namespace per mappare su /fmu/in/vehicle_visual_odometry
-    #     }]
-    # )
-
-    rviz_node = Node(
-        package='rviz2',
-        executable='rviz2',
-        name='rviz2',
-        arguments=['-d', rviz_config_file],
-        condition=IfCondition(LaunchConfiguration('enable_rviz'))
-    )
-
     return [
         guardrone_trajectory_planner,
         # MPC planner parte con un ritardo per dare tempo a PX4 di stabilizzarsi
         TimerAction(period=5.0, actions=[mpc_planner_node]),
-        TimerAction(period=3.0, actions=[rviz_node]),
     ]
 
 
 def generate_launch_description():
     return LaunchDescription([
-        # === Parametri fisici del drone (da misurare sul drone reale) ===
-        # TODO: aggiornare con i valori reali misurati
+        # === Parametri fisici del drone (misurati sul drone reale) ===
         DeclareLaunchArgument('mass',    default_value='3.4',   description='Massa del drone [kg]'),
         DeclareLaunchArgument('ixx',     default_value='0.0232',  description='Momento di inerzia Ixx [kg·m²]'),
         DeclareLaunchArgument('iyy',     default_value='0.0224',  description='Momento di inerzia Iyy [kg·m²]'),
@@ -168,8 +144,6 @@ def generate_launch_description():
         # === Controllo ===
         DeclareLaunchArgument('MPC_controller', default_value='1',
                               description='1 = PX4 thrust/torque integrato, altro = wrench standard'),
-        DeclareLaunchArgument('enable_rviz', default_value='false',
-                              description='Abilitare RViz (disabilitato di default su HW)'),
 
         # === Pose iniziali (con MOCAP/OptiTrack: default 0.0, il frame è già globale) ===
         DeclareLaunchArgument('drone_x',   default_value='0.0'),
