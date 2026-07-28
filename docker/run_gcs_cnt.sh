@@ -90,7 +90,7 @@ docker run --rm -it --privileged \
     -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/src/gcs_pkg:/root/my_ros2_ws/src/gcs_pkg:rw" \
     -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/src/haptic_device:/root/my_ros2_ws/src/haptic_device:rw" \
     -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/SimulationScripts:/root/my_ros2_ws/SimulationScripts:rw" \
-    -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/SimulationScripts:/root/my_ros2_ws/HardwareScripts:rw" \
+    -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/HardwareScripts:/root/my_ros2_ws/HardwareScripts:rw" \
     -v "${HOST_GUARDRONE_DIR}/docker:/root/docker:rw" \
     -v "${HOME}/.ssh:/tmp/ssh-host:ro" \
     --env="DISPLAY=${DISPLAY}" \
