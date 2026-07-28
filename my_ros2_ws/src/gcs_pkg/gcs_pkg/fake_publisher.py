@@ -77,6 +77,10 @@ class FakePublisherNode(Node):
         self.peg_start_y = self.get_parameter('peg_start_y').value
         self.peg_start_z = self.get_parameter('peg_start_z').value
         
+        # Posizione ENU globale del drone, aggiornata continuamente da odom1_cb.
+        # Placeholder con i parametri di spawn finché non arriva la prima odometria.
+        self.drone_pos_enu = np.array([self.guardrone_start_x, self.guardrone_start_y, self.guardrone_start_z])
+        
         # Riferimenti di hovering iniziale (saranno ricalcolati esattamente all'avvio con lo yaw reale)
         dx = float(self.guardrone_start_x + self.cam_offset_x - self.peg_start_x)
         dy = float(self.guardrone_start_y + self.cam_offset_y - self.peg_start_y)
@@ -111,7 +115,15 @@ class FakePublisherNode(Node):
     # --- Callbacks ---
     def pos1_cb(self, msg): self.drone1_local_pos = msg
 
-    def odom1_cb(self, msg): self.drone1_odom = msg
+    def odom1_cb(self, msg):
+        self.drone1_odom = msg
+        # Mantiene aggiornata la posizione ENU globale del drone (NED locale → ENU + offset spawn)
+        pos_ned = np.array([msg.position[0], msg.position[1], msg.position[2]])
+        self.drone_pos_enu = self.M_ned2enu @ pos_ned + np.array([
+            self.guardrone_start_x,
+            self.guardrone_start_y,
+            self.guardrone_start_z,
+        ])
 
     def mode1_cb(self, msg): self.drone1_mode = msg
 
@@ -145,19 +157,19 @@ class FakePublisherNode(Node):
         # =========================================================================
         # PUBBLICAZIONE COSTANTE ODOMETRIA PEG (50Hz)
         # =========================================================================
-        odom_msg = VehicleOdometry()
-        odom_msg.timestamp = int(now.nanoseconds / 1000)
+        peg_odom_msg = VehicleOdometry()
+        peg_odom_msg.timestamp = int(now.nanoseconds / 1000)
         
         # Posizione del peg (coordinate NED).
         # L'odometria PX4 è locale rispetto al punto di spawn.
         # Il peg deve essere in hovering esattamente sopra il suo punto di spawn,
         # quindi N=0, E=0. La quota locale (D) è negativo (takeoff_alt_1 - peg_start_z).
         local_z = float(self.takeoff_alt_1 - self.peg_start_z)
-        odom_msg.position = [0.0, 0.0, -local_z]
-        odom_msg.q = [1.0, 0.0, 0.0, 0.0]
-        odom_msg.velocity = [0.0, 0.0, 0.0]
-        odom_msg.angular_velocity = [0.0, 0.0, 0.0]
-        self.odom_pub.publish(odom_msg)
+        peg_odom_msg.position = [0.0, 0.0, -local_z]
+        peg_odom_msg.q = [1.0, 0.0, 0.0, 0.0]
+        peg_odom_msg.velocity = [0.0, 0.0, 0.0]
+        peg_odom_msg.angular_velocity = [0.0, 0.0, 0.0]
+        self.odom_pub.publish(peg_odom_msg)
 
         # =========================================================================
         # PUBBLICAZIONE STATO ATTUALE PEG IN ENU (50Hz)
@@ -223,10 +235,11 @@ class FakePublisherNode(Node):
                 cam_offset = np.array([self.cam_offset_x, self.cam_offset_y, self.cam_offset_z])
                 rotated_offset = R_flu2enu @ cam_offset
                 
-                # Posizione iniziale esatta della telecamera nel mondo (ENU)
-                cam_spawn_x = self.guardrone_start_x + rotated_offset[0]
-                cam_spawn_y = self.guardrone_start_y + rotated_offset[1]
-                
+                # Posizione iniziale esatta della telecamera nel mondo (ENU).
+                # drone_pos_enu è già aggiornata da odom1_cb con la posizione corrente.
+                cam_spawn_x = self.drone_pos_enu[0] + rotated_offset[0]
+                cam_spawn_y = self.drone_pos_enu[1] + rotated_offset[1]
+
                 # Calcoliamo la distanza e l'azimut statici del target
                 dx = float(cam_spawn_x - self.peg_start_x)
                 dy = float(cam_spawn_y - self.peg_start_y)
@@ -252,16 +265,23 @@ class FakePublisherNode(Node):
                 if self.user_ok:
                     self.user_ok = False # Consuma il comando
                     self.get_logger().info("Inizio missione automatica. Invio target di takeoff e passo ad ARM_OFFBOARD.")
-                    
-                    # Invia target di decollo
+
+                    # drone_pos_enu è aggiornata in tempo reale da odom1_cb:
+                    # cattura la posizione del drone nell'istante più vicino al decollo.
+                    self.get_logger().info(
+                        f"Posizione di decollo (ENU): x={self.drone_pos_enu[0]:.3f}, "
+                        f"y={self.drone_pos_enu[1]:.3f}"
+                    )
+
+                    # Invia target di decollo.
                     # Il drone BODY deve salire a (takeoff_alt_1 - cam_offset_z) in modo
                     # che la CAMERA (offset in z rispetto al body) si trovi esattamente
                     # a takeoff_alt_1, allineata con il peg.
                     cam_body_takeoff_z = float(self.takeoff_alt_1 - self.cam_offset_z)
                     cam_pose = PoseStamped()
                     cam_pose.header.frame_id = 'world'
-                    cam_pose.pose.position.x = float(self.guardrone_start_x)
-                    cam_pose.pose.position.y = float(self.guardrone_start_y)
+                    cam_pose.pose.position.x = float(self.drone_pos_enu[0])
+                    cam_pose.pose.position.y = float(self.drone_pos_enu[1])
                     cam_pose.pose.position.z = cam_body_takeoff_z
                     self.cam_target_pub.publish(cam_pose)
                     

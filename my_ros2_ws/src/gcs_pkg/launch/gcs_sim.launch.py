@@ -3,6 +3,7 @@
 # Avvia: supervisor_node, data_logger.
 # Il MicroXRCEAgent è avviato separatamente dal pane 0 della finestra GCS in tmux.
 
+import os
 import sys
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction

@@ -118,7 +118,7 @@ class OffboardTrajectoryPlanner(Node):
     def enabled_cb(self, msg):
         self.offboard_traj_enabled = msg.data
         if not self.offboard_traj_enabled:
-            self.get_logger().info("Trajectory Planner DISABILITATO (Passaggio a MPC).")
+            self.get_logger().info("Trajectory Planner DISABILITATO.")
 
     def target_cb(self, msg):
         if not self.has_odom:
