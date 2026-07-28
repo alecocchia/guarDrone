@@ -165,7 +165,7 @@ class FakePublisherNode(Node):
         # Il peg deve essere in hovering esattamente sopra il suo punto di spawn,
         # quindi N=0, E=0. La quota locale (D) è negativo (takeoff_alt_1 - peg_start_z).
         local_z = float(self.takeoff_alt_1 - self.peg_start_z)
-        peg_odom_msg.position = [0.0, 0.0, -local_z]
+        peg_odom_msg.position = [1.0, 0.0, -local_z]
         peg_odom_msg.q = [1.0, 0.0, 0.0, 0.0]
         peg_odom_msg.velocity = [0.0, 0.0, 0.0]
         peg_odom_msg.angular_velocity = [0.0, 0.0, 0.0]
