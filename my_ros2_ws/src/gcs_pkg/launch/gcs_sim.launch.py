@@ -9,6 +9,7 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition, UnlessCondition
 from launch_ros.actions import Node
+from ament_index_python.packages import get_package_share_directory
 
 try:
     from utils_pkg.PX4_model_parser import PX4ModelParser
@@ -41,7 +42,7 @@ def launch_setup(context, *args, **kwargs):
         condition=UnlessCondition(use_fake),
         parameters=[{
             'use_sim_time': True,
-            'takeoff_alt_1': 4.52 + 3.0,   # [m] ENU: quota decollo GuaDrone
+            'takeoff_alt_1': 4.52 + 3.0,   # [m] ENU: quota camera al decollo (= quota del peg)
             'takeoff_alt_2': 4.52 + 3.0,   # [m] ENU: quota decollo Interaction Drone
             'cam_start_x': drone_x,
             'cam_start_y': drone_y,
@@ -49,6 +50,9 @@ def launch_setup(context, *args, **kwargs):
             'peg_start_x': peg_x,
             'peg_start_y': peg_y,
             'peg_start_z': peg_z,
+            # Offset z camera nel body frame: il drone body viene comandato a
+            # takeoff_alt_1 - cam_z_offset così la camera si trova esattamente a takeoff_alt_1
+            'cam_z_offset': auto_cam[2],
         }],
     )
 
@@ -95,7 +99,18 @@ def launch_setup(context, *args, **kwargs):
         }]
     )
 
-    return [supervisor_node, fake_publisher_node, data_logger]
+    gcs_pkg_dir = get_package_share_directory('gcs_pkg')
+    rviz_config_file = os.path.join(gcs_pkg_dir, 'config', 'rviz_config_file.rviz')
+    
+    rviz_node = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        arguments=['-d', rviz_config_file],
+        condition=IfCondition(LaunchConfiguration('enable_rviz'))
+    )
+
+    return [supervisor_node, fake_publisher_node, data_logger, rviz_node]
 
 
 def generate_launch_description():
@@ -104,6 +119,8 @@ def generate_launch_description():
                               description='Modello Gazebo del GuaDrone (per ricavare offset camera)'),
         DeclareLaunchArgument('use_fake', default_value='false',
                               description='Usa fake_publisher invece del supervisor e drone2'),
+        DeclareLaunchArgument('enable_rviz', default_value='true',
+                              description='Avvia RViz nella GCS'),
         # --- Pose iniziali (devono corrispondere a quelle usate negli altri launch) ---
         DeclareLaunchArgument('drone_x',   default_value='-4.0'),
         DeclareLaunchArgument('drone_y',   default_value='-53.0'),

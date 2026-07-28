@@ -13,7 +13,7 @@ Dipendenze progetto: drone_MPC_settings.py, MPC_main.py, common.py
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-from geometry_msgs.msg import PoseStamped, TwistStamped, TransformStamped, Wrench, Vector3
+from geometry_msgs.msg import PoseStamped, TwistStamped, TransformStamped, Wrench, Vector3, Vector3Stamped
 from nav_msgs.msg import Path
 from std_msgs.msg import Bool, Float64MultiArray, String
 
@@ -124,8 +124,8 @@ class MpcPlannerNode(Node):
 
         # === Tempo/Orizzonte ===
         self.Hz = 100.0
-        self.ts = 1.0/self.Hz             # 250 Hz
-        self.N_horiz = 30          # Orizzonte di predizione (numero di campioni)
+        self.ts = 1.0/self.Hz             # 10 ms
+        self.N_horiz = 50          # Orizzonte di predizione (numero di campioni)
         self.Tp = self.N_horiz * self.ts  # Tempo totale dell'orizzonte 
 
         self.path_pub_counter = 0  # Contatore per limitare la frequenza di pubblicazione del path
@@ -173,10 +173,10 @@ class MpcPlannerNode(Node):
         self.declare_parameter('haptic_transition_duration', 3.0)
         self.haptic_transition_duration = self.get_parameter('haptic_transition_duration').value
 
-        # Target PoV in coordinate cilindriche: [r_cyl_ref, beta_ref, z_ref]
+        # Target PoV in coordinate cilindriche: [r_cyl_ref, beta_ref, z_rel_ref]
         # r_cyl = distanza 2D dall'oggetto nel piano XY [m]
         # beta  = azimut del vettore drone->obj nel piano XY [rad] (pan attorno all'oggetto)
-        # z     = quota relativa rispetto all'oggetto [m]
+        # z_rel     = quota relativa rispetto all'oggetto [m]
         self.pov_target = np.array([2.0, np.pi, 0.0])  # default: 2m dietro, stessa quota
         # Target autonomo pianificato (aggiornato SOLO da /pov_target, mai dall'haptic/joy)
         # Usato come destinazione dell'interpolazione quando return2autonomous=True
@@ -249,9 +249,10 @@ class MpcPlannerNode(Node):
         self.peg_pose_pub     = self.create_publisher(PoseStamped,  '/peg_pose',            1) # <--- Per RViz (Peg)
         self.single_twist_pub = self.create_publisher(TwistStamped, '/optimal_drone_twist', 1)
         self.vel_ref_pub      = self.create_publisher(TwistStamped, '/velocity_reference',  1)
+        self.drone_vel_pub    = self.create_publisher(TwistStamped, '/drone_velocity',      1)  # ENU vel + FLU omega — per logger
+        self.drone_cam_pose_pub = self.create_publisher(Vector3Stamped, '/drone_cam_pose',  1)  # posizione camera nel mondo — per logger
         self.tf_broadcaster   = tf2_ros.TransformBroadcaster(self)
         self.ref_pub = self.create_publisher(Float64MultiArray, '/online_cylindrical_ref', 1)
-        self.visual_ref_pub = self.create_publisher(Float64MultiArray, '/online_visual_ref', 1)
         self.actual_pov_pub = self.create_publisher(Float64MultiArray, '/actual_pov', 1)
 
         self.control_timer = self.create_timer(self.ts, self.control_step, callback_group=self.callback_group)
@@ -493,10 +494,22 @@ class MpcPlannerNode(Node):
         drone_rpy_msg.z = self.current_rpy[2]
         self.drone_rpy_pub.publish(drone_rpy_msg)
 
+        # Pubblica velocità ENU + omega FLU per il logger (già convertite, nessun calcolo extra)
+        drone_vel_msg = TwistStamped()
+        drone_vel_msg.header.stamp = t.header.stamp
+        drone_vel_msg.header.frame_id = 'world'
+        drone_vel_msg.twist.linear.x  = float(self.current_raw_vel[0])
+        drone_vel_msg.twist.linear.y  = float(self.current_raw_vel[1])
+        drone_vel_msg.twist.linear.z  = float(self.current_raw_vel[2])
+        drone_vel_msg.twist.angular.x = float(self.current_ang_vel[0])
+        drone_vel_msg.twist.angular.y = float(self.current_ang_vel[1])
+        drone_vel_msg.twist.angular.z = float(self.current_ang_vel[2])
+        self.drone_vel_pub.publish(drone_vel_msg)
+
     def pov_target_callback(self, msg: Float64MultiArray):
         if len(msg.data) >= 4:
             with self.state_lock:
-                # Formato: [r_cyl_ref, beta_ref, z_ref]
+                # Formato: [r_cyl_ref, beta_ref, z_rel_ref]
                 self.pov_target = np.array([msg.data[0], msg.data[1], msg.data[2]], dtype=float)
                 # Aggiorna anche il target autonomo puro (non modificabile da haptic/joy)
                 self.autonomous_cyl_ref = self.pov_target.copy()
@@ -525,13 +538,13 @@ class MpcPlannerNode(Node):
     # ==================== Configurazione e Solve ====================
     def get_current_ref(self, xk):
         """
-        Calcola il riferimento cilindrico [r_cyl_ref, beta_ref, z_ref] con interpolazione
+        Calcola il riferimento cilindrico [r_cyl_ref, beta_ref, z_rel_ref] con interpolazione
         tra controllo Manuale (Haptic/Joypad) e Traiettoria Autonoma.
 
         Coordinate cilindriche centrate sull'oggetto, vettore drone->oggetto:
           r_cyl = distanza 2D nel piano XY [m]
           beta  = azimut nel piano XY [rad]  (orbita orizzontale)
-          z     = quota relativa [m]
+          z_rel     = quota relativa [m]
 
         Se return2autonomous=True:
           Al rilascio del comando manuale, il drone interpola verso autonomous_cyl_ref
@@ -583,21 +596,21 @@ class MpcPlannerNode(Node):
 
         # --- Interpolazione lineare su r_cyl e z ---
         r_cyl_ref = (1 - alpha) * manual_pov[0] + alpha * auto_cyl[0]
-        z_ref     = (1 - alpha) * manual_pov[2] + alpha * auto_cyl[2]
+        z_rel_ref     = (1 - alpha) * manual_pov[2] + alpha * auto_cyl[2]
 
         # --- Interpolazione circolare su beta ---
         diff_beta = manual_pov[1] - auto_cyl[1]
         beta_ref  = wrap_pi(auto_cyl[1] + (1 - alpha) * diff_beta)
 
-        return np.array([r_cyl_ref, beta_ref, z_ref])
+        return np.array([r_cyl_ref, beta_ref, z_rel_ref])
 
     def configure_mpc(self):
 
         # Pesi normalizzati
         # [r_cyl_err, beta_err, z_err, yaw_err]
-        R_CYL  = 1.0      # range distanza [m]
+        R_CYL  = 2.0      # range distanza [m]
         B_CYL  = np.pi/2  # range azimut [rad]
-        Z_CYL  = 1.0      # range quota [m]
+        Z_CYL  = 2.0      # range quota [m]
         Y_CYL  = np.pi/2  # range yaw [rad]
 
         V       = np.array([0.4, 0.4, 0.6])
@@ -611,11 +624,11 @@ class MpcPlannerNode(Node):
         PesoBeta   = PesoVis
         PesoGamma  = PesoVis
         PesoYaw    = PesoVis
-        PesoVel    = PesoVis / 20
-        PesoAngVel = PesoVis / 20
-        PesoAcc    = PesoVis / 40
-        PesoAngAcc = PesoVis / 40
-        PesoJerk   = PesoAcc / 5
+        PesoVel    = PesoVis / 30
+        PesoAngVel = PesoVis / 30
+        PesoAcc    = PesoVis / 60
+        PesoAngAcc = PesoVis / 60
+        PesoJerk   = PesoAcc / 40
         PesoSnap   = PesoJerk / 2
         PesoForce  = PesoVis / 500
         PesoTorque = PesoForce * 1.5
@@ -640,7 +653,7 @@ class MpcPlannerNode(Node):
 
         R   = ca.diagcat(R_f, R_tau)
         Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
-        Q_e = ca.diagcat(2 * Q_cyl, 2*Q_vel, 2*Q_ang_dot, 2*Q_acc, 2*Q_acc_ang)
+        Q_e = ca.diagcat(5 * Q_cyl, 5*Q_vel, 5*Q_ang_dot, 5*Q_acc, 5*Q_acc_ang)
 
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
         u_max = np.array([self.U_F,  self.U_TAU_X,  self.U_TAU_Y,  self.U_TAU_Z])
@@ -669,7 +682,7 @@ class MpcPlannerNode(Node):
         self.publish_predicted_path_from_buffers()
 
     def solve_MPC(self, xk, cyl_ref, vel_ref, F_ext=None, Tau_ext=None):
-        """cyl_ref = [r_cyl_ref, beta_ref, z_ref]"""
+        """cyl_ref = [r_cyl_ref, beta_ref, z_rel_ref]"""
         set_initial_state(self.ocp_solver, xk)
 
         # Tutti gli errori cilindrici hanno riferimento 0 (sono già espressi come errore nel modello)
@@ -681,7 +694,7 @@ class MpcPlannerNode(Node):
         if Tau_ext is None:
             Tau_ext = np.zeros(3)
 
-        # Parametri (12): [p_obj(3), r_cyl_ref, beta_ref, z_ref, F_ext(3), Tau_ext(3)]
+        # Parametri (12): [p_obj(3), r_cyl_ref, beta_ref, z_rel_ref, F_ext(3), Tau_ext(3)]
         params = np.zeros(12)
         params[3:6] = cyl_ref
         params[6:9] = F_ext
@@ -697,7 +710,9 @@ class MpcPlannerNode(Node):
             else:
                 self.ocp_solver.set(self.N_horiz, "yref", yref_e)
 
+        t0 = time.perf_counter()
         status = self.ocp_solver.solve()
+        self.get_logger().info(f"Solve time: {(time.perf_counter()-t0)*1e3:.2f} ms")
         if status != 0:
             # Se il solver fallisce, usiamo l'ultimo comando valido o l'hover
             u0 = self.u_prev[0].copy() if self.u_prev is not None else self.u_hover.copy()
@@ -784,7 +799,7 @@ class MpcPlannerNode(Node):
                 self.current_quat[0], self.current_quat[1], self.current_quat[2], self.current_quat[3],
                 self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2]
             ])
-            # Calcolo dei riferimenti cilindrici [r_cyl_ref, beta_ref, z_ref]
+            # Calcolo dei riferimenti cilindrici [r_cyl_ref, beta_ref, z_rel_ref]
             cyl_ref = self.get_current_ref(xk)
             vel_ref = np.zeros(3)
 
@@ -798,22 +813,28 @@ class MpcPlannerNode(Node):
             Rb = Rotation.from_quat([q_drone[1], q_drone[2], q_drone[3], q_drone[0]]).as_matrix()
             p_cam = p_drone + Rb @ self.camera_offset
             
+            # Pubblica posizione camera nel mondo (ENU) per il logger
+            cam_pose_msg = Vector3Stamped()
+            cam_pose_msg.header.stamp = self.get_clock().now().to_msg()
+            cam_pose_msg.header.frame_id = 'world'
+            cam_pose_msg.vector.x = float(p_cam[0])
+            cam_pose_msg.vector.y = float(p_cam[1])
+            cam_pose_msg.vector.z = float(p_cam[2])
+            self.drone_cam_pose_pub.publish(cam_pose_msg)
+
             p_obj_now = self.current_obj_pos
-            p_rel = p_obj_now - p_cam
+            p_rel = p_cam - p_obj_now
             r_cyl_act = float(np.linalg.norm(p_rel[0:2]))
             beta_act  = float(np.arctan2(p_rel[1], p_rel[0]))
-
-#################### CONTROLLARE STO SEGNO 
-            z_act     = -float(p_rel[2])
+            z_act     = float(p_rel[2])
             
             yaw_actual = self.current_rpy[2]
-            yaw_desired = beta_act + np.pi
+            yaw_desired = wrap_pi(beta_act + np.pi)
             yaw_err_act = wrap_pi(yaw_actual - yaw_desired)
                         
             actual_pov_msg = Float64MultiArray()
             actual_pov_msg.data = [r_cyl_act, beta_act, z_act, yaw_err_act]
             self.actual_pov_pub.publish(actual_pov_msg)
-            self.visual_ref_pub.publish(Float64MultiArray(data=[float(x) for x in cyl_ref]))
 
             # --- AGGIORNAMENTO MBE ---
             if self.last_u0_applied is not None:

@@ -28,6 +28,8 @@ class PX4VisualOdomPublisher(Node):
             [0.0,  0.0, -1.0]
         ])
 
+        self.prisma_optitrack = False
+
         self.M_flu2frd = self.M_frd2flu.T
         self.optitrack2enu = np.array([[1,0,0],[0,0,1],[0,-1,0]]).T
 
@@ -63,7 +65,8 @@ class PX4VisualOdomPublisher(Node):
             msg.pose.pose.position.z
         ])
 
-        p_enu = self.optitrack2enu @ p_enu.T
+        if self.prisma_optitrack:
+            p_enu = self.optitrack2enu @ p_enu.T
         
         p_ned = self.M_enu2ned @ p_enu.T
 
@@ -77,8 +80,11 @@ class PX4VisualOdomPublisher(Node):
         ]
         
         # converte il quaternione OptiTrack in matrice di rotazione
-        R_flu2optitrack = Rotation.from_quat(q_enu).as_matrix()
-        R_flu2enu = self.optitrack2enu @ R_flu2optitrack
+        if self.prisma_optitrack:
+            R_flu2optitrack = Rotation.from_quat(q_enu).as_matrix()
+            R_flu2enu = self.optitrack2enu @ R_flu2optitrack
+        else:
+            R_flu2enu = Rotation.from_quat(q_enu).as_matrix()
         
         # applica le matrici fisse: R_ned2frd = M_world * R_flu2enu * M_body
         R_frd2ned = self.M_frd2flu @ R_flu2enu @ self.M_enu2ned

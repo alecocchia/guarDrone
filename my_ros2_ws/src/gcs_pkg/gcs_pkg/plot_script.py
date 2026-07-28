@@ -44,10 +44,12 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
     return fig
 
 def main():
+    import os
     ap = argparse.ArgumentParser()
     ap.add_argument("--log", type=str, default="/tmp/sim_run.npz")
     ap.add_argument("--tex", action="store_true")
     ap.add_argument("--save", action="store_true")
+    ap.add_argument("--out-dir", type=str, default=".", help="Cartella in cui salvare i plot e i log")
     ap.add_argument("--all", action="store_true", help="Show all figures at once (default is sequential)")
     ap.add_argument("--task-start", type=float, default=None,
                     help="[s] Tempo (relativo) inizio task: disegna linea verticale (sovrascrive il log)")
@@ -100,7 +102,7 @@ def main():
 
     # --- FIGURE 4: Riferimento Cartesiano Camera vs Posizione Effettiva Camera ---
     # Usiamo direttamente p_cam e p_cam_target salvati dal logger.py
-    # Questi tengono conto correttamente sia dell'offset della telecamera sia della dinamica vera e propria.
+    # Questi tengono conto correttamente dell'offset della telecamera 
     fig_cart_ref_data = [
         {'sim': data['p_cam'][:, 0], 'ref': data['p_cam_target'][:, 0]},
         {'sim': data['p_cam'][:, 1], 'ref': data['p_cam_target'][:, 1]},
@@ -126,17 +128,13 @@ def main():
            ncols=3, use_tex=args.tex, block=block, fignum=5, task_start=task_start)
 
     # --- FIGURE 6: Yaw Tracking (puntamento verso oggetto) ---
+    # yaw_err_cyl è già loggato direttamente dall'MPC (wrap_pi applicato correttamente)
+    # yaw_desired = beta_cyl + pi (coerente con la definizione MPC)
     yaw_actual  = data['rpy'][:, 2]
-    yaw_desired = np.arctan2(-data['r_cyl'] * np.sin(data['beta_cyl']),
-                             -data['r_cyl'] * np.cos(data['beta_cyl']))
-    # Nota: yaw_desired calcolato dal vettore drone->obj (= -p_rel direction)
-    yaw_desired = np.arctan2(
-        -(data['pos'][:, 1] - data['peg_pos'][:, 1]),
-        -(data['pos'][:, 0] - data['peg_pos'][:, 0])
-    )
+    yaw_desired = data['beta_cyl'] + np.pi
     fig5_data = [
-        {'sim': yaw_actual,          'ref': yaw_desired},
-        {'sim': data['yaw_err_cyl'], 'ref': 0.0},
+        {'sim': yaw_actual,               'ref': yaw_desired},
+        {'sim': data['yaw_err_cyl'],      'ref': 0.0},
     ]
     myPlot(t, fig5_data,
            ["Yaw Actual vs Desired [rad]", "Yaw Error [rad]"],
@@ -345,9 +343,11 @@ def main():
                "Estimated Wrench (Momentum-Based Estimator)", ncols=3, use_tex=args.tex, block=block, fignum=16, task_start=task_start)
 
     if args.save:
+        if args.out_dir != "." and not os.path.exists(args.out_dir):
+            os.makedirs(args.out_dir)
         for i in plt.get_fignums():
-            plt.figure(i).savefig(f"plot_fig_{i}.png")
-        print("Grafici salvati.")
+            plt.figure(i).savefig(os.path.join(args.out_dir, f"plot_fig_{i}.png"))
+        print(f"Grafici salvati in: {os.path.abspath(args.out_dir)}")
     elif args.all:
         plt.show()
 

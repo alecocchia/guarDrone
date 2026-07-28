@@ -78,15 +78,19 @@ class SupervisorNode(Node):
         self.declare_parameter('peg_start_x', 3.0)
         self.declare_parameter('peg_start_y', 0.0)
         self.declare_parameter('peg_start_z', 4.52)
+        # Offset z camera nel frame body (ENU z up): cam_body_takeoff = takeoff_alt_1 - cam_z_offset
+        # In questo modo la CAMERA si trova a takeoff_alt_1 dopo il decollo, non il centro del drone.
+        self.declare_parameter('cam_z_offset', 0.0)
 
-        self.takeoff_alt_1 = self.get_parameter('takeoff_alt_1').value
-        self.takeoff_alt_2 = self.get_parameter('takeoff_alt_2').value
-        self.cam_start_x = self.get_parameter('cam_start_x').value
-        self.cam_start_y = self.get_parameter('cam_start_y').value
-        self.cam_start_z = self.get_parameter('cam_start_z').value
-        self.peg_start_x = self.get_parameter('peg_start_x').value
-        self.peg_start_y = self.get_parameter('peg_start_y').value
-        self.peg_start_z = self.get_parameter('peg_start_z').value
+        self.takeoff_alt_1  = self.get_parameter('takeoff_alt_1').value
+        self.takeoff_alt_2  = self.get_parameter('takeoff_alt_2').value
+        self.cam_start_x    = self.get_parameter('cam_start_x').value
+        self.cam_start_y    = self.get_parameter('cam_start_y').value
+        self.cam_start_z    = self.get_parameter('cam_start_z').value
+        self.peg_start_x    = self.get_parameter('peg_start_x').value
+        self.peg_start_y    = self.get_parameter('peg_start_y').value
+        self.peg_start_z    = self.get_parameter('peg_start_z').value
+        self.cam_z_offset   = self.get_parameter('cam_z_offset').value
 
         self.state = 'WAIT_EKF'
         self.task_started = False
@@ -188,13 +192,16 @@ class SupervisorNode(Node):
             if self.mission_start_received and self.mpc_ready:
                 self.get_logger().info("Segnale di avvio e MPC Pronto ricevuti. Mando comandi di decollo e Passo a ARM_OFFBOARD")
                 
-                # Invia comando di decollo al camera drone
+                # Invia comando di decollo al camera drone.
+                # Il body deve salire a (takeoff_alt_1 - cam_z_offset) in modo che la
+                # CAMERA si trovi a takeoff_alt_1 (= quota target = quota del peg).
+                cam_body_takeoff_z = float(self.takeoff_alt_1 - self.cam_z_offset)
                 cam_pose = PoseStamped()
                 cam_pose.header.frame_id = 'world'
                 cam_pose.pose.position.x = float(self.cam_start_x)
                 cam_pose.pose.position.y = float(self.cam_start_y)
-                cam_pose.pose.position.z = float(self.takeoff_alt_1) # ENU
-                self.get_logger().info(f"Posizione di decollo al camera drone: {cam_pose.pose.position.x}, {cam_pose.pose.position.y}, {cam_pose.pose.position.z}")
+                cam_pose.pose.position.z = cam_body_takeoff_z
+                self.get_logger().info(f"Posizione di decollo al camera drone (body z): {cam_pose.pose.position.z:.3f} m")
                 self.cam_target_pub.publish(cam_pose)
 
                 # Invia comando di decollo al peg drone
@@ -238,7 +245,9 @@ class SupervisorNode(Node):
 
         elif self.state == 'TAKEOFF_MONITOR':
             # Check altitudes (z is negative upwards)
-            d1_up = abs(-self.drone1_local_pos.z - (self.takeoff_alt_1 - self.cam_start_z)) < 0.1
+            # drone_local_pos.z è NED (negativo verso l'alto), relativo allo spawn point.
+            # La quota body target è (takeoff_alt_1 - cam_z_offset).
+            d1_up = abs(-self.drone1_local_pos.z - (self.takeoff_alt_1 - self.cam_z_offset - self.cam_start_z)) < 0.1
             d2_up = abs(-self.drone2_local_pos.z - (self.takeoff_alt_2 - self.peg_start_z)) < 0.1
             self.get_logger().info(f"d1_up: {self.drone1_local_pos.z}")
             self.get_logger().info(f"d2_up: {self.drone2_local_pos.z}")
