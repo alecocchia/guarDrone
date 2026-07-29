@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# docker exec -itu 0 px4-ros2 bash  // run root
+# docker exec -itu 0 px4-cnt bash  // run root
 
 # enable access to xhost from the container (Abilita GPU e GUI)
 xhost +local:docker
 
-# Trova la cartella root GuarDRONE (case insensitive per sicurezza)
+# Trova la cartella root GuarDrone (case insensitive per sicurezza)
 HOST_GUARDRONE_DIR=$(find "/home/${USER}" -maxdepth 4 -type d -iname "guarDrone" -print -quit 2>/dev/null)
 
 if [ -z "$HOST_GUARDRONE_DIR" ]; then
@@ -15,7 +15,8 @@ else
     echo "[INFO] Trovata cartella guarDrone in: $HOST_GUARDRONE_DIR"
 fi
 
-HOST_FIRMWARE_DIR=$(find "/home/${USER}" -maxdepth 4 -type d -iname "PX4-Autopilot" -print -quit 2>/dev/null)
+# La cartella del firmware PX4 deve essere posizionata in guarDrone affinché sia montata correttamente
+HOST_FIRMWARE_DIR=$(find "/${HOST_GUARDRONE_DIR}" -maxdepth 1 -type d -iname "PX4-Autopilot" -print -quit 2>/dev/null)
 
 if [ -z "$HOST_FIRMWARE_DIR" ]; then
     echo "[ERROR] Impossibile trovare la cartella 'PX4-Autopilot'."
