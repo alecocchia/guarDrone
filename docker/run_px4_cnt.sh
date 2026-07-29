@@ -49,7 +49,7 @@ $GPU_FLAGS \
 -v "${HOST_FIRMWARE_DIR}:/root/PX4-Autopilot:rw" \
 -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/src:/root/my_ros2_ws/src:rw" \
 -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/SimulationScripts:/root/my_ros2_ws/SimulationScripts:rw" \
--v "${HOST_GUARDRONE_DIR}/my_ros2_ws/SimulationScripts:/root/my_ros2_ws/HardwareScripts:rw" \
+-v "${HOST_GUARDRONE_DIR}/my_ros2_ws/HardwareScripts:/root/my_ros2_ws/HardwareScripts:rw" \
 --env="DISPLAY=$DISPLAY" \
 -e ROS_DOMAIN_ID=14 \
 -e XDG_RUNTIME_DIR="/tmp/runtime-root" \
