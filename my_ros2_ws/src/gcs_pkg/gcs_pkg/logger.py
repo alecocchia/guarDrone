@@ -74,8 +74,7 @@ class Logger(Node):
         self.pref_q      = []
         self.vref        = []
         self.omegaref    = []
-        self.wrench_cmd  = []
-        self.wrench_ref  = []
+        self.optimal_wrench = []
         self.wrench_target = []
         self.t_ref       = []
         self.peg_pos     = []   # posizione peg ENU — da /peg_pose (MPC)
@@ -114,8 +113,7 @@ class Logger(Node):
         self.last_pref_q       = [1.0, 0.0, 0.0, 0.0]
         self.last_vref         = [0.0, 0.0, 0.0]
         self.last_omegaref     = [0.0, 0.0, 0.0]
-        self.last_w_cmd        = [0.0, 0.0, 0.0, 0.0]
-        self.last_w_ref        = [0.0, 0.0, 0.0, 0.0]
+        self.last_optimal_wrench = [0.0, 0.0, 0.0, 0.0]
         self.last_w_target     = [0.0, 0.0, 0.0, 0.0]
         self.last_peg_pos      = [0.0, 0.0, 0.0]
         self.last_online_ref   = [0.0, 0.0, 0.0]
@@ -168,9 +166,8 @@ class Logger(Node):
         self.create_subscription(PoseStamped,      '/optimal_drone_pose',      self.cb_ref_pose,       10)
         self.create_subscription(PoseStamped,      '/camera_ref_pose',         self.cb_ref_pose,       10)
         self.create_subscription(TwistStamped,     '/velocity_reference',      self.cb_ref_twist,      10)
-        self.create_subscription(Wrench,           '/optimal_wrench',          self.cb_wrench_ref,     10)
+        self.create_subscription(Wrench,           '/optimal_wrench',          self.cb_optimal_wrench,     10)
         self.create_subscription(Wrench,           '/wrench_reference',        self.cb_wrench_target,  10)
-        self.create_subscription(Wrench,           '/wrench_cmd',              self.cb_wrench_cmd,     10)
         self.create_subscription(Float64MultiArray,'/online_cylindrical_ref',  self.cb_online_ref,     10)
 
         # Posizione peg nel mondo (da MPC, già ENU)
@@ -235,11 +232,8 @@ class Logger(Node):
     #  Callbacks — riferimenti drone                                       #
     # ================================================================== #
 
-    def cb_wrench_cmd(self, msg: Wrench):
-        self.last_w_cmd = [msg.force.z, msg.torque.x, msg.torque.y, msg.torque.z]
-
-    def cb_wrench_ref(self, msg: Wrench):
-        self.last_w_ref = [msg.force.z, msg.torque.x, msg.torque.y, msg.torque.z]
+    def cb_optimal_wrench(self, msg: Wrench):
+        self.last_optimal_wrench = [msg.force.z, msg.torque.x, msg.torque.y, msg.torque.z]
 
     def cb_wrench_target(self, msg: Wrench):
         self.last_w_target = [msg.force.z, msg.torque.x, msg.torque.y, msg.torque.z]
@@ -359,8 +353,7 @@ class Logger(Node):
         self.pref_q.append(list(self.last_pref_q))
         self.vref.append(list(self.last_vref))
         self.omegaref.append(list(self.last_omegaref))
-        self.wrench_cmd.append(list(self.last_w_cmd))
-        self.wrench_ref.append(list(self.last_w_ref))
+        self.optimal_wrench.append(list(self.last_optimal_wrench))
         self.wrench_target.append(list(self.last_w_target))
         self.peg_pos.append(list(self.last_peg_pos))
         self.online_ref.append(list(self.last_online_ref))
@@ -440,8 +433,7 @@ class Logger(Node):
             pref_q=np.asarray(self.pref_q),
             vref=np.asarray(self.vref),
             omegaref=np.asarray(self.omegaref),
-            wrench_cmd=np.asarray(self.wrench_cmd),
-            wrench_ref=np.asarray(self.wrench_ref),
+            optimal_wrench=np.asarray(self.optimal_wrench),
             wrench_target=np.asarray(self.wrench_target),
             haptic_force=np.asarray(self.haptic_force),
             peg_pos=peg_pos_arr,

@@ -134,7 +134,7 @@ class GeometricController(Node):
         self.sub_ref_pose = self.create_subscription(PoseStamped, '/optimal_drone_pose', self.cb_ref_pose, 1)
         self.sub_ref_twist = self.create_subscription(TwistStamped, '/optimal_drone_twist', self.cb_ref_twist, 1)
 
-        self.pub_wrench = self.create_publisher(Wrench, '/wrench_cmd', 1)
+        self.pub_wrench = self.create_publisher(Wrench, '/optimal_wrench', 1)
 
         # ---- Timer UNICO ----
         self.timer = self.create_timer(1.0/self.rate_ctrl_hz, self.step_ctrl)

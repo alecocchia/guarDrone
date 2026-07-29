@@ -16,7 +16,7 @@ class QuadPIDController(Node):
       - Mapping a_des+psi   -> (phi_des, theta_des)
       - Inner (attitude)    -> torques (body)  [300 Hz]
       - Thrust Fz = m*(g + a_des_z)
-    Pubblica Wrench(body) su /wrench_cmd.
+    Pubblica Wrench(body) su /optimal_wrench.
     """
     def __init__(self):
         super().__init__('PID_controller')
@@ -78,7 +78,7 @@ class QuadPIDController(Node):
 
         # Topics
         self.odom_topic   = '/odometry'
-        self.wrench_topic = '/wrench_cmd'
+        self.wrench_topic = '/optimal_wrench'
         self.ref_topic    = '/optimal_drone_pose'
         self.ref_twist_topic = '/optimal_drone_twist'
 

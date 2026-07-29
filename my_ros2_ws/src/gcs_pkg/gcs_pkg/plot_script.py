@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse, numpy as np
 import matplotlib.pyplot as plt
+from utils_pkg.utils_np import wrap_pi
 
 def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, fignum=None, task_start=-1.0):
     plt.rcParams.update({"text.usetex": use_tex, "font.family": "serif"})
@@ -130,8 +131,9 @@ def main():
     # --- FIGURE 6: Yaw Tracking (puntamento verso oggetto) ---
     # yaw_err_cyl è già loggato direttamente dall'MPC (wrap_pi applicato correttamente)
     # yaw_desired = beta_cyl + pi (coerente con la definizione MPC)
-    yaw_actual  = data['rpy'][:, 2]
-    yaw_desired = data['beta_cyl'] + np.pi
+    # Wrappiamo entrambi in [-pi, pi] per la visualizzazione usando utils_np
+    yaw_actual  = wrap_pi(data['rpy'][:, 2])
+    yaw_desired = wrap_pi(data['beta_cyl'] + np.pi)
     fig5_data = [
         {'sim': yaw_actual,               'ref': yaw_desired},
         {'sim': data['yaw_err_cyl'],      'ref': 0.0},
@@ -139,7 +141,7 @@ def main():
     myPlot(t, fig5_data,
            ["Yaw Actual vs Desired [rad]", "Yaw Error [rad]"],
            "Yaw Tracking: Drone Pointing Toward Target",
-           ncols=2, use_tex=args.tex, block=block, fignum=5, task_start=task_start)
+           ncols=2, use_tex=args.tex, block=block, fignum=6, task_start=task_start)
 
     # --- FIGURE 6: Errori di Tracking Primari (cilindrici + posizione + orientamento) ---
     err_pos = np.linalg.norm(data['pos'][:, :2] - data['pref_pos'][:, :2], axis=1)
@@ -164,7 +166,7 @@ def main():
             "Azimuth Error |beta_err| [rad]", "Elevation Error |z_err| [m]",
             "Yaw Error |yaw_err| [rad]", "Norm Roll/Pitch Error"],
            "Primary Tracking Errors (Cylindrical)",
-           ncols=3, use_tex=args.tex, block=block, fignum=6, task_start=task_start)
+           ncols=3, use_tex=args.tex, block=block, fignum=7, task_start=task_start)
 
     # --- FIGURE 7: Dynamic States Errors & Derivatives ---
     err_vel = np.linalg.norm(data['v'] - data['vref'], axis=1)
@@ -179,17 +181,17 @@ def main():
     ]
     myPlot(t, fig7_data, ["Norm Vel Error [m/s]", "Norm Omega Error [rad/s]", "Norm Acc [m/s^2]",
                "Norm AngAcc [rad/s^2]", "Norm Jerk [m/s^3]", "Norm Snap [m/s^4]"], 
-           "Dynamic States Errors and Derivatives", ncols=3, use_tex=args.tex, block=block, fignum=13, task_start=task_start)
+           "Dynamic States Errors and Feedforward Derivatives", ncols=3, use_tex=args.tex, block=block, fignum=8, task_start=task_start)
 
     # --- FIGURE 8: Wrench ---
     fig8_data = [
-        {'sim': data['wrench_cmd'][:, 0], 'ref': data['wrench_target'][:, 0]},
-        {'sim': data['wrench_cmd'][:, 1], 'ref': data['wrench_target'][:, 1]},
-        {'sim': data['wrench_cmd'][:, 2], 'ref': data['wrench_target'][:, 2]},
-        {'sim': data['wrench_cmd'][:, 3], 'ref': data['wrench_target'][:, 3]}
+        {'sim': data['optimal_wrench'][:, 0], 'ref': data['wrench_target'][:, 0]},
+        {'sim': data['optimal_wrench'][:, 1], 'ref': data['wrench_target'][:, 1]},
+        {'sim': data['optimal_wrench'][:, 2], 'ref': data['wrench_target'][:, 2]},
+        {'sim': data['optimal_wrench'][:, 3], 'ref': data['wrench_target'][:, 3]}
     ]
     myPlot(t, fig8_data, ["Force Z (Thrust) [N]", "Torque X [Nm]", "Torque Y [Nm]", "Torque Z [Nm]"], 
-           f"Control Wrench (Hover Force = {mass*g:.2f}N)", ncols=2, use_tex=args.tex, block=block, fignum=13, task_start=task_start)
+           f"Control Wrench (Hover Force = {mass*g:.2f}N)", ncols=2, use_tex=args.tex, block=block, fignum=9, task_start=task_start)
 
     # --- FIGURE 9: Haptic Forces ---
     if 'haptic_force' in data.files:
@@ -199,7 +201,7 @@ def main():
             {'sim': data['haptic_force'][:, 2], 'ref': 0.0}
         ]
         myPlot(t, fig9_data, ["Force X (Zoom) [N]", "Force Y (Pan) [N]", "Force Z (Altitude) [N]"], 
-               "Haptic Feedback Forces Transmitted to haptic device", ncols=3, use_tex=args.tex, block=block, fignum=13, task_start=task_start)
+               "Haptic Feedback Forces Transmitted to haptic device", ncols=3, use_tex=args.tex, block=block, fignum=10, task_start=task_start)
 
     # --- FIGURE 10: Individual Linear and Angular Accelerations ---
     fig10_data = [
@@ -213,7 +215,7 @@ def main():
     myPlot(t, fig10_data, 
            ["Linear Acc X [m/s^2]", "Linear Acc Y [m/s^2]", "Linear Acc Z [m/s^2]", 
             "Angular Acc X [rad/s^2]", "Angular Acc Y [rad/s^2]", "Angular Acc Z [rad/s^2]"], 
-           "Drone Linear and Angular Accelerations", ncols=3, use_tex=args.tex, block=block, fignum=13, task_start=task_start)
+           "Drone Linear and Angular Accelerations", ncols=3, use_tex=args.tex, block=block, fignum=11, task_start=task_start)
 
     # --- FIGURE 11: Peg External Forces ---
     if 'peg_ext_force' in data.files:
@@ -224,7 +226,7 @@ def main():
         ]
         myPlot(t, fig11_data, 
                ["Force X (Sensor) [N]", "Force Y (Sensor) [N]", "Force Z (Sensor) [N]"], 
-               "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=13, task_start=task_start)
+               "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=12, task_start=task_start)
 
     # --- FIGURE 12: Admittance delta_p (spostamento di ammettenza in ENU) ---
     if 'delta_p' in data.files:

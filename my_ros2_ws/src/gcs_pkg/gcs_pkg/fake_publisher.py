@@ -165,7 +165,7 @@ class FakePublisherNode(Node):
         # Il peg deve essere in hovering esattamente sopra il suo punto di spawn,
         # quindi N=0, E=0. La quota locale (D) è negativo (takeoff_alt_1 - peg_start_z).
         local_z = float(self.takeoff_alt_1 - self.peg_start_z)
-        peg_odom_msg.position = [1.0, 0.0, -local_z]
+        peg_odom_msg.position = [0.0, 0.0, -local_z]
         peg_odom_msg.q = [1.0, 0.0, 0.0, 0.0]
         peg_odom_msg.velocity = [0.0, 0.0, 0.0]
         peg_odom_msg.angular_velocity = [0.0, 0.0, 0.0]
@@ -311,11 +311,24 @@ class FakePublisherNode(Node):
         elif self.state == 'TAKEOFF_MONITOR':
             # drone1_local_pos.z è NED (negativo verso l'alto). Essendo un valore locale, è relativo a guardrone_start_z.
             # La quota target per il body è (takeoff_alt_1 - cam_offset_z).
-            d1_up = abs(-self.drone1_local_pos.z - (self.takeoff_alt_1 - self.cam_offset_z - self.guardrone_start_z)) < 0.1
+            d1_up = abs(-self.drone1_local_pos.z - (self.takeoff_alt_1 - self.cam_offset_z - self.guardrone_start_z)) < 0.03
 
             if d1_up:
+                # --- Aggiorna il riferimento in hovering finché si attende lo switch ---
+                q_scipy = [self.drone1_odom.q[1], self.drone1_odom.q[2], self.drone1_odom.q[3], self.drone1_odom.q[0]] 
+                R_frd2ned = Rotation.from_quat(q_scipy).as_matrix()
+                R_flu2enu = self.M_ned2enu @ R_frd2ned @ self.M_frd2flu
+                rotated_offset = R_flu2enu @ np.array([self.cam_offset_x, self.cam_offset_y, self.cam_offset_z])
+                cam_x = self.drone_pos_enu[0] + rotated_offset[0]
+                cam_y = self.drone_pos_enu[1] + rotated_offset[1]
+                dx = float(cam_x - self.peg_start_x)
+                dy = float(cam_y - self.peg_start_y)
+                self.r_hover = math.sqrt(dx**2 + dy**2)
+                self.beta_hover = math.atan2(dy, dx)
+                # -----------------------------------------------------------------------
+
                 if not self.switch_msg_printed:
-                    self.get_logger().info("Drone in quota! Switch da Trajectory Planner a MPC pronto. Dare ok da tastiera")
+                    self.get_logger().info(f"Drone in quota! Riferimento attuale: r={self.r_hover:.3f}, beta={math.degrees(self.beta_hover):.1f}°. Switch a MPC pronto. Dare ok da tastiera")
                     self.switch_msg_printed = True
                     
                 if self.user_ok:

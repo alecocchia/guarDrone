@@ -151,6 +151,9 @@ class MpcPlannerNode(Node):
         self.M_frd2flu = np.array([[1.0, 0.0, 0.0], 
                               [0.0, -1.0, 0.0], 
                               [0.0, 0.0, -1.0]])
+        self.M_enu2ned = self.M_ned2enu.T
+        self.M_flu2frd = self.M_frd2flu.T
+        
 
         self.mpc_path_published = False
 
@@ -205,7 +208,6 @@ class MpcPlannerNode(Node):
         )
         
         # PUBBLICATORI PER IL LOGGER
-        self.wrench_cmd_pub = self.create_publisher(Wrench, '/wrench_cmd', 1)
         self.wrench_ref_pub = self.create_publisher(Wrench, '/wrench_reference', 1) # <--- Nuova
         self.estimated_wrench_pub = self.create_publisher(Wrench, '/estimated_wrench', 1)
 
@@ -405,7 +407,7 @@ class MpcPlannerNode(Node):
         R_frd2ned = Rotation.from_quat(q_scipy).as_matrix()
 
         # R_flu2enu (body→world per MPC): catena FLU→FRD→NED→ENU
-        # M_frd2flu ortogonale, quindi M_flu2frd = M_frd2flu
+        # M_frd2flu ortogonale, quindi M_flu2frd = M_frd2flu.T
         R_flu2enu = self.M_ned2enu @ R_frd2ned @ self.M_frd2flu
         
         rot_flu2enu = Rotation.from_matrix(R_flu2enu)
@@ -608,9 +610,9 @@ class MpcPlannerNode(Node):
 
         # Pesi normalizzati
         # [r_cyl_err, beta_err, z_err, yaw_err]
-        R_CYL  = 2.0      # range distanza [m]
-        B_CYL  = np.pi/2  # range azimut [rad]
-        Z_CYL  = 2.0      # range quota [m]
+        R_CYL  = 0.5      # range distanza [m]
+        B_CYL  = np.pi/6  # range azimut [rad]
+        Z_CYL  = 0.5      # range quota [m]
         Y_CYL  = np.pi/2  # range yaw [rad]
 
         V       = np.array([0.4, 0.4, 0.6])
@@ -620,15 +622,15 @@ class MpcPlannerNode(Node):
         JERK    = 10.0
         SNAP    = 200.0
 
-        PesoVis    = 100    # radius
+        PesoVis    = 100    
         PesoBeta   = PesoVis
         PesoGamma  = PesoVis
         PesoYaw    = PesoVis
-        PesoVel    = PesoVis / 30
-        PesoAngVel = PesoVis / 30
-        PesoAcc    = PesoVis / 60
-        PesoAngAcc = PesoVis / 60
-        PesoJerk   = PesoAcc / 40
+        PesoVel    = PesoVis / 20 
+        PesoAngVel = PesoVis / 20  
+        PesoAcc    = PesoVis / 30    
+        PesoAngAcc = PesoVis / 30    
+        PesoJerk   = PesoAcc / 10
         PesoSnap   = PesoJerk / 2
         PesoForce  = PesoVis / 500
         PesoTorque = PesoForce * 1.5
@@ -653,7 +655,7 @@ class MpcPlannerNode(Node):
 
         R   = ca.diagcat(R_f, R_tau)
         Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
-        Q_e = ca.diagcat(5 * Q_cyl, 5*Q_vel, 5*Q_ang_dot, 5*Q_acc, 5*Q_acc_ang)
+        Q_e = ca.diagcat(20 * Q_cyl, 5*Q_vel, 5*Q_ang_dot, 5*Q_acc, 5*Q_acc_ang)
 
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
         u_max = np.array([self.U_F,  self.U_TAU_X,  self.U_TAU_Y,  self.U_TAU_Z])
@@ -895,8 +897,8 @@ class MpcPlannerNode(Node):
                 err_torque = np.linalg.norm(u0[1:4] - u_px4[1:4])
                 
                 # Thresholds
-                thrust_thresh = 10  # Newton (circa 10% della spinta di hovering)
-                torque_thresh = 10  # Nm (margine sufficiente per evitare scatti angolari)
+                thrust_thresh = 2  # Newton (circa 10% della spinta di hovering)
+                torque_thresh = 0.1  # Nm (margine sufficiente per evitare scatti angolari)
                 
                 if err_thrust < thrust_thresh and err_torque < torque_thresh:
                     self.get_logger().info(f"Safe Switch OK! (err_thrust={err_thrust:.2f}N, err_torque={err_torque:.3f}Nm). L'MPC prende il controllo di PX4!")
@@ -953,6 +955,7 @@ class MpcPlannerNode(Node):
         msg.attitude = False
         msg.body_rate = False
         msg.thrust_and_torque = True
+        #msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         msg.timestamp = 0  # PX4 auto-compila con hrt_absolute_time()
         self.offboard_control_mode_publisher.publish(msg)
 
@@ -989,15 +992,12 @@ class MpcPlannerNode(Node):
         # Aggiorna il controllo applicato per l'osservatore di Luenberger
         self.last_u0_applied = np.array(u0, dtype=float)
 
-        # FIX LOGGER: Pubblichiamo sempre il wrench calcolato per passarlo al logger
+        # Pubblichiamo su /optimal_wrench per il logger
         wrench_msg = Wrench()
         wrench_msg.force.z = float(u0[0])
         wrench_msg.torque.x = float(u0[1])
         wrench_msg.torque.y = float(u0[2])
         wrench_msg.torque.z = float(u0[3])
-        self.wrench_cmd_pub.publish(wrench_msg)
-
-        # Pubblichiamo SEMPRE su /optimal_wrench per il logger
         self.single_wrench_pub.publish(wrench_msg)
 
         if self.control_flag_val == 1:
@@ -1005,8 +1005,8 @@ class MpcPlannerNode(Node):
  
             
             # Parametri per la linearizzazione (recuperati dai parametri del nodo)
-            w_max = self.get_parameter('w_max').value
-            w_min = self.get_parameter('w_min').value
+            #w_max = self.get_parameter('w_max').value
+            #Maw_min = self.get_parameter('w_min').value
             # Calcoliamo la velocità angolare desiderata [0, w_max] rad/s
             #w_target = w_max * np.sqrt(max(0.0, float(u0[0])) / self.U_F)
             # Mappatura su norm_thrust [0, 1] considerando il range dell'airframe [w_min, w_max]
@@ -1027,13 +1027,20 @@ class MpcPlannerNode(Node):
             torque_msg.timestamp = 0           # PX4 auto-compila con hrt_absolute_time()
             torque_msg.timestamp_sample = 0    # PX4 auto-compila con hrt_absolute_time()
             
-            # Segni FLU -> FRD (PX4): 
-            # Roll (X): CCW FLU = CCW FRD (stesso verso) -> u0[1]
-            # Pitch (Y): CCW FLU = CW FRD (opposto) -> -u0[2]
-            # Yaw (Z): CCW FLU = CW FRD (opposto) -> -u0[3]
-            torque_msg.xyz[0] = float(np.clip((u0[1]/self.U_TAU_X),-1.0, 1.0)) 
-            torque_msg.xyz[1] = -float(np.clip((u0[2]/self.U_TAU_Y),-1.0, 1.0))
-            torque_msg.xyz[2] = -float(np.clip((u0[3]/self.U_TAU_Z),-1.0, 1.0))
+            # normalizziamo e clippiamo tra [-1,1] rispetto al massimo per ogni asse (in FLU)
+            normalized_torques_flu = np.array([
+                np.clip(u0[1] / self.U_TAU_X, -1.0, 1.0),
+                np.clip(u0[2] / self.U_TAU_Y, -1.0, 1.0),
+                np.clip(u0[3] / self.U_TAU_Z, -1.0, 1.0)
+            ])
+            
+            # rotazione FLU -> FRD
+            torques_frd = self.M_flu2frd @ normalized_torques_flu
+            
+            # message PX4 
+            torque_msg.xyz[0] = float(torques_frd[0]) 
+            torque_msg.xyz[1] = float(torques_frd[1])
+            torque_msg.xyz[2] = float(torques_frd[2])
             self.torque_pub.publish(torque_msg)
         else:
             self.single_wrench_pub.publish(wrench_msg)
