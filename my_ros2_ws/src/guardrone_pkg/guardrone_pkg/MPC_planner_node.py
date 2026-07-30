@@ -610,9 +610,9 @@ class MpcPlannerNode(Node):
 
         # Pesi normalizzati
         # [r_cyl_err, beta_err, z_err, yaw_err]
-        R_CYL  = 0.5      # range distanza [m]
-        B_CYL  = np.pi/6  # range azimut [rad]
-        Z_CYL  = 0.5      # range quota [m]
+        R_CYL  = 2.0      # range distanza [m]
+        B_CYL  = np.pi/4  # range azimut [rad]
+        Z_CYL  = 1.0      # range quota [m]
         Y_CYL  = np.pi/2  # range yaw [rad]
 
         V       = np.array([0.4, 0.4, 0.6])
@@ -655,7 +655,7 @@ class MpcPlannerNode(Node):
 
         R   = ca.diagcat(R_f, R_tau)
         Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
-        Q_e = ca.diagcat(20 * Q_cyl, 5*Q_vel, 5*Q_ang_dot, 5*Q_acc, 5*Q_acc_ang)
+        Q_e = ca.diagcat(5 * Q_cyl, 2*Q_vel, 2*Q_ang_dot, 2*Q_acc, 2*Q_acc_ang)
 
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
         u_max = np.array([self.U_F,  self.U_TAU_X,  self.U_TAU_Y,  self.U_TAU_Z])

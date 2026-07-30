@@ -51,7 +51,7 @@ Visualization Manager:
         Z: 0
       Plane: XY
       Plane Cell Count: 20
-      Reference Frame: drone_base_link
+      Reference Frame: spawn_origin
       Value: true
     - Angle Tolerance: 0.10000000149011612
       Class: rviz_default_plugins/Odometry
@@ -233,7 +233,7 @@ Visualization Manager:
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: drone_base_link
+    Fixed Frame: spawn_origin
     Frame Rate: 30
   Name: root
   Tools:

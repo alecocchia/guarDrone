@@ -45,6 +45,32 @@ class Logger(Node):
         self.mass          = self.get_parameter('mass').value
         self.ft_topic      = self.get_parameter('ft_topic').value
 
+        # Declare spawn coordinates to broadcast local frame
+        self.declare_parameter('start_x', 0.0)
+        self.declare_parameter('start_y', 0.0)
+        self.declare_parameter('start_z', 0.0)
+        
+        start_x = self.get_parameter('start_x').value
+        start_y = self.get_parameter('start_y').value
+        start_z = self.get_parameter('start_z').value
+
+        # Setup Static TF Broadcaster
+        from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
+        from geometry_msgs.msg import TransformStamped
+
+        self.tf_static_broadcaster = StaticTransformBroadcaster(self)
+        t = TransformStamped()
+        # i TF statici non scadono
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = 'world'
+        t.child_frame_id = 'spawn_origin'
+        t.transform.translation.x = float(start_x)
+        t.transform.translation.y = float(start_y)
+        t.transform.translation.z = float(start_z)
+        t.transform.rotation.w = 1.0
+        
+        self.tf_static_broadcaster.sendTransform(t)
+
         self.logging_enabled = False
         self.last_log_time   = None
         self.task_start_time = None
