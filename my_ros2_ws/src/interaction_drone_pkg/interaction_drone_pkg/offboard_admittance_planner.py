@@ -90,7 +90,7 @@ class OffboardAdmittancePlanner(Node):
         self.declare_parameter('dt', 0.01)   # 100 Hz (più alto di prima per l'ammettenza)
 
         # -- Parametri ammettenza --
-        self.declare_parameter('F_threshold', 0.06)    # [N] soglia attivazione
+        self.declare_parameter('F_threshold', 2.0)    # [N] soglia attivazione
         #self.declare_parameter('adm_mass', 1.0)       # [kg] massa virtuale
         #self.declare_parameter('adm_damping', 8.0)    # smorzamento virtuale
         #self.declare_parameter('adm_stiffness', 0.0)  # rigidezza virtuale (0 = ammortizzatore puro)
@@ -132,10 +132,10 @@ class OffboardAdmittancePlanner(Node):
         # Cedevolezza desiderata: 3 N --> 8 cm di rimbalzo
         # Tempo di assestamento: 0.5 s (risposta reattiva ma stabile)
         # Smorzamento critico: niente rimbalzi sul muro
-        F_typ_z    = 0.2     # [N]  forza di contatto
-        delta_typ_z= 0.02   # [m]  rimbalzo desiderato a F_typ_z (--> rigidezza K)
-        Ta_z       = 0.5     # [s]  tempo assestamento al 5%
-        zeta_z     = 1.1    # [-]  critico: smorzamento
+        F_typ_z    = 10.0     # [N]  forza di contatto
+        delta_typ_z= 0.5   # [m]  rimbalzo desiderato a F_typ_z (--> rigidezza K)
+        Ta_z       = 1.0     # [s]  tempo assestamento al 5%
+        zeta_z     = 1.2    # [-]  critico: smorzamento
 
 
         # -- M e D derivati wn e zeta
@@ -272,7 +272,7 @@ class OffboardAdmittancePlanner(Node):
 
         """
         F_sensor = msg.force.z
-        alpha = 0.2
+        alpha = 0.8
         self.F_ext_sens = alpha * self.F_ext_sens + (1-alpha) * F_sensor
         #self.F_ext_sens = F_sensor          #no filter
         F_norm = np.abs(self.F_ext_sens)
