@@ -16,7 +16,7 @@ def generate_launch_description():
         DeclareLaunchArgument('peg_y', default_value='-55.0'),
         DeclareLaunchArgument('peg_z', default_value='4.52'),
         # Parametri ammettenza
-        DeclareLaunchArgument('F_threshold',       default_value='0.2',
+        DeclareLaunchArgument('F_threshold',       default_value='2.0',
                               description='[N] Soglia forza per attivare ammettenza'),
         DeclareLaunchArgument('peg_adm_max_delta', default_value='10.0',
                               description='[m] Saturazione spostamento di ammettenza'),

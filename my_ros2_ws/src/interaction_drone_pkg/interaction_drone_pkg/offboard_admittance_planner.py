@@ -90,7 +90,7 @@ class OffboardAdmittancePlanner(Node):
         self.declare_parameter('dt', 0.01)   # 100 Hz (più alto di prima per l'ammettenza)
 
         # -- Parametri ammettenza --
-        self.declare_parameter('F_threshold', 2.0)    # [N] soglia attivazione
+        self.declare_parameter('F_threshold', 0.2)    # [N] soglia attivazione
         #self.declare_parameter('adm_mass', 1.0)       # [kg] massa virtuale
         #self.declare_parameter('adm_damping', 8.0)    # smorzamento virtuale
         #self.declare_parameter('adm_stiffness', 0.0)  # rigidezza virtuale (0 = ammortizzatore puro)
@@ -132,10 +132,10 @@ class OffboardAdmittancePlanner(Node):
         # Cedevolezza desiderata: 3 N --> 8 cm di rimbalzo
         # Tempo di assestamento: 0.5 s (risposta reattiva ma stabile)
         # Smorzamento critico: niente rimbalzi sul muro
-        F_typ_z    = 10.0     # [N]  forza di contatto
+        F_typ_z    = 30.0     # [N]  forza di contatto
         delta_typ_z= 0.5   # [m]  rimbalzo desiderato a F_typ_z (--> rigidezza K)
         Ta_z       = 1.0     # [s]  tempo assestamento al 5%
-        zeta_z     = 1.2    # [-]  critico: smorzamento
+        zeta_z     = 1.2    # [-]  smorzamento
 
 
         # -- M e D derivati wn e zeta
@@ -224,6 +224,9 @@ class OffboardAdmittancePlanner(Node):
         self.F_adm_input = 0.0
         self.admittance_active = False
 
+        self.p_contact = None # Posizione congelata al momento del contatto
+
+
         # Stato live haptic
         self.live_target_pos = None
         self.live_target_yaw = 0.0
@@ -272,7 +275,7 @@ class OffboardAdmittancePlanner(Node):
 
         """
         F_sensor = msg.force.z
-        alpha = 0.8
+        alpha = 0.6
         self.F_ext_sens = alpha * self.F_ext_sens + (1-alpha) * F_sensor
         #self.F_ext_sens = F_sensor          #no filter
         F_norm = np.abs(self.F_ext_sens)
@@ -282,17 +285,21 @@ class OffboardAdmittancePlanner(Node):
         self.admittance_active = (F_norm >= self.F_threshold and self.current_pos[2] >= 0.3)
 
         # Se l'ammettenza NON deve agire (es. siamo a terra o forza debole), azzeriamo l'input.
-        
         if self.admittance_active:
             self.F_adm_input = self.F_ext_sens
         else:
             self.F_adm_input = 0.0
 
         if self.admittance_active and not was_active:
+            # Memorizza la posizione corrente al primo contatto
+            self.p_contact = self.current_pos.copy()
+            self.delta_p_s = 0.0
+            self.delta_v_s = 0.0
             self.get_logger().info(
-                f"[AdmittancePlanner] CONTATTO rilevato: |F|={F_norm:.3f}N >= {self.F_threshold:.2f}N"
+                f"[AdmittancePlanner] CONTATTO rilevato: |F|={F_norm:.3f}N >= {self.F_threshold:.2f}N | p_contact={self.p_contact}"
             )
         elif not self.admittance_active and was_active:
+            self.p_contact = None
             self.get_logger().info(
                 "[AdmittancePlanner] Contatto perso. Ritorno a free-flight."
             )
@@ -420,8 +427,19 @@ class OffboardAdmittancePlanner(Node):
 
 
         # -- Composizione setpoint finale (delta_p/v già calcolati sopra) --
-        p_cmd = p_nom + delta_p_enu
-        v_cmd = v_nom + delta_v_enu
+        if self.admittance_active and self.p_contact is not None:
+            # IN CONTATTO: decomposizione normale/tangenziale rispetto all'asse Z del sensore.
+            # Tangenziale: setpoint congelato a p_contact
+            # Normale: p_contact proiettato su n + delta_p_s
+            n = R_sensor2enu[:, 2]                                   # versore normale (ENU)
+            p_contact_normal = float(np.dot(self.p_contact, n))      # scalare lungo n
+            p_tang = self.p_contact - p_contact_normal * n           # componente tangenziale
+            p_norm = (p_contact_normal + self.delta_p_s) * n         # normale + ammettenza
+            p_cmd  = p_tang + p_norm
+            v_cmd  = n * self.delta_v_s                              # feedforward solo lungo n
+        else:
+            p_cmd = p_nom + delta_p_enu
+            v_cmd = v_nom + delta_v_enu
 
         self.publish_setpoint(p_cmd, yaw_nom, v_cmd)
 
