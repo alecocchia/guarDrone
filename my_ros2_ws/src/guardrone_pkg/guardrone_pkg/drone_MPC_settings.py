@@ -139,6 +139,7 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
 
     # Posizione della telecamera nel mondo
     p_cam_expr = p_expr + R_expr @ ca.DM(cam_offset_body)
+    #p_cam_expr = p_expr
 
     # Vettore telecamera → oggetto nel frame mondo
     p_rel = p_cam_expr - p_obj_expr

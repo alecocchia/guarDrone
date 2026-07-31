@@ -517,10 +517,10 @@ class MpcPlannerNode(Node):
                 self.autonomous_cyl_ref = self.pov_target.copy()
 
     def haptic_ref_callback(self, msg: Float64MultiArray):
-        # Formato atteso: [r, beta, gamma]
+        # Formato atteso: [r, beta, z_rel]
         if len(msg.data) >= 3:
             with self.state_lock:
-                self.haptic_pov = np.array(msg.data[0:3], dtype=float)  # [r, beta, gamma]
+                self.haptic_pov = np.array(msg.data[0:3], dtype=float)  # [r, beta, z_rel]
                 self.haptic_timestamp = self.get_clock().now()
                 # pov_target viene aggiornato qui solo se return2autonomous=False
                 # (così quando l'haptic si rilascia, il drone resta dov'è)
@@ -528,10 +528,10 @@ class MpcPlannerNode(Node):
                     self.pov_target = self.haptic_pov.copy()
 
     def joy_ref_callback(self, msg: Float64MultiArray):
-        # Formato atteso: [r, beta, gamma]
+        # Formato atteso: [r, beta, z_rel]
         if len(msg.data) >= 3:
             with self.state_lock:
-                self.joy_pov = np.array(msg.data[0:3], dtype=float)  # [r, beta, gamma]
+                self.joy_pov = np.array(msg.data[0:3], dtype=float)  # [r, beta, z_rel]
                 self.joy_timestamp = self.get_clock().now()
                 # pov_target viene aggiornato qui solo se return2autonomous=False
                 if not self.return2autonomous:
@@ -601,7 +601,11 @@ class MpcPlannerNode(Node):
         z_rel_ref     = (1 - alpha) * manual_pov[2] + alpha * auto_cyl[2]
 
         # --- Interpolazione circolare su beta ---
-        diff_beta = manual_pov[1] - auto_cyl[1]
+        # IMPORTANTE: wrap diff_beta in (-π, π] prima di interpolare,
+        # altrimenti se manual e auto sono su lati opposti di ±π
+        # (es. 3.1 e -3.1) la differenza vale ~2π invece di ~0,
+        # causando un salto discontinuo nel riferimento mandato al solver.
+        diff_beta = wrap_pi(manual_pov[1] - auto_cyl[1])
         beta_ref  = wrap_pi(auto_cyl[1] + (1 - alpha) * diff_beta)
 
         return np.array([r_cyl_ref, beta_ref, z_rel_ref])
@@ -610,35 +614,35 @@ class MpcPlannerNode(Node):
 
         # Pesi normalizzati
         # [r_cyl_err, beta_err, z_err, yaw_err]
-        R_CYL  = 2.0      # range distanza [m]
-        B_CYL  = np.pi/4  # range azimut [rad]
-        Z_CYL  = 1.0      # range quota [m]
+        R_CYL  = 3.0      # range distanza [m]
+        B_CYL  = np.pi/2  # range azimut [rad]
+        Z_CYL  = 3.0      # range quota [m]
         Y_CYL  = np.pi/2  # range yaw [rad]
 
-        V       = np.array([0.4, 0.4, 0.6])
-        ANG_DOT = np.array([0.15, 0.15, 0.5])
-        ACC     = np.array([0.6, 0.6, 1.0])
-        ACC_ANG = np.array([0.3, 0.3, 1.0])
+        V       = np.array([0.3, 0.3, 0.5])
+        ANG_DOT = np.array([0.2, 0.2, 0.5])
+        ACC     = np.array([0.6, 0.6, 0.8])
+        ACC_ANG = np.array([0.5, 0.5, 0.8])
         JERK    = 10.0
         SNAP    = 200.0
 
-        PesoVis    = 100    
-        PesoBeta   = PesoVis
-        PesoGamma  = PesoVis
-        PesoYaw    = PesoVis
-        PesoVel    = PesoVis / 20 
-        PesoAngVel = PesoVis / 20  
-        PesoAcc    = PesoVis / 40    
-        PesoAngAcc = PesoVis / 40    
-        PesoJerk   = PesoAcc / 10
+        PesoVis    = 500    
+        PesoBeta   = PesoVis / 5
+        PesoZ  = PesoVis / 5
+        PesoYaw    = PesoVis / 5
+        PesoVel    = PesoVis / 100 
+        PesoAngVel = PesoVis / 100  
+        PesoAcc    = PesoVis / 100    
+        PesoAngAcc = PesoVis / 150   
+        PesoJerk   = PesoAcc / 2
         PesoSnap   = PesoJerk / 2
-        PesoForce  = PesoVis / 500
+        PesoForce  = PesoVis / 1000
         PesoTorque = PesoForce * 1.5
 
         # Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
         Q_cyl = np.diag([PesoVis / R_CYL**2,
                          PesoBeta  / B_CYL**2,
-                         PesoGamma / Z_CYL**2,  # PesoGamma remains same variable but scales Z now
+                         PesoZ / Z_CYL**2, 
                          PesoYaw   / Y_CYL**2])
 
         Q_vel     = np.diag([PesoVel]*3)    / np.array(V)**2
@@ -655,7 +659,7 @@ class MpcPlannerNode(Node):
 
         R   = ca.diagcat(R_f, R_tau)
         Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
-        Q_e = ca.diagcat(5 * Q_cyl, 2*Q_vel, 2*Q_ang_dot, 2*Q_acc, 2*Q_acc_ang)
+        Q_e = ca.diagcat(5 * Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
 
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
         u_max = np.array([self.U_F,  self.U_TAU_X,  self.U_TAU_Y,  self.U_TAU_Z])
