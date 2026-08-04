@@ -87,8 +87,7 @@ class PX4VisualOdomPublisher(Node):
             R_flu2enu = Rotation.from_quat(q_enu).as_matrix()
         
         # applica le matrici fisse: R_ned2frd = M_world * R_flu2enu * M_body
-        R_frd2ned = self.M_frd2flu @ R_flu2enu @ self.M_enu2ned
-        self.M_ned2enu @ R_flu2enu @ self.M_frd2flu
+        R_frd2ned = self.M_enu2ned @ R_flu2enu @ self.M_frd2flu
         
         # riconverte la matrice corretta in quaternione
         q_frd2ned_scipy = Rotation.from_matrix(R_frd2ned).as_quat()
@@ -100,6 +99,8 @@ class PX4VisualOdomPublisher(Node):
             q_frd2ned_scipy[1], 
             q_frd2ned_scipy[2]
         ]
+
+        q_px4 = q_px4 / np.linalg.norm(q_px4)
 
         # costruzione del messaggio VehicleOdometry
         out_msg = VehicleOdometry()

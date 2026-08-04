@@ -48,6 +48,9 @@ import math
 from scipy.spatial.transform import Rotation
 
 from utils_pkg.planner import generate_trapezoidal_trajectory
+from utils_pkg.utils_np import min_angle
+
+from collections import deque
 
 
 # -- Frame: end_eff_sens → body FLU -------------------------------------------
@@ -109,7 +112,16 @@ class OffboardAdmittancePlanner(Node):
         self.a_max = self.get_parameter('a_max').get_parameter_value().double_value
         self.dt = self.get_parameter('dt').get_parameter_value().double_value
 
+        # Parametri sensore di forza
         self.F_threshold = self.get_parameter('F_threshold').get_parameter_value().double_value
+
+        # -- Stato filtro a mediana --
+        # Dimensione della finestra (deve essere un numero dispari)
+        self.filter_window = 7 
+        # Inizializza il buffer circolare. Quando raggiunge maxlen, 
+        # ogni nuovo .append() elimina in automatico il dato più vecchio.
+        self.f_sensor_buffer = deque(maxlen=self.filter_window)
+
 
         # -- Dimensionamento ammettenza in frame SENSOR --
         #
@@ -132,10 +144,10 @@ class OffboardAdmittancePlanner(Node):
         # Cedevolezza desiderata: 3 N --> 8 cm di rimbalzo
         # Tempo di assestamento: 0.5 s (risposta reattiva ma stabile)
         # Smorzamento critico: niente rimbalzi sul muro
-        F_typ_z    = 30.0     # [N]  forza di contatto
-        delta_typ_z= 0.5   # [m]  rimbalzo desiderato a F_typ_z (--> rigidezza K)
-        Ta_z       = 1.0     # [s]  tempo assestamento al 5%
-        zeta_z     = 1.2    # [-]  smorzamento
+        F_typ_z    = 3     # [N]  forza di contatto
+        delta_typ_z= 0.08   # [m]  rimbalzo desiderato a F_typ_z (--> rigidezza K)
+        Ta_z       = 1     # [s]  tempo assestamento al 5%
+        zeta_z     = 1    # [-]  smorzamento
 
 
         # -- M e D derivati wn e zeta
@@ -224,7 +236,8 @@ class OffboardAdmittancePlanner(Node):
         self.F_adm_input = 0.0
         self.admittance_active = False
 
-        self.p_contact = None # Posizione congelata al momento del contatto
+        self.p_contact   = None  # Posizione congelata al momento del contatto
+        self.yaw_contact = None  # Yaw perpendicolare alla parete, congelato al primo contatto
 
 
         # Stato live haptic
@@ -275,9 +288,19 @@ class OffboardAdmittancePlanner(Node):
 
         """
         F_sensor = msg.force.z
-        alpha = 0.6
-        self.F_ext_sens = alpha * self.F_ext_sens + (1-alpha) * F_sensor
-        #self.F_ext_sens = F_sensor          #no filter
+        # Inserisco la nuova lettura grezza nel buffer temporale (FIFO)
+        self.f_sensor_buffer.append(F_sensor)
+        
+        # Creo una lista temporanea e la ordina per grandezza
+        # (Questo non altera l'ordine cronologico dentro la deque originale)
+        sorted_buffer = sorted(self.f_sensor_buffer)
+        
+        # Estraggo il valore esattamente al centro (la mediana)
+        # // = floor division (divisione intera)
+        mid_index = len(sorted_buffer) // 2
+        self.F_ext_sens = sorted_buffer[mid_index]
+        
+        # Calcolo il modulo per la soglia
         F_norm = np.abs(self.F_ext_sens)
 
         was_active = self.admittance_active
@@ -291,17 +314,31 @@ class OffboardAdmittancePlanner(Node):
             self.F_adm_input = 0.0
 
         if self.admittance_active and not was_active:
-            # Memorizza la posizione corrente al primo contatto
+            # Memorizza la posizione corrente al primo contatto dopo free-flight (fronte di salita).
+            # NON resettiamo delta_p_s / delta_v_s: in free-flight decadono naturalmente
+            # a zero (F_adm_input=0), quindi non servono condizioni iniziali forzate.
             self.p_contact = self.current_pos.copy()
-            self.delta_p_s = 0.0
-            self.delta_v_s = 0.0
+
+            # Yaw perpendicolare alla parete: n = R_sensor2enu[:,2] è il vettore che 
+            # punta VERSO il drone
+            # (F>0 = parete spinge il drone in direzione +n), quindi la parete
+            # è nella direzione -n → il drone deve guardare verso -n.
+            R_s2enu = self.R_flu2enu @ _R_SENSOR_TO_BODY
+            n_contact = R_s2enu[:, 2]                        # normale parete in ENU
+            n_h = np.array([n_contact[0], n_contact[1], 0.0])
+            n_h_norm = np.linalg.norm(n_h)
+            if n_h_norm > 1e-3:                            # parete non orizzontale
+                self.yaw_contact = np.arctan2(-n_h[1], -n_h[0])
+            else:
+                self.yaw_contact = self.current_rpy[2]     # fallback: mantieni yaw attuale
+
             self.get_logger().info(
-                f"[AdmittancePlanner] CONTATTO rilevato: |F|={F_norm:.3f}N >= {self.F_threshold:.2f}N | p_contact={self.p_contact}"
+                f"[AdmittancePlanner] CONTATTO rilevato: |F|={F_norm:.3f}N >= {self.F_threshold:.2f}N"
+                f" | p_contact={self.p_contact} | yaw_contact={np.degrees(self.yaw_contact):.1f}°"
             )
         elif not self.admittance_active and was_active:
-            self.p_contact = None
             self.get_logger().info(
-                "[AdmittancePlanner] Contatto perso. Ritorno a free-flight."
+                "[AdmittancePlanner] Contatto perso. Ritorno a free-flight lungo la normale al contatto."
             )
 
     def enabled_cb(self, msg: Bool):
@@ -310,7 +347,7 @@ class OffboardAdmittancePlanner(Node):
             self.get_logger().info("[AdmittancePlanner] DISABILITATO.")
 
     def live_target_cb(self, msg: PoseStamped):
-        """Haptic live teleop: aggiorna il target direttamente, bypass traiettoria."""
+        """Haptic live teleop: aggiorna il target direttamente, bypass traiettoria trapezoidale."""
         self.live_target_pos = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z])
         self.live_target_yaw = Rotation.from_quat([
             msg.pose.orientation.x,
@@ -325,9 +362,14 @@ class OffboardAdmittancePlanner(Node):
 
     def target_cb(self, msg: PoseStamped):
         """Ricezione nuovo target --> (ri)calcolo traiettoria nominale."""
+
         if not self.has_odom:
             self.get_logger().warn("[AdmittancePlanner] Target ricevuto, odometria non ancora valida. Ignoro.")
             return
+
+        # Annullo la variabile di primo contatto
+        self.p_contact   = None
+        self.yaw_contact = None
 
         t_x = msg.pose.position.x
         t_y = msg.pose.position.y
@@ -420,28 +462,30 @@ class OffboardAdmittancePlanner(Node):
         # Velocità nominale: differenza finita in ENU
         idx_next = min(idx + 1, len(self.traj_p) - 1)
         v_nom = (self.traj_p[idx_next] - p_nom) / self.dt          # [m/s] ENU
-        dyaw = self.traj_rpy[idx_next][2] - yaw_nom
-        if dyaw >  np.pi: dyaw -= 2 * np.pi
-        if dyaw < -np.pi: dyaw += 2 * np.pi
+        dyaw = min_angle(self.traj_rpy[idx_next][2] - yaw_nom)
         yaw_rate_nom = dyaw / self.dt                               # [rad/s]
 
 
         # -- Composizione setpoint finale (delta_p/v già calcolati sopra) --
-        if self.admittance_active and self.p_contact is not None:
-            # IN CONTATTO: decomposizione normale/tangenziale rispetto all'asse Z del sensore.
-            # Tangenziale: setpoint congelato a p_contact
-            # Normale: p_contact proiettato su n + delta_p_s
-            n = R_sensor2enu[:, 2]                                   # versore normale (ENU)
-            p_contact_normal = float(np.dot(self.p_contact, n))      # scalare lungo n
-            p_tang = self.p_contact - p_contact_normal * n           # componente tangenziale
-            p_norm = (p_contact_normal + self.delta_p_s) * n         # normale + ammettenza
-            p_cmd  = p_tang + p_norm
-            v_cmd  = n * self.delta_v_s                              # feedforward solo lungo n
+        if self.p_contact is not None:
+            # Contatto avvenuto almeno una volta dal setpoint di posizione
+            # - Normale:     segue p_nom_normal + compliance ammettenza (delta_p_enu)
+            # - Tangenziale: congelata a p_contact (anche dopo il rilascio, delta_p_enu → 0)
+            n = R_sensor2enu[:, 2]
+            p_contact_normal     = np.dot(self.p_contact, n) * n
+            p_contact_tangential = self.p_contact - p_contact_normal
+            p_nom_normal         = np.dot(p_nom, n) * n
+            v_nom_normal         = np.dot(v_nom, n) * n
+
+            p_cmd = p_nom_normal + p_contact_tangential + delta_p_enu
+            v_cmd = v_nom_normal + delta_v_enu   # tangenziale = 0, normale = feedforward
         else:
             p_cmd = p_nom + delta_p_enu
             v_cmd = v_nom + delta_v_enu
 
-        self.publish_setpoint(p_cmd, yaw_nom, v_cmd)
+        # Yaw: perpendicolare alla parete se il contatto è avvenuto, nominale altrimenti
+        yaw_cmd = self.yaw_contact if self.yaw_contact is not None else yaw_nom
+        self.publish_setpoint(p_cmd, yaw_cmd, v_cmd)
 
         # -- Pubblica delta_p in ENU (per logging e RViz) --
         stamp = self.get_clock().now().to_msg()

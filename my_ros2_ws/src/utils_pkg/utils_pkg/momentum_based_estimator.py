@@ -8,18 +8,18 @@ class MomentumBasedEstimator:
         self.J = np.diag([ix, iy, iz])
         self.g0 = g0
         
-        # ── Taratura TRASLAZIONALE (forze esterne F_ext) ─────────────────────
+        # -- Taratura TRASLAZIONALE (forze esterne F_ext) ---------------------
         # Ta_T: tempo di assestamento al 5% [s]. 
-        # zita_T: smorzamento (0.7 = leggermente sottosmorzato, 1.0 = critico).
-        Ta_T   = 1.5   # [s] — originale: 1.0. Più alto = più lento ma meno rumore.
+        # zita_T: smorzamento (1.0 = critico).
+        Ta_T   = 0.4   # [s] 
         zita_T = 0.9
         omega_n_T  = 3.0 / (Ta_T * zita_T)
         self.K1_T  = 2.0 * zita_T * omega_n_T
         self.K2_T  = omega_n_T / (2.0 * zita_T)
 
-        # ── Taratura ROTAZIONALE (coppie esterne Tau_ext) ────────────────────
-        Ta_R   = 2.0   # [s] 
-        zita_R = 0.9   # smorzamento
+        # -- Taratura ROTAZIONALE (coppie esterne Tau_ext) --------------------
+        Ta_R   = 0.3   # [s] 
+        zita_R = 0.9
         omega_n_R  = 3.0 / (Ta_R * zita_R)
         self.K1_R  = 2.0 * zita_R * omega_n_R
         self.K2_R  = omega_n_R / (2.0 * zita_R)
@@ -41,7 +41,7 @@ class MomentumBasedEstimator:
     def update(self, v_k, w_k, quat_k, Fz_prev, tau_prev):
         """ Esegue il passo di integrazione di Eulero in avanti a (1/ts) Hz """
         
-        # Quantità di moto attuali (dai sensori)
+        # Quantità di moto attuali (dai sensori) (generalized momentum, q nel paper)
         p_T = self.mass * np.array(v_k)
         p_R = self.J @ np.array(w_k)
 
@@ -50,6 +50,7 @@ class MomentumBasedEstimator:
         q_scipy = [quat_k[1], quat_k[2], quat_k[3], quat_k[0]]
         Rb = Rotation.from_quat(q_scipy).as_matrix()
 
+        # Calcolo wrench nominale (matricione dell'integrale interno nel paper)
         # Forza nominale (mondo ENU) = Spinta ruotata - Gravità
         F_nom = Rb @ np.array([0.0, 0.0, Fz_prev]) - np.array([0.0, 0.0, self.mass * self.g0])
         
