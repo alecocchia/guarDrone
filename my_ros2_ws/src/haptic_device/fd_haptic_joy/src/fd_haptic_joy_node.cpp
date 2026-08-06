@@ -245,7 +245,7 @@ private:
     double max_f = this->get_parameter("max_force").as_double();
     double deadband = this->get_parameter("deadband").as_double();
     double dt = this->get_parameter("dt").as_double();
-    double alpha_filter = 0.0;
+    double alpha_filter = 0.4;
 
     // Calcola velocità istantanea filtrata dell' haptic per lo smorzamento
     // viscoso

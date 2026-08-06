@@ -88,9 +88,9 @@ class OffboardAdmittancePlanner(Node):
         self.declare_parameter('start_x', 0.0)
         self.declare_parameter('start_y', 0.0)
         self.declare_parameter('start_z', 0.0)
-        self.declare_parameter('v_max', 1.0)
-        self.declare_parameter('a_max', 2.0)
-        self.declare_parameter('dt', 0.01)   # 100 Hz (più alto di prima per l'ammettenza)
+        self.declare_parameter('v_max', 0.5)
+        self.declare_parameter('a_max', 1.0)
+        self.declare_parameter('dt', 0.01)   # 100 Hz
 
         # -- Parametri ammettenza --
         self.declare_parameter('F_threshold', 0.2)    # [N] soglia attivazione
@@ -98,6 +98,10 @@ class OffboardAdmittancePlanner(Node):
         #self.declare_parameter('adm_damping', 8.0)    # smorzamento virtuale
         #self.declare_parameter('adm_stiffness', 0.0)  # rigidezza virtuale (0 = ammortizzatore puro)
         self.declare_parameter('adm_max_delta', 10.0)  # [m] saturazione spostamento
+
+        self.start_x = self.get_parameter('start_x').value
+        self.start_y = self.get_parameter('start_y').value
+        self.start_z = self.get_parameter('start_z').value
 
         # -- Topic FT sensor --
         # Viene passato come parametro dal launch file.
@@ -117,10 +121,10 @@ class OffboardAdmittancePlanner(Node):
 
         # -- Stato filtro a mediana --
         # Dimensione della finestra (deve essere un numero dispari)
-        self.filter_window = 7 
+        #self.filter_window = 7 
         # Inizializza il buffer circolare. Quando raggiunge maxlen, 
         # ogni nuovo .append() elimina in automatico il dato più vecchio.
-        self.f_sensor_buffer = deque(maxlen=self.filter_window)
+        #self.f_sensor_buffer = deque(maxlen=self.filter_window)
 
 
         # -- Dimensionamento ammettenza in frame SENSOR --
@@ -235,6 +239,7 @@ class OffboardAdmittancePlanner(Node):
         # Input nell'admittance control
         self.F_adm_input = 0.0
         self.admittance_active = False
+        self.Fz_prev = 0.0
 
         self.p_contact   = None  # Posizione congelata al momento del contatto
         self.yaw_contact = None  # Yaw perpendicolare alla parete, congelato al primo contatto
@@ -265,9 +270,9 @@ class OffboardAdmittancePlanner(Node):
         # Posizione: NED --> ENU + spawn offset
         pos_ned = np.array([msg.position[0], msg.position[1], msg.position[2]])
         pos_enu = _M_NED2ENU @ pos_ned
-        self.current_pos[0] = pos_enu[0] + self.get_parameter('start_x').value
-        self.current_pos[1] = pos_enu[1] + self.get_parameter('start_y').value
-        self.current_pos[2] = pos_enu[2] + self.get_parameter('start_z').value
+        self.current_pos[0] = pos_enu[0] + self.start_x
+        self.current_pos[1] = pos_enu[1] + self.start_y
+        self.current_pos[2] = pos_enu[2] + self.start_z
 
         # Orientamento
         rot_flu2enu = Rotation.from_matrix(R_flu2enu)
@@ -288,17 +293,18 @@ class OffboardAdmittancePlanner(Node):
 
         """
         F_sensor = msg.force.z
+        alpha = 0.4
         # Inserisco la nuova lettura grezza nel buffer temporale (FIFO)
-        self.f_sensor_buffer.append(F_sensor)
+        #self.f_sensor_buffer.append(F_sensor)
         
         # Creo una lista temporanea e la ordina per grandezza
         # (Questo non altera l'ordine cronologico dentro la deque originale)
-        sorted_buffer = sorted(self.f_sensor_buffer)
+        #sorted_buffer = sorted(self.f_sensor_buffer)
         
         # Estraggo il valore esattamente al centro (la mediana)
         # // = floor division (divisione intera)
-        mid_index = len(sorted_buffer) // 2
-        self.F_ext_sens = sorted_buffer[mid_index]
+        #mid_index = len(sorted_buffer) // 2
+        self.F_ext_sens = alpha * F_sensor + (1-alpha)*self.Fz_prev
         
         # Calcolo il modulo per la soglia
         F_norm = np.abs(self.F_ext_sens)
@@ -340,6 +346,7 @@ class OffboardAdmittancePlanner(Node):
             self.get_logger().info(
                 "[AdmittancePlanner] Contatto perso. Ritorno a free-flight lungo la normale al contatto."
             )
+        self.Fz_prev = self.F_ext_sens
 
     def enabled_cb(self, msg: Bool):
         self.offboard_traj_enabled = msg.data
@@ -576,9 +583,9 @@ class OffboardAdmittancePlanner(Node):
         vel_enu [m/s]: se fornito, viene inviato come feedforward di velocità.
         """
         # Rimuovi spawn offset per tornare alle coordinate locali PX4
-        lx = float(pos_enu[0] - self.get_parameter('start_x').value)
-        ly = float(pos_enu[1] - self.get_parameter('start_y').value)
-        lz = float(pos_enu[2] - self.get_parameter('start_z').value)
+        lx = float(pos_enu[0] - self.start_x)
+        ly = float(pos_enu[1] - self.start_y)
+        lz = float(pos_enu[2] - self.start_z)
 
         msg = TrajectorySetpoint()
         # ENU --> NED: [E, N, U] → [N, E, -U]

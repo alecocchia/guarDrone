@@ -80,10 +80,10 @@ class MpcPlannerNode(Node):
         self.declare_parameter('rp_limit', 45.0)
 
 
-        mass = self.get_parameter('mass').value
-        ixx = self.get_parameter('ixx').value
-        iyy = self.get_parameter('iyy').value
-        izz = self.get_parameter('izz').value
+        self.mass = self.get_parameter('mass').value
+        self.ixx = self.get_parameter('ixx').value
+        self.iyy = self.get_parameter('iyy').value
+        self.izz = self.get_parameter('izz').value
         arm_l_x = self.get_parameter('arm_l_x').value
         arm_l_y = self.get_parameter('arm_l_y').value
         moment_const = self.get_parameter('moment_const').value        
@@ -91,12 +91,12 @@ class MpcPlannerNode(Node):
         self.U_TAU_X = arm_l_y * self.U_F / 2.0
         self.U_TAU_Y = arm_l_x * self.U_F / 2.0
         self.U_TAU_Z = moment_const * self.U_F
-        start_x = self.get_parameter('start_x').value
-        start_y = self.get_parameter('start_y').value
-        start_z = self.get_parameter('start_z').value
-        start_roll = self.get_parameter('start_roll').value
-        start_pitch = self.get_parameter('start_pitch').value
-        start_yaw = self.get_parameter('start_yaw').value
+        self.start_x = self.get_parameter('start_x').value
+        self.start_y = self.get_parameter('start_y').value
+        self.start_z = self.get_parameter('start_z').value
+        self.start_roll = self.get_parameter('start_roll').value
+        self.start_pitch = self.get_parameter('start_pitch').value
+        self.start_yaw = self.get_parameter('start_yaw').value
         self.peg_offset = np.array([
             self.get_parameter('peg_x').value,
             self.get_parameter('peg_y').value,
@@ -109,17 +109,13 @@ class MpcPlannerNode(Node):
         cam_pitch = self.get_parameter('cam_pitch').value
         cam_yaw = self.get_parameter('cam_yaw').value
 
-        self.get_logger().info(f"Parametri caricati: m={mass}, I=[{ixx}, {iyy}, {izz}]")
+        self.get_logger().info(f"Parametri caricati: m={self.mass}, I=[{self.ixx}, {self.iyy}, {self.izz}]")
 
-        self.mass = mass
-        self.Ixx = ixx
-        self.Iyy = iyy
-        self.Izz = izz
         self.camera_offset = np.array([cam_x, cam_y, cam_z])
         self.camera_rpy = np.array([cam_roll, cam_pitch, cam_yaw])
 
-        self.model, self.model_rpy = setup_model(mass, ixx, iyy, izz, self.camera_offset, self.camera_rpy)
-        self.x0, self.x0_rpy = setup_initial_conditions(start_x,start_y,start_z,start_roll,start_pitch,start_yaw)
+        self.model, self.model_rpy = setup_model(self.mass, self.ixx, self.iyy, self.izz, self.camera_offset, self.camera_rpy)
+        self.x0, self.x0_rpy = setup_initial_conditions(self.start_x,self.start_y,self.start_z,self.start_roll,self.start_pitch,self.start_yaw)
 
 
         # === Tempo/Orizzonte ===
@@ -133,7 +129,7 @@ class MpcPlannerNode(Node):
         self.t_prev = 0.0
 
         # === Inizializzazione Momentum Based Estimator ===
-        self.mbe = MomentumBasedEstimator(mass, ixx, iyy, izz, self.ts, g0)
+        self.mbe = MomentumBasedEstimator(self.mass, self.ixx, self.iyy, self.izz, self.ts, g0)
 
         # === Stato MPC / loop ===
         self.acados_solver_ready = False    # true quando la configurazione dell'MPC è pronta 
@@ -417,9 +413,9 @@ class MpcPlannerNode(Node):
             # Posizione: NED → ENU (M_ned2enu @ [N,E,D] = [E,N,-D])
             self.current_position[:] = self.M_ned2enu @ np.array([msg.position[0], msg.position[1], msg.position[2]])
             # Aggiungiamo lo spawn offset per posizionare il drone globalmente (fix RViz e Planner)
-            self.current_position[0] += self.get_parameter('start_x').value
-            self.current_position[1] += self.get_parameter('start_y').value
-            self.current_position[2] += self.get_parameter('start_z').value
+            self.current_position[0] += self.start_x
+            self.current_position[1] += self.start_y
+            self.current_position[2] += self.start_z
 
             # Assegnazione all'MPC (che si aspetta [w, x, y, z])
             q_w = q_flu2enu[3]
@@ -630,14 +626,14 @@ class MpcPlannerNode(Node):
         PesoBeta   = PesoVis / 5
         PesoZ  = PesoVis / 5
         PesoYaw    = PesoVis / 5
-        PesoVel    = PesoVis / 100 
-        PesoAngVel = PesoVis / 100  
+        PesoVel    = PesoVis / 20 
+        PesoAngVel = PesoVis / 20  
         PesoAcc    = PesoVis / 100    
-        PesoAngAcc = PesoVis / 150   
+        PesoAngAcc = PesoVis / 100   
         PesoJerk   = PesoAcc / 2
         PesoSnap   = PesoJerk / 2
         PesoForce  = PesoVis / 1000
-        PesoTorque = PesoForce * 1.5
+        PesoTorque = PesoForce * 2
 
         # Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
         Q_cyl = np.diag([PesoVis / R_CYL**2,
@@ -659,7 +655,7 @@ class MpcPlannerNode(Node):
 
         R   = ca.diagcat(R_f, R_tau)
         Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
-        Q_e = ca.diagcat(5 * Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
+        Q_e = ca.diagcat(2 * Q_cyl, 2*Q_vel, 2*Q_ang_dot, 2*Q_acc, 2*Q_acc_ang)
 
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
         u_max = np.array([self.U_F,  self.U_TAU_X,  self.U_TAU_Y,  self.U_TAU_Z])
@@ -675,7 +671,7 @@ class MpcPlannerNode(Node):
             cam_offset_body=self.camera_offset
         )
 
-        self.u_hover = np.array([self.get_parameter('mass').value * g0, 0.0, 0.0, 0.0])
+        self.u_hover = np.array([self.mass * g0, 0.0, 0.0, 0.0])
         
         self.u_prev = [self.u_hover.copy() for _ in range(self.N_horiz)]        
         self.x_prev = [self.x0.copy() for _ in range(self.N_horiz+1)]
