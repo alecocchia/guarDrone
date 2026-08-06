@@ -198,14 +198,12 @@ RUN git clone --depth 1 --filter=blob:none --sparse \
     && cp -r /tmp/guardrone/my_ros2_ws/src/guardrone_pkg /root/my_ros2_ws/src/ \
     && rm -rf /tmp/guardrone
 
-# Entrypoint automatico (con link a tmux.conf)
+# Entrypoint automatico
 RUN echo '#!/bin/bash\n\
 set -e\n\
 source /opt/ros/humble/setup.bash\n\
 [ -f /root/px4_ws/install/setup.bash ] && source /root/px4_ws/install/setup.bash\n\
 [ -f /root/my_ros2_ws/install/setup.bash ] && source /root/my_ros2_ws/install/setup.bash\n\
-# Crea il symlink per tmux se il file esiste nel volume montato\n\
-[ -f /root/my_ros2_ws/SimulationScripts/tmux.conf ] && ln -sf /root/my_ros2_ws/SimulationScripts/tmux.conf /root/.tmux.conf\n\
 exec "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
