@@ -21,8 +21,8 @@ def build_yref_online(y_idx, vel_ref, u_ref=np.zeros(4)):
     yref[y_idx["ang_vel"]] = np.array([0.0, 0.0, 0.0])
     yref[y_idx["acc"]]     = np.array([0.0, 0.0, 0.0])
     yref[y_idx["acc_ang"]] = np.array([0.0, 0.0, 0.0])
-    yref[y_idx["jerk"]]    = np.array([0.0, 0.0, 0.0])
-    yref[y_idx["snap"]]    = np.array([0.0, 0.0, 0.0])
+    #yref[y_idx["jerk"]]    = np.array([0.0, 0.0, 0.0])
+    #yref[y_idx["snap"]]    = np.array([0.0, 0.0, 0.0])
     yref[y_idx["u"]]       = u_ref
     return yref
 
@@ -156,9 +156,8 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     z_err = z_ref_sym - p_rel[2]
     # Yaw error: il drone deve puntare verso l'oggetto
     # La direzione desiderata è -p_rel (da drone verso oggetto)
-    yaw_desired = beta_raw + np.pi
+    yaw_desired = beta_ref_sym + np.pi  # direzione drone→peg, continua
     yaw_err = min_angle(yaw - yaw_desired)
-
     #########################################################################################################                   
     #Jerk
     j_expr = ca.jacobian(acc_expr, model.x) @ xdot                
@@ -202,26 +201,26 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     #ocp.solver_options.globalization = 'MERIT_BACKTRACKING'
 
     # --- Vincolo di sicurezza: distanza minima dall'oggetto ---
-    r_min = 1.5  # [m] distanza minima di sicurezza
+    r_min = 1.0  # [m] distanza minima di sicurezza
     h_expr = ca.vertcat(
         r_cyl - r_min,   # r_cyl >= r_min  (indice 0)
     )
-    model.con_h_expr = h_expr
+    #model.con_h_expr = h_expr
 
     # Soft constraints: [r_min]
-    ocp.constraints.lh = np.array([0.0])
-    ocp.constraints.uh = np.array([1e6])
-    ocp.constraints.idxsh = np.array([0])
+    #ocp.constraints.lh = np.array([0.0])
+    #ocp.constraints.uh = np.array([1e6])
+    #ocp.constraints.idxsh = np.array([0])
 
-    # Pesi soft (L2 quadratico + L1 lineare)
+    # soft constraints (L2 quadratico + L1 lineare)
     # [r_min, roll, pitch]
-    penalty_L2 = np.array([5e2])
-    penalty_L1 = np.array([1e1])
+    #penalty_L2 = np.array([5e3])
+    #penalty_L1 = np.array([1e2])
 
-    ocp.cost.Zl = penalty_L2
-    ocp.cost.Zu = penalty_L2
-    ocp.cost.zl = penalty_L1
-    ocp.cost.zu = penalty_L1
+    #ocp.cost.Zl = penalty_L2
+    #ocp.cost.Zu = penalty_L2
+    #ocp.cost.zl = penalty_L1
+    #ocp.cost.zu = penalty_L1
 
     '''
                                         COST FUNCTION               
@@ -237,8 +236,8 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
         ang_vel,                        # Velocità angolari
         acc_expr,                       # Accelerazione
         acc_ang_expr,                   # Accelerazione angolare
-        j_expr,                         # Jerk
-        s_expr,                         # Snap
+        #j_expr,                         # Jerk
+        #s_expr,                         # Snap
         model.u                         # Controllo
     )
 
@@ -287,9 +286,10 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     ang_vel_ind = slice(vel_ind.stop,     vel_ind.stop + 3)
     acc_ind     = slice(ang_vel_ind.stop, ang_vel_ind.stop + 3)
     acc_ang_ind = slice(acc_ind.stop,     acc_ind.stop + 3)
-    jerk_ind    = slice(acc_ang_ind.stop, acc_ang_ind.stop + 3)
-    snap_ind    = slice(jerk_ind.stop,    jerk_ind.stop + 3)
-    u_ind       = slice(snap_ind.stop,    snap_ind.stop + 4)
+    #jerk_ind    = slice(acc_ang_ind.stop, acc_ang_ind.stop + 3)
+    #snap_ind    = slice(jerk_ind.stop,    jerk_ind.stop + 3)
+    #u_ind       = slice(snap_ind.stop,    snap_ind.stop + 4)
+    u_ind       = slice(acc_ang_ind.stop, acc_ang_ind.stop + 4)
 
     y_idx = {
         "cyl":     cyl_ind,      # [r_cyl_err, beta_err, z_err, yaw_err]
@@ -297,8 +297,8 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
         "ang_vel": ang_vel_ind,
         "acc":     acc_ind,
         "acc_ang": acc_ang_ind,
-        "jerk":    jerk_ind,
-        "snap":    snap_ind,
+        #"jerk":    jerk_ind,
+        #"snap":    snap_ind,
         "u":       u_ind,
     }
     ny   = y_expr.numel()
@@ -314,6 +314,6 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     ocp.cost.yref_e = yref_e
 
     #ocp.solver_options.nlp_solver_max_iter=200
-    ocp_solver = AcadosOcpSolver(ocp)
+    ocp_solver = AcadosOcpSolver(ocp, build=True, generate=True)
 
     return ocp_solver, N_horiz, nx, nu, y_idx, ny, ny_e

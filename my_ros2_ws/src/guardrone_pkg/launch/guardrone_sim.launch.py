@@ -74,6 +74,7 @@ def launch_setup(context, *args, **kwargs):
             'w_min': auto_wmin, 'w_max': auto_wmax,
             'arm_l_x': auto_lx, 'arm_l_y': auto_ly, 'moment_const': auto_mc,
             'return2autonomous': LaunchConfiguration('return2autonomous'),
+            'use_mbe': False,
         }]
     )
 
@@ -129,7 +130,7 @@ def generate_launch_description():
         # Posa iniziale Interaction Drone (usata dall'MPC come target peg)
         DeclareLaunchArgument('peg_x', default_value='-1.0'),
         DeclareLaunchArgument('peg_y', default_value='-55.0'),
-        DeclareLaunchArgument('peg_z', default_value='4.52'),
+        DeclareLaunchArgument('peg_z', default_value='4.55'),
         # Parametri motore
         DeclareLaunchArgument('cf', default_value='8.0e-4'),
         DeclareLaunchArgument('ct', default_value='1.0e-5'),

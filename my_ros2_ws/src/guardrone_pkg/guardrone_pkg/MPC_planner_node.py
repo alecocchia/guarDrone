@@ -33,6 +33,7 @@ from guardrone_pkg.drone_MPC_settings import (
     setup_model, setup_initial_conditions, configure_mpc, set_initial_state, build_yref_online
 )
 from utils_pkg.common import quat_to_RPY, g0, wrap_pi
+from utils_pkg.utils_np import min_angle
 from utils_pkg.momentum_based_estimator import MomentumBasedEstimator
 
 import tf2_ros
@@ -128,8 +129,15 @@ class MpcPlannerNode(Node):
 
         self.t_prev = 0.0
 
-        # === Inizializzazione Momentum Based Estimator ===
-        self.mbe = MomentumBasedEstimator(self.mass, self.ixx, self.iyy, self.izz, self.ts, g0)
+        # === Momentum Based Estimator ===
+        self.declare_parameter('use_mbe', True)
+        self.use_mbe = self.get_parameter('use_mbe').value
+        if self.use_mbe:
+            self.mbe = MomentumBasedEstimator(self.mass, self.ixx, self.iyy, self.izz, self.ts, g0)
+            self.get_logger().info("MBE abilitato.")
+        else:
+            self.mbe = None
+            self.get_logger().info("MBE DISABILITATO — F_ext e Tau_ext saranno zero.")
 
         # === Stato MPC / loop ===
         self.acados_solver_ready = False    # true quando la configurazione dell'MPC è pronta 
@@ -176,7 +184,7 @@ class MpcPlannerNode(Node):
         # r_cyl = distanza 2D dall'oggetto nel piano XY [m]
         # beta  = azimut del vettore drone->obj nel piano XY [rad] (pan attorno all'oggetto)
         # z_rel     = quota relativa rispetto all'oggetto [m]
-        self.pov_target = np.array([2.0, np.pi, 0.0])  # default: 2m dietro, stessa quota
+        self.pov_target = np.array([2.0, np.pi-0.1, 0.0])  # default: 2m dietro, stessa quota
         # Target autonomo pianificato (aggiornato SOLO da /pov_target, mai dall'haptic/joy)
         # Usato come destinazione dell'interpolazione quando return2autonomous=True
         self.autonomous_cyl_ref = self.pov_target.copy()
@@ -218,12 +226,12 @@ class MpcPlannerNode(Node):
             self.get_logger().info("MPC pubblica Wrench standard su: /optimal_wrench")
 
 
-        self.current_position = np.zeros(3)
-        self.current_rpy = np.zeros(3)
+        self.current_position = np.zeros(3) # ENU (World)
+        self.current_rpy = np.zeros(3)  # FLU (Body)
         self.current_quat = np.array([1.0, 0.0, 0.0, 0.0])
-        self.current_raw_vel = np.zeros(3)
-        self.current_vel = np.zeros(3)
-        self.current_ang_vel = np.zeros(3)
+        self.current_raw_vel = np.zeros(3)  # ENU
+        self.current_vel = np.zeros(3)  # ENU
+        self.current_ang_vel = np.zeros(3)  # FLU
 
         qos_latched = QoSProfile(
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -459,8 +467,9 @@ class MpcPlannerNode(Node):
                 ])
 
                 # --- INITIALIZATION OF THE ESTIMATOR ---
-                self.mbe.initialize(self.current_raw_vel, self.current_ang_vel)
-                self.get_logger().info(f"Estimator initialized with initial velocity: {self.current_raw_vel}, initial angular velocity: {self.current_ang_vel}")
+                if self.use_mbe:
+                    self.mbe.initialize(self.current_raw_vel, self.current_ang_vel)
+                    self.get_logger().info(f"Estimator initialized with initial velocity: {self.current_raw_vel}, initial angular velocity: {self.current_ang_vel}")
                 self.get_logger().info(f"Posa iniziale inizializzata da odometria: {self.current_position}")
                 self.first_odom_received = True 
 
@@ -612,28 +621,36 @@ class MpcPlannerNode(Node):
         # [r_cyl_err, beta_err, z_err, yaw_err]
         R_CYL  = 3.0      # range distanza [m]
         B_CYL  = np.pi/2  # range azimut [rad]
-        Z_CYL  = 3.0      # range quota [m]
+        Z_CYL  = 1.0      # range quota [m]
         Y_CYL  = np.pi/2  # range yaw [rad]
 
-        V       = np.array([0.3, 0.3, 0.5])
-        ANG_DOT = np.array([0.2, 0.2, 0.5])
-        ACC     = np.array([0.6, 0.6, 0.8])
-        ACC_ANG = np.array([0.5, 0.5, 0.8])
+        V       = np.array([0.2, 0.2, 0.3])
+        ANG_DOT = np.array([0.1, 0.1, 0.3])
+        ACC     = np.array([0.4, 0.4, 0.6])
+        ACC_ANG = np.array([0.2, 0.2, 0.6])
         JERK    = 10.0
         SNAP    = 200.0
 
-        PesoVis    = 500    
-        PesoBeta   = PesoVis / 5
-        PesoZ  = PesoVis / 5
-        PesoYaw    = PesoVis / 5
-        PesoVel    = PesoVis / 20 
-        PesoAngVel = PesoVis / 20  
-        PesoAcc    = PesoVis / 100    
-        PesoAngAcc = PesoVis / 100   
-        PesoJerk   = PesoAcc / 2
-        PesoSnap   = PesoJerk / 2
-        PesoForce  = PesoVis / 1000
-        PesoTorque = PesoForce * 2
+
+        #V       = np.array([0.3, 0.3, 0.5])
+        #ANG_DOT = np.array([0.2, 0.2, 0.5])
+        #ACC     = np.array([0.6, 0.6, 0.8])
+        #ACC_ANG = np.array([0.5, 0.5, 0.8])
+        #JERK    = 10.0
+        #SNAP    = 200.0
+
+        PesoVis    = 100    # raggio
+        PesoBeta   = PesoVis 
+        PesoZ  = PesoVis
+        PesoYaw    = PesoVis 
+        PesoVel    = 5
+        PesoAngVel = 5
+        PesoAcc    = 5
+        PesoAngAcc = 5
+        PesoJerk   = 10
+        PesoSnap   = 10
+        PesoForce  = 0.1
+        PesoTorque = 0.1
 
         # Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
         Q_cyl = np.diag([PesoVis / R_CYL**2,
@@ -654,7 +671,7 @@ class MpcPlannerNode(Node):
                            PesoTorque / self.U_TAU_Z**2)
 
         R   = ca.diagcat(R_f, R_tau)
-        Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
+        Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
         Q_e = ca.diagcat(2 * Q_cyl, 2*Q_vel, 2*Q_ang_dot, 2*Q_acc, 2*Q_acc_ang)
 
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
@@ -670,6 +687,10 @@ class MpcPlannerNode(Node):
             cyl_ref=self.pov_target,
             cam_offset_body=self.camera_offset
         )
+        cond = np.linalg.cond(W)
+        self.get_logger().info(f"Condition number di W: {cond:.2e}")
+        w_diag = np.diag(W)
+        self.get_logger().info(f"W min={w_diag.min():.2e} ({w_diag.argmin()}), max={w_diag.max():.2e} ({w_diag.argmax()})")
 
         self.u_hover = np.array([self.mass * g0, 0.0, 0.0, 0.0])
         
@@ -803,6 +824,7 @@ class MpcPlannerNode(Node):
             ])
             # Calcolo dei riferimenti cilindrici [r_cyl_ref, beta_ref, z_rel_ref]
             cyl_ref = self.get_current_ref(xk)
+            beta_ref = cyl_ref[1]
             vel_ref = np.zeros(3)
 
             # Publish reference for monitoring
@@ -831,22 +853,25 @@ class MpcPlannerNode(Node):
             z_act     = float(p_rel[2])
             
             yaw_actual = self.current_rpy[2]
-            yaw_desired = wrap_pi(beta_act + np.pi)
-            yaw_err_act = wrap_pi(yaw_actual - yaw_desired)
+            yaw_desired = float(beta_ref + np.pi)
+            yaw_err_act = min_angle(yaw_actual - yaw_desired)
                         
             actual_pov_msg = Float64MultiArray()
             actual_pov_msg.data = [r_cyl_act, beta_act, z_act, yaw_err_act]
             self.actual_pov_pub.publish(actual_pov_msg)
 
             # --- AGGIORNAMENTO MBE ---
-            if self.last_u0_applied is not None:
-                Fz_prev = self.last_u0_applied[0]
-                tau_prev = self.last_u0_applied[1:4]
+            if self.use_mbe:
+                if self.last_u0_applied is not None:
+                    Fz_prev = self.last_u0_applied[0]
+                    tau_prev = self.last_u0_applied[1:4]
+                else:
+                    Fz_prev = self.u_hover[0]
+                    tau_prev = self.u_hover[1:4]
+                F_ext, Tau_ext = self.mbe.update(self.current_vel, self.current_ang_vel, self.current_quat, Fz_prev, tau_prev)
             else:
-                Fz_prev = self.u_hover[0]
-                tau_prev = self.u_hover[1:4]
-                
-            F_ext, Tau_ext = self.mbe.update(self.current_vel, self.current_ang_vel, self.current_quat, Fz_prev, tau_prev)
+                F_ext  = np.zeros(3)
+                Tau_ext = np.zeros(3)
             
             # Pubblicazione estimated wrench
             est_w_msg = Wrench()
