@@ -14,7 +14,7 @@ def build_yref_online(y_idx, vel_ref, u_ref=np.zeros(4)):
     """Costruisce il vettore di riferimento online per la formulazione cilindrica."""
     yref = np.zeros(y_idx["u"].stop)
     yref[y_idx["cyl"]]     = np.array([0.0, 0.0, 0.0, 0.0])  # [r_cyl_err, beta_err, z_err, yaw_err] → tutti zero
-    yref[y_idx["int"]]     = np.array([0.0, 0.0, 0.0])        # [e_int_x, e_int_y, e_int_z] → tutti zero
+    #yref[y_idx["int"]]     = np.array([0.0, 0.0, 0.0])        # [e_int_x, e_int_y, e_int_z] → tutti zero
     yref[y_idx["vel"]]     = vel_ref
     yref[y_idx["ang_vel"]] = np.array([0.0, 0.0, 0.0])
     yref[y_idx["acc"]]     = np.array([0.0, 0.0, 0.0])
@@ -231,7 +231,7 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
         beta_err,                       # Errore azimut (orbita orizzontale)
         z_err,                          # Errore quota verticale
         yaw_err,                        # Errore yaw (punta verso l'oggetto)
-        e_int_expr,                     # Errori integrali [e_int_r, e_int_beta, e_int_z]
+        #e_int_expr,                     # Errori integrali [e_int_r, e_int_beta, e_int_z]
         v_expr,                         # Velocità
         ang_vel,                        # Velocità angolari
         acc_expr,                       # Accelerazione
@@ -247,7 +247,7 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
         beta_err,
         z_err,
         yaw_err,
-        e_int_expr,
+        #e_int_expr,
         v_expr,
         ang_vel,
         acc_hover,
@@ -284,9 +284,9 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
 
     # Indici del vettore y (formulazione cilindrica)
     cyl_ind     = slice(0, 4)                                    # [r_cyl_err, beta_err, z_err, yaw_err]
-    int_ind     = slice(cyl_ind.stop,     cyl_ind.stop + 3)      # [e_int_x, e_int_y, e_int_z]
-    vel_ind     = slice(int_ind.stop,     int_ind.stop + 3)
-    #vel_ind     = slice(cyl_ind.stop,     cyl_ind.stop + 3)    # CASO NO INTEGRATORE
+    #int_ind     = slice(cyl_ind.stop,     cyl_ind.stop + 3)      # [e_int_x, e_int_y, e_int_z]
+    #vel_ind     = slice(int_ind.stop,     int_ind.stop + 3)   # CASO INTEGRATORE
+    vel_ind     = slice(cyl_ind.stop,     cyl_ind.stop + 3)    # CASO NO INTEGRATORE
     ang_vel_ind = slice(vel_ind.stop,     vel_ind.stop + 3) 
     acc_ind     = slice(ang_vel_ind.stop, ang_vel_ind.stop + 3)
     acc_ang_ind = slice(acc_ind.stop,     acc_ind.stop + 3)
@@ -297,7 +297,7 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
 
     y_idx = {
         "cyl":     cyl_ind,      # [r_cyl_err, beta_err, z_err, yaw_err]
-        "int":     int_ind,      # [e_int_x, e_int_y, e_int_z]  # COMMENTARE SE NO INTEGRATORE
+        #"int":     int_ind,      # [e_int_x, e_int_y, e_int_z]  # COMMENTARE SE NO INTEGRATORE
         "vel":     vel_ind,
         "ang_vel": ang_vel_ind,
         "acc":     acc_ind,

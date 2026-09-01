@@ -47,29 +47,39 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
 def main():
     import os
     ap = argparse.ArgumentParser()
-    ap.add_argument("--log", type=str, default="/tmp/sim_run.npz")
+    ap.add_argument("--log", type=str, default="/tmp/sim_run.mat")
     ap.add_argument("--tex", action="store_true")
     ap.add_argument("--save", action="store_true")
     ap.add_argument("--out-dir", type=str, default=".", help="Cartella in cui salvare i plot e i log")
     ap.add_argument("--all", action="store_true", help="Show all figures at once (default is sequential)")
     ap.add_argument("--task-start", type=float, default=None,
                     help="[s] Tempo (relativo) inizio task: disegna linea verticale (sovrascrive il log)")
+    ap.add_argument("--formats", type=str, nargs="+", default=["png"],
+                    choices=["png", "pdf", "eps"],
+                    help="Formati di salvataggio (es: --formats png pdf eps). Default: png")
     args = ap.parse_args()
 
     try:
-        data = np.load(args.log, allow_pickle=True)
+        from scipy.io import loadmat
+        _raw = loadmat(args.log, squeeze_me=True)
+        # loadmat aggiunge chiavi interne '__header__', '__version__', '__globals__' — le filtriamo
+        data = {k: v for k, v in _raw.items() if not k.startswith('__')}
     except Exception as e:
         print(f"Errore nel caricamento del log: {e}")
         return
 
+    def indata(key):
+        """Controlla se la chiave esiste e il dato non è degenere (array vuoto)."""
+        return key in data and np.asarray(data[key]).size > 0
+
     t = data['t']
-    mass = data['mass'] if 'mass' in data.files else 2.0
+    mass = data['mass'] if indata('mass') else 2.0
     g = 9.80665
     block = not args.all and not args.save # Se vogliamo sequenziale, block=True a ogni plot
-    task_start = float(data['task_start_time'][0]) if 'task_start_time' in data.files else -1.0
+    task_start = float(np.asarray(data['task_start_time']).flat[0]) if indata('task_start_time') else -1.0
     if args.task_start is not None:   # argomento CLI sovrascrive il valore del log
         task_start = args.task_start
-    print(f"[DEBUG] task_start_time in files: {'task_start_time' in data.files}, value used: {task_start:.3f} s")
+    print(f"[DEBUG] task_start_time presente: {indata('task_start_time')}, value used: {task_start:.3f} s")
 
     # --- FIGURE 1: Position (ENU) ---
     fig_pos_data = [
@@ -194,7 +204,7 @@ def main():
            f"Control Wrench (Hover Force = {mass*g:.2f}N)", ncols=2, use_tex=args.tex, block=block, fignum=9, task_start=task_start)
 
     # --- FIGURE 9: Haptic Forces ---
-    if 'haptic_force' in data.files:
+    if indata('haptic_force'):
         fig9_data = [
             {'sim': data['haptic_force'][:, 0], 'ref': 0.0},
             {'sim': data['haptic_force'][:, 1], 'ref': 0.0},
@@ -218,7 +228,7 @@ def main():
            "Drone Linear and Angular Accelerations", ncols=3, use_tex=args.tex, block=block, fignum=11, task_start=task_start)
 
     # --- FIGURE 11: Peg External Forces ---
-    if 'peg_ext_force' in data.files:
+    if indata('peg_ext_force'):
         fig11_data = [
             {'sim': data['peg_ext_force'][:, 0], 'ref': 0.0},
             {'sim': data['peg_ext_force'][:, 1], 'ref': 0.0},
@@ -229,7 +239,7 @@ def main():
                "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=12, task_start=task_start)
 
     # --- FIGURE 12: Admittance delta_p (spostamento di ammettenza in ENU) ---
-    if 'delta_p' in data.files:
+    if indata('delta_p'):
         dp = data['delta_p']
         dp_norm = np.linalg.norm(dp, axis=1)
         fig12_data = [
@@ -245,7 +255,7 @@ def main():
                ncols=2, use_tex=args.tex, block=block, fignum=13, task_start=task_start)
 
     # --- FIGURE 12b: delta_p in terna SENSORE ---
-    if 'delta_p_sensor' in data.files:
+    if indata('delta_p_sensor'):
         dps = data['delta_p_sensor']
         dps_norm = np.linalg.norm(dps, axis=1)
         fig12b_data = [
@@ -261,7 +271,7 @@ def main():
                ncols=2, use_tex=args.tex, block=block, fignum=131, task_start=task_start)
 
     # --- FIGURE 13: Confronto ||delta_p|| vs ||F_ext|| ---
-    if 'delta_p' in data.files and 'peg_ext_force' in data.files:
+    if indata('delta_p') and indata('peg_ext_force'):
         dp_norm  = np.linalg.norm(data['delta_p'], axis=1)
         fext_norm = np.linalg.norm(data['peg_ext_force'], axis=1)
         fig13, ax13 = plt.subplots(2, 1, figsize=(12, 6), sharex=True,
@@ -287,9 +297,9 @@ def main():
             plt.show()
 
     # --- FIGURE 14: Interaction Drone Position ENU (Actual vs Reference) + Yaw ---
-    has_peg_actual = 'peg_actual_pos' in data.files
-    has_peg_ref    = 'peg_ref_pos'    in data.files
-    has_peg_yaw    = 'peg_actual_yaw' in data.files
+    has_peg_actual = indata('peg_actual_pos')
+    has_peg_ref    = indata('peg_ref_pos')
+    has_peg_yaw    = indata('peg_actual_yaw')
     if has_peg_actual or has_peg_ref:
         peg_act = data['peg_actual_pos'] if has_peg_actual else np.zeros((len(t), 3))
         peg_ref = data['peg_ref_pos']    if has_peg_ref    else None
@@ -300,7 +310,7 @@ def main():
             {'sim': peg_act[:, 2], 'ref': peg_ref[:, 2] if peg_ref is not None else None},
         ]
         if has_peg_yaw:
-            peg_ref_yaw = data['peg_ref_yaw'] if 'peg_ref_yaw' in data.files else None
+            peg_ref_yaw = data['peg_ref_yaw'] if indata('peg_ref_yaw') else None
             fig14_data.append({'sim': data['peg_actual_yaw'], 'ref': peg_ref_yaw})
         myPlot(t, fig14_data,
                ["Peg X [m]", "Peg Y [m]", "Peg Z [m]"] + (["Peg Yaw [rad]"] if has_peg_yaw else []),
@@ -308,12 +318,12 @@ def main():
                ncols=2, use_tex=args.tex, block=block, fignum=14, task_start=task_start)
 
     # --- FIGURE 15: Interaction Drone Velocities (ENU) + Yaw Rate ---
-    has_peg_vel      = 'peg_actual_vel'      in data.files
-    has_peg_yaw_rate = 'peg_actual_yaw_rate' in data.files
+    has_peg_vel      = indata('peg_actual_vel')
+    has_peg_yaw_rate = indata('peg_actual_yaw_rate')
     if has_peg_vel or has_peg_yaw_rate:
         fig15_data, labels15 = [], []
-        peg_ref_vel      = data['peg_ref_vel']      if 'peg_ref_vel'      in data.files else None
-        peg_ref_yaw_rate = data['peg_ref_yaw_rate'] if 'peg_ref_yaw_rate' in data.files else None
+        peg_ref_vel      = data['peg_ref_vel']      if indata('peg_ref_vel')      else None
+        peg_ref_yaw_rate = data['peg_ref_yaw_rate'] if indata('peg_ref_yaw_rate') else None
         if has_peg_vel:
             peg_vel = data['peg_actual_vel']
             fig15_data += [
@@ -330,7 +340,7 @@ def main():
                ncols=2, use_tex=args.tex, block=block, fignum=15, task_start=task_start)
 
     # --- FIGURE 16: Estimated Wrench (Momentum Based Estimator) ---
-    if 'estimated_wrench' in data.files:
+    if indata('estimated_wrench'):
         fig16_data = [
             {'sim': data['estimated_wrench'][:, 0], 'ref': 0.0},
             {'sim': data['estimated_wrench'][:, 1], 'ref': 0.0},
@@ -345,7 +355,7 @@ def main():
                "Estimated Wrench (Momentum-Based Estimator)", ncols=3, use_tex=args.tex, block=block, fignum=16, task_start=task_start)
 
     # --- FIGURE 17: Violazione geometrica vincolo soft r_min ---
-    if 'r_cyl' in data.files:
+    if indata('r_cyl'):
         r_min = 1.0      # [m] — deve corrispondere a drone_MPC_settings.py
         Z_pen = 1e3      # L2 penalty — aggiornare se modificato in configure_mpc
         z_pen = 1e2      # L1 penalty — aggiornare se modificato in configure_mpc
@@ -386,7 +396,7 @@ def main():
             plt.show()
 
     # --- FIGURE 18: Integral Action ---
-    if 'integral_action' in data.files:
+    if indata('integral_action'):
         fig18_data = [
             {'sim': data['integral_action'][:, 0], 'ref': 0.0},
             {'sim': data['integral_action'][:, 1], 'ref': 0.0},
@@ -399,9 +409,26 @@ def main():
     if args.save:
         if args.out_dir != "." and not os.path.exists(args.out_dir):
             os.makedirs(args.out_dir)
-        for i in plt.get_fignums():
-            plt.figure(i).savefig(os.path.join(args.out_dir, f"plot_fig_{i}.png"))
-        print(f"Grafici salvati in: {os.path.abspath(args.out_dir)}")
+        # Opzioni di salvataggio per formato vettoriale (pdf/eps): dpi alto, niente trasparenza
+        fmt_opts = {
+            "png": {"dpi": 150},
+            "pdf": {"dpi": 300, "bbox_inches": "tight"},
+            "eps": {"dpi": 300, "bbox_inches": "tight", "format": "eps"},
+        }
+        fig_nums = plt.get_fignums()
+        for i in fig_nums:
+            for fmt in args.formats:
+                out_path = os.path.join(args.out_dir, f"plot_fig_{i}.{fmt}")
+                plt.figure(i).savefig(out_path, **fmt_opts[fmt])
+
+        # --- PDF multi-pagina: tutti i grafici in un unico file scrollabile ---
+        from matplotlib.backends.backend_pdf import PdfPages
+        multipage_path = os.path.join(args.out_dir, "all_figures.pdf")
+        with PdfPages(multipage_path) as pdf:
+            for i in fig_nums:
+                pdf.savefig(plt.figure(i), bbox_inches="tight")
+        print(f"Grafici salvati in: {os.path.abspath(args.out_dir)} | Formati: {args.formats}")
+        print(f"PDF scrollabile multi-pagina generato in: {multipage_path}")
     elif args.all:
         plt.show()
 

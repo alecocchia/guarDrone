@@ -133,7 +133,7 @@ def generate_launch_description():
         DeclareLaunchArgument('peg_ft_topic',
                               default_value='/world/interaction/model/x500_interaction/joint/end_eff_sens_joint/force_torque',
                               description='Topic FT del sensore sull\'end-effector (per il logger)'),
-        DeclareLaunchArgument('log_save_path', default_value='/tmp/sim_run.npz',
+        DeclareLaunchArgument('log_save_path', default_value='/tmp/sim_run.mat',
                               description='Percorso file di salvataggio dati'),
         OpaqueFunction(function=launch_setup)
     ])

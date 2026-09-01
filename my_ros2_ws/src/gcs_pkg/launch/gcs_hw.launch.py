@@ -126,13 +126,13 @@ def generate_launch_description():
         # --- Offset Camera HW (usati per log e target reference se serve) ---
         DeclareLaunchArgument('cam_x',     default_value='0.105'),
         DeclareLaunchArgument('cam_y',     default_value='0.0'),
-        DeclareLaunchArgument('cam_z',     default_value='0.02'),
+        DeclareLaunchArgument('cam_z',     default_value='-0.15'),
 
         # --- Parametri logger ---
         DeclareLaunchArgument('peg_ft_topic',
                               default_value='/interaction_drone/force_torque',
                               description='Topic FT del sensore hardware'),
-        DeclareLaunchArgument('log_save_path', default_value='/tmp/hw_run.npz',
+        DeclareLaunchArgument('log_save_path', default_value='/tmp/hw_run.mat',
                               description='Percorso file di salvataggio dati log'),
         OpaqueFunction(function=launch_setup)
     ])

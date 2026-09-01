@@ -16,7 +16,7 @@ class Logger(Node):
     def __init__(self):
         super().__init__('logger')
 
-        self.declare_parameter('save_path', '/tmp/sim_run.npz')
+        self.declare_parameter('save_path', '/tmp/sim_run.mat')
         self.declare_parameter('log_hz', 50.0)
         self.declare_parameter('save_ref_flag', True)
         self.declare_parameter('mass', 2.064)
@@ -499,7 +499,8 @@ class Logger(Node):
         if not os.path.exists(self.out_dir):
             os.makedirs(self.out_dir, exist_ok=True)
 
-        np.savez(self.final_save_path, **out)
+        from scipy.io import savemat
+        savemat(self.final_save_path, out)
         self.get_logger().info(
             f"Salvataggio completato in {self.final_save_path}. Elaborati {len(T)} campioni."
         )
@@ -509,7 +510,7 @@ class Logger(Node):
         if os.path.exists(plot_script_path):
             self.get_logger().info(f"Avvio autogenerazione grafici in {self.out_dir}...")
             try:
-                subprocess.Popen(['python3', plot_script_path, '--log', self.final_save_path, '--save', '--out-dir', self.out_dir])
+                subprocess.Popen(['python3', plot_script_path, '--log', self.final_save_path, '--save', '--out-dir', self.out_dir, '--formats', 'png'])
             except Exception as e:
                 self.get_logger().error(f"Errore durante l'avvio del plot_script: {e}")
 

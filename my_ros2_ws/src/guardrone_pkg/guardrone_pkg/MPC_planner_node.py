@@ -82,9 +82,9 @@ class MpcPlannerNode(Node):
 
 
         self.mass = self.get_parameter('mass').value
-        self.ixx = self.get_parameter('ixx').value
-        self.iyy = self.get_parameter('iyy').value
-        self.izz = self.get_parameter('izz').value
+        self.ixx = self.get_parameter('ixx').value 
+        self.iyy = self.get_parameter('iyy').value 
+        self.izz = self.get_parameter('izz').value 
         arm_l_x = self.get_parameter('arm_l_x').value
         arm_l_y = self.get_parameter('arm_l_y').value
         moment_const = self.get_parameter('moment_const').value        
@@ -722,7 +722,7 @@ class MpcPlannerNode(Node):
         PesoAngVel = PesoVis / 100 
         PesoAcc    = PesoVel * 5  
         PesoAngAcc = PesoAngVel * 5 
-        PesoJerk   = PesoAcc / 2
+        PesoJerk   = PesoAcc / 5
         PesoSnap   = PesoJerk 
         PesoForce  = PesoVis / 600
         PesoTorque = PesoForce * 2
@@ -746,8 +746,8 @@ class MpcPlannerNode(Node):
                            PesoTorque / self.U_TAU_Z**2)
 
         R   = ca.diagcat(R_f, R_tau)
-        Q   = ca.diagcat(Q_cyl, Q_int, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
-        Q_e = ca.diagcat(2 * Q_cyl,  Q_int, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
+        Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
+        Q_e = ca.diagcat(2 * Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
 
 
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
