@@ -41,6 +41,10 @@ fi
 
 echo "---------------------------------------------------"
 
+# ROS_DOMAIN_ID hardware default 22 (puoi sovrascrivere con ROS_DOMAIN_ID=14 se fai simulazione)
+ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-22}
+CYCLONE_URI="file:///root/my_ros2_ws/src/gcs_pkg/gcs_pkg/cyclonedds_config.xml"
+
 # Run docker and open bash shell
 # Nota: ~/.ssh viene montato in /tmp/ssh-host e copiato con permessi corretti all'avvio
 # (mount diretto a /root/.ssh causa "Bad owner or permissions" per UID mismatch host/container)
@@ -55,7 +59,9 @@ $GPU_FLAGS \
 -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/HardwareScripts:/root/my_ros2_ws/HardwareScripts:rw" \
 -v "${HOME}/.ssh:/tmp/ssh-host:ro" \
 --env="DISPLAY=$DISPLAY" \
--e ROS_DOMAIN_ID=14 \
+-e ROS_DOMAIN_ID=${ROS_DOMAIN_ID} \
+-e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
+-e CYCLONEDDS_URI=${CYCLONE_URI} \
 -e XDG_RUNTIME_DIR="/tmp/runtime-root" \
 -e PX4_GZ_MODELS="/root/PX4-Autopilot/Tools/simulation/gz/models" \
 -e PX4_GZ_WORLDS="/root/PX4-Autopilot/Tools/simulation/gz/worlds" \

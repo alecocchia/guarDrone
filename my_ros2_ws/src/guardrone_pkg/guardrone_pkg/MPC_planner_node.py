@@ -705,10 +705,10 @@ class MpcPlannerNode(Node):
         Y_CYL  = np.pi/2  # range yaw [rad]
         E_INT_CART = np.array([1, 1, 1])
 
-        V       = np.array([0.3, 0.3, 0.5])
-        ANG_DOT = np.array([0.2, 0.2, 0.5])
-        ACC     = np.array([0.6, 0.6, 0.8])
-        ACC_ANG = np.array([0.5, 0.5, 0.8])
+        V       = np.array([0.3, 0.3, 0.5]) 
+        ANG_DOT = np.array([0.2, 0.2, 0.5]) * 2
+        ACC     = np.array([0.6, 0.6, 0.8]) 
+        ACC_ANG = np.array([0.5, 0.5, 0.8]) * 2
         JERK    = 20.0
         SNAP    = 200.0
 

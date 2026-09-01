@@ -202,22 +202,22 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     h_expr = ca.vertcat(
         r_cyl - r_min,   # r_cyl >= r_min  (indice 0)
     )
-    model.con_h_expr = h_expr
+    #model.con_h_expr = h_expr
 
     # Soft constraints: [r_min]
-    ocp.constraints.lh = np.array([0.0])
-    ocp.constraints.uh = np.array([1e6])
-    ocp.constraints.idxsh = np.array([0])
+    #ocp.constraints.lh = np.array([0.0])
+    #ocp.constraints.uh = np.array([1e6])
+    #ocp.constraints.idxsh = np.array([0])
 
     # soft constraints (L2 quadratico + L1 lineare)
     # [r_min]
     penalty_L2 = np.array([1e3])
-    penalty_L1 = np.array([1e2])
-
-    ocp.cost.Zl = penalty_L2
-    ocp.cost.Zu = penalty_L2
-    ocp.cost.zl = penalty_L1
-    ocp.cost.zu = penalty_L1
+    penalty_L1 = np.array([1e2])#
+#
+    #ocp.cost.Zl = penalty_L2#
+    #ocp.cost.Zu = penalty_L2#
+    #ocp.cost.zl = penalty_L1
+    #ocp.cost.zu = penalty_L1
 
     '''
                                         COST FUNCTION               
