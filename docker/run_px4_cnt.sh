@@ -42,6 +42,8 @@ fi
 echo "---------------------------------------------------"
 
 # Run docker and open bash shell
+# Nota: ~/.ssh viene montato in /tmp/ssh-host e copiato con permessi corretti all'avvio
+# (mount diretto a /root/.ssh causa "Bad owner or permissions" per UID mismatch host/container)
 docker run --rm -it --privileged \
 $GPU_FLAGS \
 -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
@@ -51,6 +53,7 @@ $GPU_FLAGS \
 -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/src:/root/my_ros2_ws/src:rw" \
 -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/SimulationScripts:/root/my_ros2_ws/SimulationScripts:rw" \
 -v "${HOST_GUARDRONE_DIR}/my_ros2_ws/HardwareScripts:/root/my_ros2_ws/HardwareScripts:rw" \
+-v "${HOME}/.ssh:/tmp/ssh-host:ro" \
 --env="DISPLAY=$DISPLAY" \
 -e ROS_DOMAIN_ID=14 \
 -e XDG_RUNTIME_DIR="/tmp/runtime-root" \
@@ -61,4 +64,9 @@ $GPU_FLAGS \
 -e LD_LIBRARY_PATH=/opt/acados/lib \
 -w /root/my_ros2_ws \
 --network host \
---name=px4-cnt guardrone_img:latest bash
+--name=px4-cnt guardrone_img:latest bash -c "
+    cp -r /tmp/ssh-host /root/.ssh && \
+    chmod 700 /root/.ssh && \
+    chmod 600 /root/.ssh/* 2>/dev/null || true && \
+    chmod 644 /root/.ssh/*.pub 2>/dev/null || true && \
+    exec bash"
