@@ -42,6 +42,12 @@ my_ros2_ws/log/
 my_ros2_ws/src/optitrack_listener/
 PX4-Autopilot/
 
+# Cartelle e file di log, dati e rosbags
+bag_files/
+*.npz
+*.mcap
+*.db3
+
 # Ignora file temporanei di Python
 __pycache__/
 *.pyc
