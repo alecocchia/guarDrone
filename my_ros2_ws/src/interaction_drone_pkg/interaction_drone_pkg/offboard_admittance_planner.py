@@ -40,7 +40,7 @@ Parametri configurabili (launch / ros2 param):
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Float64
 from geometry_msgs.msg import PoseStamped, Wrench, Vector3Stamped, TwistStamped
 from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint, VehicleOdometry
 import numpy as np
@@ -195,10 +195,16 @@ class OffboardAdmittancePlanner(Node):
             OffboardControlMode, f'{prefix}/fmu/in/offboard_control_mode', 1)
         self.setpoint_pub = self.create_publisher(
             TrajectorySetpoint, f'{prefix}/fmu/in/trajectory_setpoint', 1)
-        self.delta_p_pub        = self.create_publisher(Vector3Stamped, 'delta_p', 10)
-        self.delta_p_sensor_pub  = self.create_publisher(Vector3Stamped, 'delta_p_sensor', 10)
+        self.delta_p_pub        = self.create_publisher(Vector3Stamped, '/delta_p', 10)
+        self.delta_p_sensor_pub  = self.create_publisher(Vector3Stamped, '/delta_p_sensor', 10)
         self.peg_ref_pub = self.create_publisher(PoseStamped, '/peg_ref_pose', 10)
         self.peg_ref_twist_pub = self.create_publisher(TwistStamped, '/peg_ref_twist', 10)
+
+        # Stato attuale drone peg (ENU) — per logger
+        self.peg_actual_pose_pub     = self.create_publisher(PoseStamped,  '/peg_actual_pose',     10)
+        self.peg_actual_vel_pub      = self.create_publisher(TwistStamped, '/peg_actual_velocity', 10)
+        self.peg_actual_yaw_pub      = self.create_publisher(Float64,      '/peg_actual_yaw',      10)
+        self.peg_actual_yaw_rate_pub = self.create_publisher(Float64,      '/peg_actual_yaw_rate', 10)
 
         # -- Subscribers --
         self.odom_sub = self.create_subscription(
@@ -281,6 +287,46 @@ class OffboardAdmittancePlanner(Node):
 
         self.has_odom = True
 
+        # -- Pubblicazione dello stato reale del peg in ENU (per logger) --
+        stamp = self.get_clock().now().to_msg()
+
+        pose_msg = PoseStamped()
+        pose_msg.header.stamp = stamp
+        pose_msg.header.frame_id = 'world'
+        pose_msg.pose.position.x = float(self.current_pos[0])
+        pose_msg.pose.position.y = float(self.current_pos[1])
+        pose_msg.pose.position.z = float(self.current_pos[2])
+        q_quat = rot_flu2enu.as_quat()
+        pose_msg.pose.orientation.x = float(q_quat[0])
+        pose_msg.pose.orientation.y = float(q_quat[1])
+        pose_msg.pose.orientation.z = float(q_quat[2])
+        pose_msg.pose.orientation.w = float(q_quat[3])
+        self.peg_actual_pose_pub.publish(pose_msg)
+
+        vel_ned = np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]])
+        vel_enu = _M_NED2ENU @ vel_ned
+        omega_frd = np.array([msg.angular_velocity[0], msg.angular_velocity[1], msg.angular_velocity[2]])
+        omega_flu = _M_FRD2FLU @ omega_frd
+
+        vel_msg = TwistStamped()
+        vel_msg.header.stamp = stamp
+        vel_msg.header.frame_id = 'world'
+        vel_msg.twist.linear.x = float(vel_enu[0])
+        vel_msg.twist.linear.y = float(vel_enu[1])
+        vel_msg.twist.linear.z = float(vel_enu[2])
+        vel_msg.twist.angular.x = float(omega_flu[0])
+        vel_msg.twist.angular.y = float(omega_flu[1])
+        vel_msg.twist.angular.z = float(omega_flu[2])
+        self.peg_actual_vel_pub.publish(vel_msg)
+
+        yaw_msg = Float64()
+        yaw_msg.data = float(self.current_rpy[2])
+        self.peg_actual_yaw_pub.publish(yaw_msg)
+
+        yaw_rate_msg = Float64()
+        yaw_rate_msg.data = float(omega_flu[2])
+        self.peg_actual_yaw_rate_pub.publish(yaw_rate_msg)
+
     def ft_cb(self, msg: Wrench):
         """
         Misura FT sensor -> forza esterna in ENU.
@@ -293,7 +339,7 @@ class OffboardAdmittancePlanner(Node):
 
         """
         F_sensor = msg.force.z
-        alpha = 0.4
+        alpha = 0.2 # 0.4 prima
         # Inserisco la nuova lettura grezza nel buffer temporale (FIFO)
         #self.f_sensor_buffer.append(F_sensor)
         

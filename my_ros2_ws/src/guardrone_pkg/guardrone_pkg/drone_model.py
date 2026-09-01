@@ -4,11 +4,8 @@ import numpy as np
 import casadi as ca
 from utils_pkg.common import *
 
-def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset=None, camera_rpy=None) -> AcadosModel:
-    """Quadrotor ODE model con parametri sferici mondiali.
-    camera_offset e camera_rpy sono mantenuti per compatibilità con setup_model()
-    ma non vengono più usati nel costo (formulazione sferica mondiale).
-    """
+def export_quadrotor_ode_model(m, Ixx, Iyy, Izz) -> AcadosModel:
+    """Quadrotor ODE model con parametri cilindrici in world-frame."""
 
     model_name = 'quadrotor_ode'
 
@@ -46,21 +43,39 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset=None, camera_rpy=
     # Rotation matrix from quaternion
     Rb = quat_to_R(q)
 
-    # Model parameters (p) — coordinate sferiche mondiali
+    # Model parameters (p) — coordinate cilindriche nel mondo
     # p[0:3] = p_obj   (posizione oggetto nel mondo)
     # p[3]   = r_ref   (distanza di riferimento [m])
     # p[4]   = beta_ref  (azimut di riferimento [rad], angolo drone->obj nel piano XY)
     # p[5]   = gamma_ref (elevazione di riferimento [rad], 0=piano, +pi/2=zenit)
-    # p[6:9] = F_ext
-    # p [9:12] = Tau_ext_z
-    model_params = ca.SX.sym('p', 12)
+    # p[6]   = yaw_offset (offset angolare; 0 = oggetto al centro immagine)
+    # p[7:10] = F_ext
+    # p[10:13] = Tau_ext_z
+    model_params = ca.SX.sym('p', 13)
     p_obj = model_params[0:3]
     r_ref = model_params[3]
     beta_ref = model_params[4]
     gamma_ref = model_params[5]
-    F_ext = model_params[6:9]
-    Tau_ext = model_params[9:12]
+    yaw_offset = model_params[6]
+    F_ext = model_params[7:10]
+    Tau_ext = model_params[10:13]
     # (i simboli vengono usati direttamente in drone_MPC_settings.py tramite model.p[...])
+
+    # Integral errors states [e_int_r, e_int_beta, e_int_z]
+    e_int = ca.SX.sym('e_int', 3)
+
+    # Position relative to target (camera offset gestito esternamente)
+    p_rel = p - p_obj
+    
+    # Errore cartesiano tra target desiderato (da coord. cilindriche ref) e posizione attuale relative p_rel
+    dx_target = r_ref * ca.cos(beta_ref)
+    dy_target = r_ref * ca.sin(beta_ref)
+    dz_target = gamma_ref  # gamma_ref is z_ref
+    
+    ex = dx_target - p_rel[0]
+    ey = dy_target - p_rel[1]
+    ez = dz_target - p_rel[2]
+    e_int_dot = ca.vertcat(ex, ey, ez)
 
     # Equations of motion (ODEs)
     p_dot = v
@@ -69,11 +84,11 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset=None, camera_rpy=
     q_dot = 0.5 * ca.mtimes(omega_matrix(w), q)
     J_inv = ca.inv(J)
     w_dot = ca.mtimes(J_inv, (ca.vertcat(tau_x, tau_y, tau_z) - ca.cross(w, ca.mtimes(J, w)) + Tau_ext))
-    # Compose augmented state [p, v, q, w] (13 states)
-    x = ca.vertcat(p, v, q, w)
+    # Compose augmented state [p, v, q, w, e_int] (16 states)
+    x = ca.vertcat(p, v, q, w, e_int)
     xdot = ca.SX.sym('xdot', x.shape)
 
-    f_expl = ca.vertcat(p_dot, v_dot, q_dot, w_dot)
+    f_expl = ca.vertcat(p_dot, v_dot, q_dot, w_dot, e_int_dot)
     f_impl = xdot - f_expl
 
     # Define model
@@ -95,7 +110,8 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset=None, camera_rpy=
         r'$x$', r'$y$', r'$z$',
         r'$v_x$', r'$v_y$', r'$v_z$',
         r'$q_w$', r'$q_x$', r'$q_y$', r'$q_z$',
-        r'$\omega_x$', r'$\omega_y$', r'$\omega_z$'
+        r'$\omega_x$', r'$\omega_y$', r'$\omega_z$',
+        r'$e_{int,x}$', r'$e_{int,y}$', r'$e_{int,z}$'
     ]
     model.u_labels = [r'$F_z$', r'$\tau_x$', r'$\tau_y$', r'$\tau_z$']
     model.t_label = '$t$ [s]'
@@ -150,7 +166,7 @@ def convert_to_rpy_model(model_quat,m,Ixx,Iyy,Izz):
     model_rpy.xdot = xdot
     model_rpy.f_expl_expr = xdot
     model_rpy.name = model_quat.name + "_rpy"
-    model_params = ca.SX.sym('p', 12)  # simbolico 
+    model_params = ca.SX.sym('p', 13)  # simbolico 
     model_rpy.p = model_params       #model.p = parameters 
     model_rpy.m = m
     model_rpy.g = g0

@@ -21,6 +21,35 @@ def min_angle(alpha):
     return np.arctan2(np.sin(alpha), np.cos(alpha))
 
 
+def cartesian_to_cylindrical(p_rel):
+    """
+    Converte coordinate cartesiane relative [dx, dy, dz] (vettore (3,) o matrice (N, 3))
+    in coordinate cilindriche [r_cyl, beta, z_rel].
+    """
+    p_rel = np.asarray(p_rel)
+    dx, dy, dz = p_rel[..., 0], p_rel[..., 1], p_rel[..., 2]
+    r_cyl = np.hypot(dx, dy)        # come sqrt
+    beta  = np.arctan2(dy, dx) 
+    z_rel = dz
+    return np.stack([r_cyl, beta, z_rel], axis=-1)
+
+
+def cylindrical_to_cartesian(cyl_coords, p_origin=None):
+    """
+    Converte coordinate cilindriche [r_cyl, beta, z_rel] (vettore (3,) o matrice (N, 3))
+    in posizione cartesiana 3D [x, y, z] (sommata a p_origin se fornita).
+    """
+    cyl_coords = np.asarray(cyl_coords)
+    r_cyl, beta, z_rel = cyl_coords[..., 0], cyl_coords[..., 1], cyl_coords[..., 2]
+    dx = r_cyl * np.cos(beta)
+    dy = r_cyl * np.sin(beta)
+    dz = z_rel
+    p_rel = np.stack([dx, dy, dz], axis=-1)
+    if p_origin is not None:
+        return np.asarray(p_origin) + p_rel
+    return p_rel
+
+
 def quat_to_R(q):
     """
     Converte quaternione [qw, qx, qy, qz] in matrice di rotazione 3x3 (NumPy).

@@ -280,11 +280,28 @@ class FakePublisherNode(Node):
                     # che la CAMERA (offset in z rispetto al body) si trovi esattamente
                     # a takeoff_alt_1, allineata con il peg.
                     cam_body_takeoff_z = float(self.takeoff_alt_1 - self.cam_offset_z)
+
+                    # Yaw corrente del drone in ENU (fotografato all'istante del decollo).
+                    # Lo esplicitiamo nel quaternione invece di lasciare q=[0,0,0,0]
+                    # (che il trajectory planner interpreta come "mantieni yaw corrente"):
+                    # così l'intento è chiaro e robusto a modifiche future del planner.
+                    q_scipy = [self.drone1_odom.q[1], self.drone1_odom.q[2],
+                               self.drone1_odom.q[3], self.drone1_odom.q[0]]
+                    R_frd2ned = Rotation.from_quat(q_scipy).as_matrix()
+                    R_flu2enu = self.M_ned2enu @ R_frd2ned @ self.M_frd2flu
+                    current_yaw_enu = float(Rotation.from_matrix(R_flu2enu).as_euler('xyz')[2])
+                    yaw_quat = Rotation.from_euler('z', current_yaw_enu).as_quat()  # [x,y,z,w]
+
                     cam_pose = PoseStamped()
                     cam_pose.header.frame_id = 'world'
                     cam_pose.pose.position.x = float(self.drone_pos_enu[0])
                     cam_pose.pose.position.y = float(self.drone_pos_enu[1])
                     cam_pose.pose.position.z = cam_body_takeoff_z
+                    cam_pose.pose.orientation.x = float(yaw_quat[0])
+                    cam_pose.pose.orientation.y = float(yaw_quat[1])
+                    cam_pose.pose.orientation.z = float(yaw_quat[2])
+                    cam_pose.pose.orientation.w = float(yaw_quat[3])
+                    self.get_logger().info(f"Target decollo: z={cam_body_takeoff_z:.3f}m, yaw={math.degrees(current_yaw_enu):.1f}°")
                     self.cam_target_pub.publish(cam_pose)
                     
                     # Accende il trajectory planner

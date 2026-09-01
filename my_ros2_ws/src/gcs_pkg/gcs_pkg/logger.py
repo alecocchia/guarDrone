@@ -6,6 +6,7 @@ from geometry_msgs.msg import PoseStamped, TwistStamped, Wrench, Vector3Stamped,
 from std_msgs.msg import Float64MultiArray, Bool, Float64
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
+from utils_pkg.utils_np import cylindrical_to_cartesian
 
 # --- PX4 MESSAGES IMPORTS ---
 from px4_msgs.msg import VehicleOdometry
@@ -93,6 +94,8 @@ class Logger(Node):
         # PoV cilindrico attuale — da /actual_pov (MPC)
         # formato: [r_cyl, beta_cyl, z_cyl, yaw_err_cyl]
         self.actual_pov = []
+        
+        self.integral_action = []
 
         # Riferimenti drone
         self.pref_pos    = []
@@ -134,6 +137,7 @@ class Logger(Node):
         self.last_omega        = [0.0, 0.0, 0.0]
         self.last_p_cam        = [0.0, 0.0, 0.0]
         self.last_actual_pov   = [0.0, 0.0, 0.0, 0.0]
+        self.last_integral_action = [0.0, 0.0, 0.0]
         self.last_pref_pos     = [0.0, 0.0, 0.0]
         self.last_pref_rpy     = [0.0, 0.0, 0.0]
         self.last_pref_q       = [1.0, 0.0, 0.0, 0.0]
@@ -187,6 +191,7 @@ class Logger(Node):
         self.create_subscription(TwistStamped,     '/drone_velocity', self.cb_drone_velocity, 10)
         self.create_subscription(Float64MultiArray,'/actual_pov',     self.cb_actual_pov,     10)
         self.create_subscription(Vector3Stamped,   '/drone_cam_pose', self.cb_drone_cam_pose, 10)
+        self.create_subscription(Vector3,          '/integral_action',self.cb_integral_action,10)
 
         # Riferimenti drone
         self.create_subscription(PoseStamped,      '/optimal_drone_pose',      self.cb_ref_pose,       10)
@@ -249,6 +254,9 @@ class Logger(Node):
     def cb_actual_pov(self, msg: Float64MultiArray):
         if len(msg.data) >= 4:
             self.last_actual_pov = list(msg.data[:4])  # [r_cyl, beta, z, yaw_err]
+
+    def cb_integral_action(self, msg: Vector3):
+        self.last_integral_action = [msg.x, msg.y, msg.z]
 
     def cb_drone_cam_pose(self, msg: Vector3Stamped):
         v = msg.vector
@@ -374,6 +382,7 @@ class Logger(Node):
         self.omega.append(list(self.last_omega))
         self.p_cam.append(list(self.last_p_cam))
         self.actual_pov.append(list(self.last_actual_pov))
+        self.integral_action.append(list(self.last_integral_action))
         self.pref_pos.append(list(self.last_pref_pos))
         self.pref_rpy.append(list(self.last_pref_rpy))
         self.pref_q.append(list(self.last_pref_q))
@@ -442,13 +451,7 @@ class Logger(Node):
         # ---- Target cartesiano telecamera (geometria semplice da dati già loggati) ----
         online_cyl_ref = np.asarray(self.online_cyl_ref)
         peg_pos_arr    = np.asarray(self.peg_pos)
-        r_cyl_ref  = online_cyl_ref[:, 0]
-        beta_ref   = online_cyl_ref[:, 1]
-        z_ref      = online_cyl_ref[:, 2]
-        p_cam_target = np.zeros_like(p_cam)
-        p_cam_target[:, 0] = peg_pos_arr[:, 0] + r_cyl_ref * np.cos(beta_ref)
-        p_cam_target[:, 1] = peg_pos_arr[:, 1] + r_cyl_ref * np.sin(beta_ref)
-        p_cam_target[:, 2] = peg_pos_arr[:, 2] + z_ref
+        p_cam_target   = cylindrical_to_cartesian(online_cyl_ref, p_origin=peg_pos_arr)
 
         out = dict(
             t=T_rel, t_ref=np.asarray(self.t_ref),
@@ -469,6 +472,7 @@ class Logger(Node):
             p_cam_target=p_cam_target,
             # PoV cilindrico attuale (da MPC /actual_pov)
             r_cyl=r_cyl, beta_cyl=beta_cyl, z_cyl=z_cyl, yaw_err_cyl=yaw_err_cyl,
+            integral_action=np.asarray(self.integral_action),
             peg_ext_force=np.asarray(self.peg_ext_force),
             estimated_wrench=np.asarray(self.estimated_wrench),
             delta_p=np.asarray(self.delta_p),

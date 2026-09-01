@@ -74,7 +74,7 @@ def launch_setup(context, *args, **kwargs):
             'w_min': auto_wmin, 'w_max': auto_wmax,
             'arm_l_x': auto_lx, 'arm_l_y': auto_ly, 'moment_const': auto_mc,
             'return2autonomous': LaunchConfiguration('return2autonomous'),
-            'use_mbe': False,
+            'use_mbe': True,
         }]
     )
 
@@ -87,8 +87,8 @@ def launch_setup(context, *args, **kwargs):
             'use_sim_time': True,
             'start_x': drone_x, 'start_y': drone_y, 'start_z': drone_z,
             'dt': 0.02,   # 50 Hz
-            'v_max': 0.5,
-            'a_max': 1.0,
+            'v_max': 0.3,
+            'a_max': 0.6,
             'px4_ns': '',  # Namespace root (Drone 1 = istanza 0)
         }],
         remappings=[

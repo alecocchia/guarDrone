@@ -33,8 +33,8 @@ DRONE1_MODEL_NAME=${DRONE1_MODEL_NAME:-"x500_depth"}
 
 # Drone 2 — Interaction Drone (ammettenza): standalone, si aggancia a Gazebo
 DRONE2_X=${DRONE2_X:--1.0}
-DRONE2_Y=${DRONE2_Y:--55.0}
-DRONE2_Z=${DRONE2_Z:-4.52}
+DRONE2_Y=${DRONE2_Y:--53.0}
+DRONE2_Z=${DRONE2_Z:-5.0}
 DRONE2_YAW=${DRONE2_YAW:-0.0}
 DRONE2_MODEL_NAME=${DRONE2_MODEL_NAME:-"x500_interaction"}
 

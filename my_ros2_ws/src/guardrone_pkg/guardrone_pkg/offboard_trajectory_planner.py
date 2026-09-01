@@ -16,11 +16,14 @@ from scipy.spatial.transform import Rotation
 _M_NED2ENU = np.array([[0., 1., 0.],
                        [1., 0., 0.],
                        [0., 0., -1.]])
+                       
+_M_ENU2NED = _M_NED2ENU.T
 
 # ── Conversione FRD → FLU ────────────────────────────────────────────────────
 _M_FRD2FLU = np.array([[1., 0., 0.],
                        [0., -1., 0.],
                        [0., 0., -1.]])
+_M_FLU2FRD = _M_FRD2FLU.T
 
 def quaternion_to_euler(w, x, y, z):
     """Converte quaternione in angoli di eulero (roll, pitch, yaw)"""

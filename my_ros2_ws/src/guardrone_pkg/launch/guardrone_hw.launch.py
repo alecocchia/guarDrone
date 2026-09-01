@@ -134,7 +134,7 @@ def generate_launch_description():
         # === Parametri camera ===
         DeclareLaunchArgument('cam_x',     default_value='0.105',  description='Offset camera X (body) [m]'),
         DeclareLaunchArgument('cam_y',     default_value='0.0',  description='Offset camera Y (body) [m]'),
-        DeclareLaunchArgument('cam_z',     default_value='0.02',  description='Offset camera Z (body) [m]'),
+        DeclareLaunchArgument('cam_z',     default_value='0.08',  description='Offset camera Z (body) [m]'),
         DeclareLaunchArgument('cam_roll',  default_value='0.0',  description='Rotazione camera roll [rad]'),
         DeclareLaunchArgument('cam_pitch', default_value='0.0',  description='Rotazione camera pitch [rad]'),
         DeclareLaunchArgument('cam_yaw',   default_value='0.0',  description='Rotazione camera yaw [rad]'),

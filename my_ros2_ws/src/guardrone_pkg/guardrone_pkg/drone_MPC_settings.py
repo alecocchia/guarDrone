@@ -11,18 +11,16 @@ from scipy.spatial.transform import Rotation
 ##############  Estendere lo stato con tutti gli stati
 
 def build_yref_online(y_idx, vel_ref, u_ref=np.zeros(4)):
-    """Costruisce il vettore di riferimento online per la formulazione cilindrica.
-    Gli errori cilindrici (r_cyl_err, beta_err, z_err, yaw_err) hanno riferimento 0
-    perché sono già espressi come errore nel modello.
-    """
+    """Costruisce il vettore di riferimento online per la formulazione cilindrica."""
     yref = np.zeros(y_idx["u"].stop)
     yref[y_idx["cyl"]]     = np.array([0.0, 0.0, 0.0, 0.0])  # [r_cyl_err, beta_err, z_err, yaw_err] → tutti zero
+    yref[y_idx["int"]]     = np.array([0.0, 0.0, 0.0])        # [e_int_x, e_int_y, e_int_z] → tutti zero
     yref[y_idx["vel"]]     = vel_ref
     yref[y_idx["ang_vel"]] = np.array([0.0, 0.0, 0.0])
     yref[y_idx["acc"]]     = np.array([0.0, 0.0, 0.0])
     yref[y_idx["acc_ang"]] = np.array([0.0, 0.0, 0.0])
-    #yref[y_idx["jerk"]]    = np.array([0.0, 0.0, 0.0])
-    #yref[y_idx["snap"]]    = np.array([0.0, 0.0, 0.0])
+    yref[y_idx["jerk"]]    = np.array([0.0, 0.0, 0.0])
+    yref[y_idx["snap"]]    = np.array([0.0, 0.0, 0.0])
     yref[y_idx["u"]]       = u_ref
     return yref
 
@@ -31,8 +29,8 @@ def build_yref_terminal(y_idx, vel_ref, ny_e, u_ref=np.zeros(4)):
     return y[:ny_e]
 
 
-def setup_model(m, Ixx, Iyy, Izz, camera_offset, camera_rpy):
-    model = export_quadrotor_ode_model(m, Ixx, Iyy, Izz, camera_offset, camera_rpy)
+def setup_model(m, Ixx, Iyy, Izz):
+    model = export_quadrotor_ode_model(m, Ixx, Iyy, Izz)
     model_rpy = convert_to_rpy_model(model, m, Ixx, Iyy, Izz)
     return model, model_rpy
 
@@ -56,8 +54,8 @@ def setup_initial_conditions(start_x,start_y,start_z,start_phi,start_theta,start
     wy=0
     wz=0
 
-    x0 = np.array([xx,y,z,vx,vy,vz,qw,qx,qy,qz,wx,wy,wz])  # 13 stati totali
-    x0_rpy=np.array([xx,y,z,vx,vy,vz,roll,pitch,yaw,wx,wy,wz])
+    x0 = np.array([xx,y,z,vx,vy,vz,qw,qx,qy,qz,wx,wy,wz, 0.0, 0.0, 0.0])  # 16 stati totali
+    x0_rpy=np.array([xx,y,z,vx,vy,vz,roll,pitch,yaw,wx,wy,wz, 0.0, 0.0, 0.0])
     return x0,x0_rpy
 
 def set_initial_state(ocp_solver, xk):
@@ -121,28 +119,26 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
 
     '''
                                             PROBLEMA IN COORDINATE CILINDRICHE
-    Parametri del modello (12 totali):
+    Parametri del modello (13 totali):
       p[0:3] = p_obj   (posizione oggetto nel mondo)
       p[3]   = r_cyl_ref (distanza di riferimento orizzontale)
       p[4]   = beta_ref  (azimut di riferimento, angolo nel piano XY)
       p[5]   = z_ref     (quota di riferimento relativa)
-      p[6:9] = F_ext
-      p [9:12] = Tau_ext
+      p[6]   = yaw_ref_sym
+      p[7:10] = F_ext
+      p[10:13] = Tau_ext
     '''
     p_obj_expr = model.p[0:3]
     r_cyl_ref_sym = model.p[3]
     beta_ref_sym  = model.p[4]
     z_ref_sym     = model.p[5]
+    yaw_ref_sym   = model.p[6]
 
-    F_ext = model.p[6:9]
-    Tau_ext = model.p[9:12]
+    F_ext = model.p[7:10]
+    Tau_ext = model.p[10:13]
 
-    # Posizione della telecamera nel mondo
-    p_cam_expr = p_expr + R_expr @ ca.DM(cam_offset_body)
-    #p_cam_expr = p_expr
-
-    # Vettore telecamera → oggetto nel frame mondo
-    p_rel = p_cam_expr - p_obj_expr
+    # Vettore centro di massa → target_com nel frame mondo
+    p_rel = p_expr - p_obj_expr
 
     # Distanza 2D (sul piano orizzontale): sempre > 0
     r_cyl = ca.sqrt(p_rel[0]**2 + p_rel[1]**2)
@@ -154,9 +150,10 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
 
     # Quota relativa: differenza lungo Z
     z_err = z_ref_sym - p_rel[2]
-    # Yaw error: il drone deve puntare verso l'oggetto
-    # La direzione desiderata è -p_rel (da drone verso oggetto)
-    yaw_desired = beta_ref_sym + np.pi  # direzione drone→peg, continua
+    # Yaw error: il drone punta verso l'oggetto dalla posizione ATTUALE (beta_raw),
+    # con un offset opzionale yaw_ref_sym (0 = oggetto al centro immagine).
+    # Usando beta_raw invece di beta_ref_sym, il puntamento è robusto agli errori di tracking.
+    yaw_desired = beta_raw + np.pi + yaw_ref_sym
     yaw_err = min_angle(yaw - yaw_desired)
     #########################################################################################################                   
     #Jerk
@@ -205,39 +202,42 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     h_expr = ca.vertcat(
         r_cyl - r_min,   # r_cyl >= r_min  (indice 0)
     )
-    #model.con_h_expr = h_expr
+    model.con_h_expr = h_expr
 
     # Soft constraints: [r_min]
-    #ocp.constraints.lh = np.array([0.0])
-    #ocp.constraints.uh = np.array([1e6])
-    #ocp.constraints.idxsh = np.array([0])
+    ocp.constraints.lh = np.array([0.0])
+    ocp.constraints.uh = np.array([1e6])
+    ocp.constraints.idxsh = np.array([0])
 
     # soft constraints (L2 quadratico + L1 lineare)
-    # [r_min, roll, pitch]
-    #penalty_L2 = np.array([5e3])
-    #penalty_L1 = np.array([1e2])
+    # [r_min]
+    penalty_L2 = np.array([1e3])
+    penalty_L1 = np.array([1e2])
 
-    #ocp.cost.Zl = penalty_L2
-    #ocp.cost.Zu = penalty_L2
-    #ocp.cost.zl = penalty_L1
-    #ocp.cost.zu = penalty_L1
+    ocp.cost.Zl = penalty_L2
+    ocp.cost.Zu = penalty_L2
+    ocp.cost.zl = penalty_L1
+    ocp.cost.zu = penalty_L1
 
     '''
                                         COST FUNCTION               
     '''
+    e_int_expr = model.x[13:16]
+
     # Cost function quantities — formulazione cilindrica mondiale
-    # [r_cyl_err, beta_err, z_err, yaw_err, vel, ang_vel, acc, acc_ang, jerk, snap, u]
+    # [r_cyl_err, beta_err, z_err, yaw_err, e_int, vel, ang_vel, acc, acc_ang, u]
     y_expr = ca.vertcat(
         r_cyl_err,                      # Errore distanza orizzontale
         beta_err,                       # Errore azimut (orbita orizzontale)
         z_err,                          # Errore quota verticale
         yaw_err,                        # Errore yaw (punta verso l'oggetto)
+        e_int_expr,                     # Errori integrali [e_int_r, e_int_beta, e_int_z]
         v_expr,                         # Velocità
         ang_vel,                        # Velocità angolari
         acc_expr,                       # Accelerazione
         acc_ang_expr,                   # Accelerazione angolare
-        #j_expr,                         # Jerk
-        #s_expr,                         # Snap
+        j_expr,                         # Jerk
+        s_expr,                         # Snap
         model.u                         # Controllo
     )
 
@@ -247,12 +247,13 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
         beta_err,
         z_err,
         yaw_err,
+        e_int_expr,
         v_expr,
         ang_vel,
         acc_hover,
         acc_ang_hover,
-        #j_hover,                        # jerk
-        #s_hover,                        # snap
+        j_hover,                        # jerk
+        s_hover,                        # snap
     )
     
     ocp.cost.cost_type = 'NONLINEAR_LS'
@@ -264,15 +265,16 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     ocp.cost.W_e = W_e
     ocp.cost.set = True
     
-    # Parametri del modello (12 totali):
-    # [p_obj(3), r_cyl_ref(1), beta_ref(1), z_ref(1), F_ext(3), Tau_ext(3)]
-    ocp.parameter_values = np.zeros(12)
+    # Parametri del modello (13 totali):
+    # [p_obj(3), r_cyl_ref(1), beta_ref(1), z_ref(1), yaw_offset(1), F_ext(3), Tau_ext(3)]
+    ocp.parameter_values = np.zeros(13)
     ocp.parameter_values[0:3] = p_obj[0,:]
     ocp.parameter_values[3]   = cyl_ref[0]   # r_cyl_ref
     ocp.parameter_values[4]   = cyl_ref[1]   # beta_ref
     ocp.parameter_values[5]   = cyl_ref[2]   # z_ref
-    ocp.parameter_values[6:9] = np.array([0,0,0]) # F_ext
-    ocp.parameter_values[9:12] = np.array([0,0,0]) # Tau_ext
+    ocp.parameter_values[6]   = 0.0          # yaw_offset
+    ocp.parameter_values[7:10] = np.array([0,0,0]) # F_ext
+    ocp.parameter_values[10:13] = np.array([0,0,0]) # Tau_ext
 
     '''
                                         REFERENCES
@@ -282,23 +284,26 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
 
     # Indici del vettore y (formulazione cilindrica)
     cyl_ind     = slice(0, 4)                                    # [r_cyl_err, beta_err, z_err, yaw_err]
-    vel_ind     = slice(cyl_ind.stop,     cyl_ind.stop + 3)
-    ang_vel_ind = slice(vel_ind.stop,     vel_ind.stop + 3)
+    int_ind     = slice(cyl_ind.stop,     cyl_ind.stop + 3)      # [e_int_x, e_int_y, e_int_z]
+    vel_ind     = slice(int_ind.stop,     int_ind.stop + 3)
+    #vel_ind     = slice(cyl_ind.stop,     cyl_ind.stop + 3)    # CASO NO INTEGRATORE
+    ang_vel_ind = slice(vel_ind.stop,     vel_ind.stop + 3) 
     acc_ind     = slice(ang_vel_ind.stop, ang_vel_ind.stop + 3)
     acc_ang_ind = slice(acc_ind.stop,     acc_ind.stop + 3)
-    #jerk_ind    = slice(acc_ang_ind.stop, acc_ang_ind.stop + 3)
-    #snap_ind    = slice(jerk_ind.stop,    jerk_ind.stop + 3)
-    #u_ind       = slice(snap_ind.stop,    snap_ind.stop + 4)
-    u_ind       = slice(acc_ang_ind.stop, acc_ang_ind.stop + 4)
+    jerk_ind    = slice(acc_ang_ind.stop, acc_ang_ind.stop + 3)
+    snap_ind    = slice(jerk_ind.stop,    jerk_ind.stop + 3)
+    #u_ind       = slice(acc_ang_ind.stop, acc_ang_ind.stop + 4) # CASO NO JERK e SNAP
+    u_ind       = slice(snap_ind.stop,    snap_ind.stop + 4)
 
     y_idx = {
         "cyl":     cyl_ind,      # [r_cyl_err, beta_err, z_err, yaw_err]
+        "int":     int_ind,      # [e_int_x, e_int_y, e_int_z]  # COMMENTARE SE NO INTEGRATORE
         "vel":     vel_ind,
         "ang_vel": ang_vel_ind,
         "acc":     acc_ind,
         "acc_ang": acc_ang_ind,
-        #"jerk":    jerk_ind,
-        #"snap":    snap_ind,
+        "jerk":    jerk_ind,
+        "snap":    snap_ind,
         "u":       u_ind,
     }
     ny   = y_expr.numel()

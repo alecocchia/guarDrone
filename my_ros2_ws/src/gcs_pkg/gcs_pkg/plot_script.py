@@ -133,7 +133,7 @@ def main():
     # yaw_desired = beta_cyl + pi (coerente con la definizione MPC)
     # Wrappiamo entrambi in [-pi, pi] per la visualizzazione usando utils_np
     yaw_actual  = wrap_pi(data['rpy'][:, 2])
-    yaw_desired = wrap_pi(data['beta_cyl'] + np.pi)
+    yaw_desired = wrap_pi(data['online_cyl_ref'][:, 1] + np.pi)
     fig5_data = [
         {'sim': yaw_actual,               'ref': yaw_desired},
         {'sim': data['yaw_err_cyl'],      'ref': 0.0},
@@ -343,6 +343,58 @@ def main():
                ["Force X [N]", "Force Y [N]", "Force Z [N]", 
                 "Torque X [Nm]", "Torque Y [Nm]", "Torque Z [Nm]"], 
                "Estimated Wrench (Momentum-Based Estimator)", ncols=3, use_tex=args.tex, block=block, fignum=16, task_start=task_start)
+
+    # --- FIGURE 17: Violazione geometrica vincolo soft r_min ---
+    if 'r_cyl' in data.files:
+        r_min = 1.0      # [m] — deve corrispondere a drone_MPC_settings.py
+        Z_pen = 1e3      # L2 penalty — aggiornare se modificato in configure_mpc
+        z_pen = 1e2      # L1 penalty — aggiornare se modificato in configure_mpc
+        s_geom  = np.maximum(0.0, r_min - data['r_cyl'])   # violazione geometrica reale
+        J_slack = 0.5 * Z_pen * s_geom**2 + z_pen * s_geom
+
+        fig17, axes17 = plt.subplots(1, 2, figsize=(12, 4), num=17)
+        try:
+            fig17.canvas.manager.set_window_title("Figure 17: Violazione Vincolo Soft r_min")
+        except Exception:
+            pass
+
+        # --- Subplot sx: violazione s(t) ---
+        ax_s = axes17[0]
+        ax_s.plot(t, s_geom, 'r-', linewidth=1.5, label=r'$s = \max(0,\,r_{min} - r_{cyl})$')
+        if task_start > 0:
+            ax_s.axvline(x=task_start, color='k', linestyle='--', linewidth=1.5, label='Mission Start')
+        ax_s.set_title(r'Violazione geometrica $s(t)$ [$r_{min}$=' + f'{r_min} m]')
+        ax_s.set_xlabel('Time [s]')
+        ax_s.set_ylabel('s [m]')
+        ax_s.legend(fontsize='small')
+        ax_s.grid(True, alpha=0.3)
+
+        # --- Subplot dx: costo slack J(t) ---
+        ax_j = axes17[1]
+        ax_j.plot(t, J_slack, 'm-', linewidth=1.5, label=r'$J_{slack} = \frac{1}{2} Z s^2 + z_p s$')
+        if task_start > 0:
+            ax_j.axvline(x=task_start, color='k', linestyle='--', linewidth=1.5, label='Mission Start')
+        ax_j.set_title(f'Costo slack $J_{{slack}}(t)$  [Z={Z_pen:.0e}, $z_p$={z_pen:.0e}]')
+        ax_j.set_xlabel('Time [s]')
+        ax_j.set_ylabel('J [adim.]')
+        ax_j.legend(fontsize='small')
+        ax_j.grid(True, alpha=0.3)
+
+        fig17.suptitle('Soft Constraint — Distanza Minima da Oggetto', fontsize=14)
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        if block:
+            plt.show()
+
+    # --- FIGURE 18: Integral Action ---
+    if 'integral_action' in data.files:
+        fig18_data = [
+            {'sim': data['integral_action'][:, 0], 'ref': 0.0},
+            {'sim': data['integral_action'][:, 1], 'ref': 0.0},
+            {'sim': data['integral_action'][:, 2], 'ref': 0.0}
+        ]
+        myPlot(t, fig18_data, 
+               ["Integral e_x [m*s]", "Integral e_y [m*s]", "Integral e_z [m*s]"], 
+               "Cartesian Integral Action (Anti-windup clipped)", ncols=3, use_tex=args.tex, block=block, fignum=18, task_start=task_start)
 
     if args.save:
         if args.out_dir != "." and not os.path.exists(args.out_dir):
