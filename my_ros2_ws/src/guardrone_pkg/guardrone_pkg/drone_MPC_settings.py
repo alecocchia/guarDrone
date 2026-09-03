@@ -19,8 +19,8 @@ def build_yref_online(y_idx, vel_ref, u_ref=np.zeros(4)):
     yref[y_idx["ang_vel"]] = np.array([0.0, 0.0, 0.0])
     yref[y_idx["acc"]]     = np.array([0.0, 0.0, 0.0])
     yref[y_idx["acc_ang"]] = np.array([0.0, 0.0, 0.0])
-    yref[y_idx["jerk"]]    = np.array([0.0, 0.0, 0.0])
-    yref[y_idx["snap"]]    = np.array([0.0, 0.0, 0.0])
+    #yref[y_idx["jerk"]]    = np.array([0.0, 0.0, 0.0])
+    #yref[y_idx["snap"]]    = np.array([0.0, 0.0, 0.0])
     yref[y_idx["u"]]       = u_ref
     return yref
 
@@ -49,13 +49,18 @@ def setup_initial_conditions(start_x,start_y,start_z,start_phi,start_theta,start
 
     q=Rotation.from_euler('xyz', [roll, pitch, yaw]).as_quat()
     qw,qx,qy,qz = np.roll(q,1)
+    q=q/ca.norm_2(q)
 
     wx=0
     wy=0
     wz=0
 
-    x0 = np.array([xx,y,z,vx,vy,vz,qw,qx,qy,qz,wx,wy,wz, 0.0, 0.0, 0.0])  # 16 stati totali
-    x0_rpy=np.array([xx,y,z,vx,vy,vz,roll,pitch,yaw,wx,wy,wz, 0.0, 0.0, 0.0])
+    e_x = 0
+    e_y = 0
+    e_z = 0
+
+    x0 = np.array([xx,y,z,vx,vy,vz,qw,qx,qy,qz,wx,wy,wz, e_x, e_y, e_z])  # 16 stati totali
+    x0_rpy=np.array([xx,y,z,vx,vy,vz,roll,pitch,yaw,wx,wy,wz, e_x, e_y, e_z])
     return x0,x0_rpy
 
 def set_initial_state(ocp_solver, xk):
@@ -64,8 +69,7 @@ def set_initial_state(ocp_solver, xk):
 
 def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
                   u_min, u_max,
-                  cyl_ref = np.zeros(3),
-                  cam_offset_body = np.zeros(3)):
+                  cyl_ref = np.zeros(3)):
     
     nx = model.x.rows()
     nu = model.u.rows()
@@ -231,13 +235,13 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
         beta_err,                       # Errore azimut (orbita orizzontale)
         z_err,                          # Errore quota verticale
         yaw_err,                        # Errore yaw (punta verso l'oggetto)
-        #e_int_expr,                     # Errori integrali [e_int_r, e_int_beta, e_int_z]
+        #e_int_expr                     # Errori integrali [e_int_r, e_int_beta, e_int_z]
         v_expr,                         # Velocità
         ang_vel,                        # Velocità angolari
         acc_expr,                       # Accelerazione
         acc_ang_expr,                   # Accelerazione angolare
-        j_expr,                         # Jerk
-        s_expr,                         # Snap
+        #j_expr,                         # Jerk
+        #s_expr,                         # Snap
         model.u                         # Controllo
     )
 
@@ -252,8 +256,8 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
         ang_vel,
         acc_hover,
         acc_ang_hover,
-        j_hover,                        # jerk
-        s_hover,                        # snap
+        #j_hover,                        # jerk
+        #s_hover,                        # snap
     )
     
     ocp.cost.cost_type = 'NONLINEAR_LS'
@@ -290,10 +294,10 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
     ang_vel_ind = slice(vel_ind.stop,     vel_ind.stop + 3) 
     acc_ind     = slice(ang_vel_ind.stop, ang_vel_ind.stop + 3)
     acc_ang_ind = slice(acc_ind.stop,     acc_ind.stop + 3)
-    jerk_ind    = slice(acc_ang_ind.stop, acc_ang_ind.stop + 3)
-    snap_ind    = slice(jerk_ind.stop,    jerk_ind.stop + 3)
-    #u_ind       = slice(acc_ang_ind.stop, acc_ang_ind.stop + 4) # CASO NO JERK e SNAP
-    u_ind       = slice(snap_ind.stop,    snap_ind.stop + 4)
+    #jerk_ind    = slice(acc_ang_ind.stop, acc_ang_ind.stop + 3)
+    #snap_ind    = slice(jerk_ind.stop,    jerk_ind.stop + 3)
+    u_ind       = slice(acc_ang_ind.stop, acc_ang_ind.stop + 4) # CASO NO JERK e SNAP
+    #u_ind       = slice(snap_ind.stop,    snap_ind.stop + 4)
 
     y_idx = {
         "cyl":     cyl_ind,      # [r_cyl_err, beta_err, z_err, yaw_err]
@@ -302,8 +306,8 @@ def configure_mpc(model : AcadosModel, x0, p_obj, Tf, ts, W, W_e,
         "ang_vel": ang_vel_ind,
         "acc":     acc_ind,
         "acc_ang": acc_ang_ind,
-        "jerk":    jerk_ind,
-        "snap":    snap_ind,
+        #"jerk":    jerk_ind,
+        #"snap":    snap_ind,
         "u":       u_ind,
     }
     ny   = y_expr.numel()

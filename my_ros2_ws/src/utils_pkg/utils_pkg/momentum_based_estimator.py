@@ -11,14 +11,14 @@ class MomentumBasedEstimator:
         # -- Taratura TRASLAZIONALE (forze esterne F_ext) ---------------------
         # Ta_T: tempo di assestamento al 5% [s]. 
         # zita_T: smorzamento (1.0 = critico).
-        Ta_T   = 0.3   # [s] 
+        Ta_T   = 1.0   # [s] 
         zita_T = 1.2
         omega_n_T  = 3.0 / (Ta_T * zita_T)
         self.K1_T  = 2.0 * zita_T * omega_n_T
         self.K2_T  = omega_n_T / (2.0 * zita_T)
 
         # -- Taratura ROTAZIONALE (coppie esterne Tau_ext) --------------------
-        Ta_R   = 0.4   # [s] 
+        Ta_R   = 1.0   # [s] 
         zita_R = 1.2
         omega_n_R  = 3.0 / (Ta_R * zita_R)
         self.K1_R  = 2.0 * zita_R * omega_n_R

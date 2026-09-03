@@ -74,7 +74,6 @@ def launch_setup(context, *args, **kwargs):
         emulate_tty=True,
         parameters=[{
             'use_sim_time': False,
-            'control_flag': LaunchConfiguration('MPC_controller'),
             'mass': mass,
             'ixx': ixx, 'iyy': iyy, 'izz': izz,
             'cf': cf, 'ct': ct,
@@ -87,7 +86,7 @@ def launch_setup(context, *args, **kwargs):
             'peg_x': peg_x, 'peg_y': peg_y, 'peg_z': peg_z,
             'w_min': w_min, 'w_max': w_max,
             'arm_l_x': arm_l_x, 'arm_l_y': arm_l_y, 'moment_const': moment_const,
-            'return2autonomous': LaunchConfiguration('return2autonomous'),
+            'use_mbe': True,
         }]
     )
 
@@ -100,8 +99,8 @@ def launch_setup(context, *args, **kwargs):
             'use_sim_time': False,
             'start_x': drone_x, 'start_y': drone_y, 'start_z': drone_z,
             'dt': 0.02,   # 50 Hz
-            'v_max': 0.5,
-            'a_max': 1.0,
+            'v_max': 0.3,
+            'a_max': 0.6,
             'px4_ns': '',  # Namespace root (istanza PX4 0)
         }],
         remappings=[
@@ -124,7 +123,7 @@ def generate_launch_description():
         DeclareLaunchArgument('ixx',     default_value='0.0232',  description='Momento di inerzia Ixx [kg·m²]'),
         DeclareLaunchArgument('iyy',     default_value='0.0224',  description='Momento di inerzia Iyy [kg·m²]'),
         DeclareLaunchArgument('izz',     default_value='0.0405',   description='Momento di inerzia Izz [kg·m²]'),
-        DeclareLaunchArgument('f_max',   default_value='49.05',    description='Spinta massima totale [N]'),
+        DeclareLaunchArgument('f_max',   default_value='66.0',    description='Spinta massima totale [N]'),
         DeclareLaunchArgument('w_min',   default_value='150.0',   description='Velocità angolare minima motore [rad/s]'),
         DeclareLaunchArgument('w_max',   default_value='1200.0',  description='Velocità angolare massima motore [rad/s]'),
         DeclareLaunchArgument('arm_l_x', default_value='0.151',   description='Braccio motore asse X [m]'),
@@ -159,8 +158,6 @@ def generate_launch_description():
         # Parametri motore
         DeclareLaunchArgument('cf', default_value='1.25e-5'),
         DeclareLaunchArgument('ct', default_value='1.8e-7'),
-        DeclareLaunchArgument('return2autonomous', default_value='False',
-                              description='Se True, al rilascio del comando il drone torna alla traiettoria pianificata'),
 
         OpaqueFunction(function=launch_setup)
     ])

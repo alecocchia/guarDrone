@@ -60,7 +60,6 @@ def launch_setup(context, *args, **kwargs):
         emulate_tty=True,
         parameters=[{
             'use_sim_time': True,
-            'control_flag': LaunchConfiguration('MPC_controller'),
             'mass': auto_mass,
             'ixx': auto_inertia[0], 'iyy': auto_inertia[1], 'izz': auto_inertia[2],
             'cf': cf, 'ct': ct,
@@ -73,7 +72,6 @@ def launch_setup(context, *args, **kwargs):
             'peg_x': peg_x, 'peg_y': peg_y, 'peg_z': peg_z,
             'w_min': auto_wmin, 'w_max': auto_wmax,
             'arm_l_x': auto_lx, 'arm_l_y': auto_ly, 'moment_const': auto_mc,
-            'return2autonomous': LaunchConfiguration('return2autonomous'),
             'use_mbe': True,
         }]
     )
@@ -134,7 +132,5 @@ def generate_launch_description():
         # Parametri motore
         DeclareLaunchArgument('cf', default_value='8.0e-4'),
         DeclareLaunchArgument('ct', default_value='1.0e-5'),
-        DeclareLaunchArgument('return2autonomous', default_value='False',
-                              description='Se True, al rilascio del comando il drone torna alla traiettoria pianificata'),
         OpaqueFunction(function=launch_setup)
     ])

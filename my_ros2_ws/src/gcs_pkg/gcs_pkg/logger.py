@@ -190,12 +190,12 @@ class Logger(Node):
         self.create_subscription(Vector3,          '/drone_rpy',      self.cb_drone_rpy,      10)
         self.create_subscription(TwistStamped,     '/drone_velocity', self.cb_drone_velocity, 10)
         self.create_subscription(Float64MultiArray,'/actual_pov',     self.cb_actual_pov,     10)
-        self.create_subscription(Vector3Stamped,   '/drone_cam_pose', self.cb_drone_cam_pose, 10)
+        self.create_subscription(PoseStamped,   '/drone_cam_pose', self.cb_drone_cam_pose, 10)
         self.create_subscription(Vector3,          '/integral_action',self.cb_integral_action,10)
 
         # Riferimenti drone
         self.create_subscription(PoseStamped,      '/optimal_drone_pose',      self.cb_ref_pose,       10)
-        self.create_subscription(PoseStamped,      '/camera_ref_pose',         self.cb_ref_pose,       10)
+        # self.create_subscription(PoseStamped,      '/camera_ref_pose',         self.cb_ref_pose,       10)  # RIMOSSO: sovrascriveva pref_pos (riferimento drone) con il riferimento camera
         self.create_subscription(TwistStamped,     '/velocity_reference',      self.cb_ref_twist,      10)
         self.create_subscription(Wrench,           '/optimal_wrench',          self.cb_optimal_wrench,     10)
         self.create_subscription(Wrench,           '/wrench_reference',        self.cb_wrench_target,  10)
@@ -258,9 +258,9 @@ class Logger(Node):
     def cb_integral_action(self, msg: Vector3):
         self.last_integral_action = [msg.x, msg.y, msg.z]
 
-    def cb_drone_cam_pose(self, msg: Vector3Stamped):
-        v = msg.vector
-        self.last_p_cam = [v.x, v.y, v.z]
+    def cb_drone_cam_pose(self, msg: PoseStamped):
+        p = msg.pose.position
+        self.last_p_cam = [p.x, p.y, p.z]
 
     # ================================================================== #
     #  Callbacks — riferimenti drone                                       #

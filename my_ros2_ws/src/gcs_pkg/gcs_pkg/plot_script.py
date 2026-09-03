@@ -88,7 +88,7 @@ def main():
         {'sim': data['pos'][:, 2], 'ref': data['pref_pos'][:, 2]}
     ]
     myPlot(t, fig_pos_data, ["Position X [m]", "Position Y [m]", "Position Z [m]"], 
-           "Drone Position vs MPC Reference", ncols=3, use_tex=args.tex, block=block, fignum=1, task_start=task_start)
+           "Drone Position vs MPC optimal trajectory", ncols=3, use_tex=args.tex, block=block, fignum=1, task_start=task_start)
 
     # --- FIGURE 2: Orientation (RPY) ---
     fig_rpy_data = [
@@ -96,7 +96,7 @@ def main():
         {'sim': data['rpy'][:, 1], 'ref': data['pref_rpy'][:, 1]}
     ]
     myPlot(t, fig_rpy_data, ["Roll [rad]", "Pitch [rad]"], 
-           "Drone Orientation (Roll/Pitch) vs MPC Reference", ncols=2, use_tex=args.tex, block=block, fignum=2, task_start=task_start)
+           "Drone Orientation (Roll/Pitch)", ncols=2, use_tex=args.tex, block=block, fignum=2, task_start=task_start)
 
     # --- FIGURE 3: Velocities ---
     fig_vel_data = [
