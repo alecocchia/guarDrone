@@ -35,8 +35,8 @@ def launch_setup(context, *args, **kwargs):
         condition=UnlessCondition(use_fake),
         parameters=[{
             'use_sim_time': False,
-            'takeoff_alt_1': 1.5,   # [m] Quota di decollo reale per GuaDrone
-            'takeoff_alt_2': 1.5,   # [m] Quota di decollo reale per Interaction Drone
+            'takeoff_alt_1': 1.50,   # [m] Quota di decollo reale per GuaDrone
+            'takeoff_alt_2': 1.50,   # [m] Quota di decollo reale per Interaction Drone
             'cam_start_x': drone_x,
             'cam_start_y': drone_y,
             'cam_start_z': drone_z,

@@ -28,10 +28,10 @@ class PX4VisualOdomPublisher(Node):
             [0.0,  0.0, -1.0]
         ])
 
-        self.prisma_optitrack = False
+        self.prisma_optitrack = True
 
         self.M_flu2frd = self.M_frd2flu.T
-        self.optitrack2enu = np.array([[1,0,0],[0,0,1],[0,-1,0]]).T
+        self.optitrack2enu = np.array([[1,0,0],[0,0,-1],[0,1,0]])
 
         # Profilo QoS del tipo "sensor_data"
         self.qos = QoSProfile(
@@ -43,7 +43,7 @@ class PX4VisualOdomPublisher(Node):
 
         self.optitrack_odom_sub = self.create_subscription(
             Odometry, 
-            '/optitrack/body_2/odometry', 
+            '/optitrack/body_1/odometry', 
             self.optitrack_odom_cb, 
             self.qos
         )
@@ -104,8 +104,10 @@ class PX4VisualOdomPublisher(Node):
 
         # costruzione del messaggio VehicleOdometry
         out_msg = VehicleOdometry()
-        out_msg.timestamp = timestamp_us
-        out_msg.timestamp_sample = timestamp_us
+        # out_msg.timestamp = timestamp_us
+        # out_msg.timestamp_sample = timestamp_us
+        out_msg.timestamp = 0               # prima dipendeva dal tempo di clock dell'optitrack
+        out_msg.timestamp_sample = 0
         
         # specificazione dei frame di riferimento per l'EKF2
         out_msg.pose_frame = VehicleOdometry.POSE_FRAME_NED

@@ -332,7 +332,7 @@ class FakePublisherNode(Node):
             # La quota target per il body è (takeoff_alt_1 - cam_offset_z).
             peg_local_pos_z = -self.drone1_local_pos.z 
             dist = abs(peg_local_pos_z - (self.takeoff_alt_1 - self.cam_offset_z - self.guardrone_start_z))
-            d1_up = dist < 0.03
+            d1_up = dist < 2
             self.get_logger().info(f"Distanza dal reference di takeoff: d ={dist:.3f}")
 
             if d1_up:

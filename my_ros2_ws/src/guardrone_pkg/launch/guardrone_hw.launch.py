@@ -86,7 +86,7 @@ def launch_setup(context, *args, **kwargs):
             'peg_x': peg_x, 'peg_y': peg_y, 'peg_z': peg_z,
             'w_min': w_min, 'w_max': w_max,
             'arm_l_x': arm_l_x, 'arm_l_y': arm_l_y, 'moment_const': moment_const,
-            'use_mbe': True,
+            'use_mbe': False,
         }]
     )
 
