@@ -28,7 +28,7 @@ class PX4VisualOdomPublisher(Node):
             [0.0,  0.0, -1.0]
         ])
 
-        self.prisma_optitrack = True
+        self.prisma_optitrack = False
 
         self.M_flu2frd = self.M_frd2flu.T
         self.optitrack2enu = np.array([[1,0,0],[0,0,-1],[0,1,0]])
@@ -43,7 +43,7 @@ class PX4VisualOdomPublisher(Node):
 
         self.optitrack_odom_sub = self.create_subscription(
             Odometry, 
-            '/optitrack/body_1/odometry', 
+            '/optitrack/body_2/odometry', 
             self.optitrack_odom_cb, 
             self.qos
         )
