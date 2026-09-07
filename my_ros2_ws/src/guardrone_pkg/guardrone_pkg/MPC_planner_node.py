@@ -125,7 +125,7 @@ class MpcPlannerNode(Node):
         # === Tempo/Orizzonte ===
         self.Hz = 100.0
         self.ts = 1.0/self.Hz             # 10 ms
-        self.N_horiz = 50          # Orizzonte di predizione (numero di campioni)
+        self.N_horiz = 30          # Orizzonte di predizione (numero di campioni)
         self.Tp = self.N_horiz * self.ts  # Tempo totale dell'orizzonte 
 
         self.path_pub_counter = 0  # Contatore per limitare la frequenza di pubblicazione del path
@@ -619,7 +619,7 @@ class MpcPlannerNode(Node):
 
         V       = np.array([0.2, 0.2, 0.3]) 
         ANG_DOT = np.array([0.15, 0.15, 0.25]) 
-        ACC     = np.array([0.15, 0.15, 0.2]) ## OK ANCHE DIVIDENDO PER 2 (CON ESTIMATOR)
+        ACC     = np.array([0.25, 0.25, 0.25]) ## OK ANCHE DIVIDENDO PER 2 (CON ESTIMATOR)
         ACC_ANG = np.array([0.3, 0.3, 0.35])
         JERK    = 20.0
         SNAP    = 200.0
@@ -635,8 +635,8 @@ class MpcPlannerNode(Node):
         PesoAngVel = PesoVis / 100 
         PesoAcc    = PesoVel * 2   
         PesoAngAcc = PesoAngVel * 2 
-        PesoJerk   = PesoAcc / 5
-        PesoSnap   = PesoJerk 
+        #PesoJerk   = PesoAcc / 5
+        #PesoSnap   = PesoJerk 
         PesoForce  = PesoVis / 600
         PesoTorque = PesoForce * 2
 
@@ -659,8 +659,8 @@ class MpcPlannerNode(Node):
                            PesoTorque / self.U_TAU_Z**2)
 
         R   = ca.diagcat(R_f, R_tau)
-        Q   = ca.diagcat(5*Q_cyl, 8*Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
-        Q_e = ca.diagcat(5 * Q_cyl, 8*Q_vel, 5.5*Q_ang_dot,2*Q_acc, 2*Q_acc_ang)
+        Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
+        Q_e = ca.diagcat(5 * Q_cyl, 5.5*Q_vel, 5.5*Q_ang_dot,2*Q_acc, 2*Q_acc_ang)
 
 
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
