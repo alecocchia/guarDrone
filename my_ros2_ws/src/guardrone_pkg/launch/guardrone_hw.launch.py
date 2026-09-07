@@ -123,7 +123,7 @@ def generate_launch_description():
         DeclareLaunchArgument('ixx',     default_value='0.0232',  description='Momento di inerzia Ixx [kg·m²]'),
         DeclareLaunchArgument('iyy',     default_value='0.0224',  description='Momento di inerzia Iyy [kg·m²]'),
         DeclareLaunchArgument('izz',     default_value='0.0405',   description='Momento di inerzia Izz [kg·m²]'),
-        DeclareLaunchArgument('f_max',   default_value='66.0',    description='Spinta massima totale [N]'),
+        DeclareLaunchArgument('f_max',   default_value='55.0',    description='Spinta massima totale [N]'),
         DeclareLaunchArgument('w_min',   default_value='150.0',   description='Velocità angolare minima motore [rad/s]'),
         DeclareLaunchArgument('w_max',   default_value='1200.0',  description='Velocità angolare massima motore [rad/s]'),
         DeclareLaunchArgument('arm_l_x', default_value='0.151',   description='Braccio motore asse X [m]'),

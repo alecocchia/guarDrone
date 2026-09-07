@@ -597,14 +597,14 @@ class MpcPlannerNode(Node):
 
         R_CYL  = 0.5      # range distanza [m]
         B_CYL  = np.pi/3  # range azimut [rad]
-        Z_CYL  = 1.0      # range quota [m]
+        Z_CYL  = 0.5      # range quota [m]
         Y_CYL  = np.pi/2  # range yaw [rad]
         E_INT_CART = np.array([1, 1, 1])
 
         V       = np.array([0.2, 0.2, 0.3]) 
         ANG_DOT = np.array([0.15, 0.15, 0.5]) 
         ACC     = np.array([0.4, 0.4, 0.4])/2 ## OK ANCHE DIVIDENDO PER 2 (CON ESTIMATOR)
-        ACC_ANG = np.array([0.3, 0.3, 0.6])/2
+        ACC_ANG = np.array([0.3, 0.3, 0.6])
         JERK    = 20.0
         SNAP    = 200.0
 
