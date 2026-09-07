@@ -659,7 +659,7 @@ class MpcPlannerNode(Node):
                            PesoTorque / self.U_TAU_Z**2)
 
         R   = ca.diagcat(R_f, R_tau)
-        Q   = ca.diagcat(5*Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
+        Q   = ca.diagcat(5*Q_cyl, 8*Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
         Q_e = ca.diagcat(5 * Q_cyl, 8*Q_vel, 5.5*Q_ang_dot,2*Q_acc, 2*Q_acc_ang)
 
 
