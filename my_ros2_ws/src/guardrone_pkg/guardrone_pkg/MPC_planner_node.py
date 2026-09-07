@@ -93,7 +93,8 @@ class MpcPlannerNode(Node):
         self.U_TAU_Y = arm_l_x * self.U_F / 2.0
         self.U_TAU_X = self.U_TAU_X/1.5
         self.U_TAU_Y = self.U_TAU_Y/1.5
-        self.U_TAU_Z = moment_const * self.U_F / 2              ## MODIFICA PER HARDWARE
+        self.U_TAU_Z = moment_const * self.U_F
+        self.U_TAU_Z = self.U_TAU_Z / 1.5         ## MODIFICA PER HARDWARE
         self.start_x = self.get_parameter('start_x').value
         self.start_y = self.get_parameter('start_y').value
         self.start_z = self.get_parameter('start_z').value
