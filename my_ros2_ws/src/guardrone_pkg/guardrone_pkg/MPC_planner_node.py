@@ -660,7 +660,7 @@ class MpcPlannerNode(Node):
 
         R   = ca.diagcat(R_f, R_tau)
         Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
-        Q_e = ca.diagcat(5 * Q_cyl, 5*Q_vel, 5*Q_ang_dot,2*Q_acc, 2*Q_acc_ang)
+        Q_e = ca.diagcat(5 * Q_cyl, 4*Q_vel, 4*Q_ang_dot,2*Q_acc, 2*Q_acc_ang)
 
 
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
