@@ -490,7 +490,8 @@ class Logger(Node):
             # Derivate numeriche
             acc=acc, ang_acc=ang_acc, jerk=jerk, snap=snap,
             mass=self.mass,
-            task_start_time=np.array([t_start_rel])
+            task_start_time=np.array([t_start_rel]),
+            task_end_time=np.array([T_rel[-1]])  # ultimo campione = momento del kill
         )
 
         import os

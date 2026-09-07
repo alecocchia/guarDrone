@@ -519,6 +519,19 @@ class MpcPlannerNode(Node):
         drone_vel_msg.twist.angular.z = float(self.current_ang_vel[2])
         self.drone_vel_pub.publish(drone_vel_msg)
 
+        # Pubblica posizione camera nel mondo (ENU) — sempre, non solo durante il task,
+        # così p_cam è disponibile fin dall'inizio del logging (pre-task)
+        Rb_odom = Rotation.from_quat([q_x, q_y, q_z, q_w]).as_matrix()
+        p_cam_odom = self.current_position + Rb_odom @ self.camera_offset
+        cam_pose_msg = PoseStamped()
+        cam_pose_msg.header.stamp = t.header.stamp
+        cam_pose_msg.header.frame_id = 'world'
+        cam_pose_msg.pose.position.x = float(p_cam_odom[0])
+        cam_pose_msg.pose.position.y = float(p_cam_odom[1])
+        cam_pose_msg.pose.position.z = float(p_cam_odom[2])
+        cam_pose_msg.pose.orientation = t.transform.rotation
+        self.drone_cam_pose_pub.publish(cam_pose_msg)
+
     """
     ===================== REFERENCE CALLBACKS ==============================
     """
@@ -850,20 +863,7 @@ class MpcPlannerNode(Node):
             # Scipy Rotation.from_quat usa [x, y, z, w], CasADi usa [w, x, y, z]
             Rb = Rotation.from_quat([q_drone[1], q_drone[2], q_drone[3], q_drone[0]]).as_matrix()
             p_cam = p_drone + Rb @ self.camera_offset
-            
-            # Pubblica posizione camera nel mondo (ENU) per il logger
-            cam_pose_msg = PoseStamped()
-            cam_pose_msg.header.stamp = self.get_clock().now().to_msg()
-            cam_pose_msg.header.frame_id = 'world'
-            cam_pose_msg.pose.position.x = float(p_cam[0])
-            cam_pose_msg.pose.position.y = float(p_cam[1])
-            cam_pose_msg.pose.position.z = float(p_cam[2])
-            # La telecamera ha la stessa rotazione del body del drone (trascurando l'offset angolare per rviz)
-            cam_pose_msg.pose.orientation.x = float(q_drone[1])
-            cam_pose_msg.pose.orientation.y = float(q_drone[2])
-            cam_pose_msg.pose.orientation.z = float(q_drone[3])
-            cam_pose_msg.pose.orientation.w = float(q_drone[0])
-            self.drone_cam_pose_pub.publish(cam_pose_msg)
+            # Nota: /drone_cam_pose è ora pubblicato nella callback odometria (sempre, anche pre-task)
 
             p_obj_now = self.current_obj_pos
             p_rel = p_cam - p_obj_now

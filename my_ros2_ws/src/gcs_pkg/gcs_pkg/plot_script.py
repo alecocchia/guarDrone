@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 import argparse, numpy as np
 import matplotlib.pyplot as plt
-from utils_pkg.utils_np import wrap_pi
+from utils_pkg.utils_np import wrap_pi, cylindrical_to_cartesian
 
-def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, fignum=None, task_start=-1.0):
+def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, fignum=None, task_start=-1.0, task_end=-1.0):
     plt.rcParams.update({"text.usetex": use_tex, "font.family": "serif"})
     n = len(data_list)
     nrows = int(np.ceil(n / ncols))
@@ -29,6 +29,8 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
                 axes[i].plot(time_plot, ref_data[:len(time_plot)], 'r--', label='Reference', linewidth=1.2)
         if task_start > 0:
             axes[i].axvline(x=task_start, color='k', linestyle='--', linewidth=1.5, label='Mission Start')
+        if task_end > 0:
+            axes[i].axvline(x=task_end, color='r', linestyle=':', linewidth=1.5, label='Mission End')
         
         axes[i].set_title(labels[i])
         axes[i].grid(True, alpha=0.3)
@@ -80,6 +82,28 @@ def main():
     if args.task_start is not None:   # argomento CLI sovrascrive il valore del log
         task_start = args.task_start
     print(f"[DEBUG] task_start_time presente: {indata('task_start_time')}, value used: {task_start:.3f} s")
+    task_end = float(np.asarray(data['task_end_time']).flat[0]) if indata('task_end_time') else -1.0
+    print(f"[DEBUG] task_end_time presente: {indata('task_end_time')}, value used: {task_end:.3f} s")
+
+    # --- Filling riferimenti pre-task ---
+    # Prima del task_start i riferimenti MPC non sono ancora pubblicati (valgono 0).
+    # Li riempiamo con il primo valore valido post-task per eliminare la discontinuità visiva.
+    def fill_pre_task(arr, idx_s):
+        """Sostituisce i campioni pre-task con il primo valore valido post-task."""
+        if idx_s > 0 and idx_s < len(arr):
+            arr[:idx_s] = arr[idx_s]
+        return arr
+
+    if task_start > 0:
+        idx_s = int(np.searchsorted(t, task_start))
+        for key in ['pref_pos', 'pref_rpy', 'vref', 'omegaref', 'wrench_target', 'peg_pos']:
+            if indata(key):
+                data[key] = fill_pre_task(np.asarray(data[key]).copy(), idx_s)
+        # Ricalcola online_cyl_ref e p_cam_target dopo il fill
+        if indata('online_cyl_ref') and indata('peg_pos'):
+            data['online_cyl_ref'] = fill_pre_task(np.asarray(data['online_cyl_ref']).copy(), idx_s)
+            data['p_cam_target'] = cylindrical_to_cartesian(
+                data['online_cyl_ref'], p_origin=np.asarray(data['peg_pos']))
 
     # --- FIGURE 1: Position (ENU) ---
     fig_pos_data = [
@@ -88,7 +112,7 @@ def main():
         {'sim': data['pos'][:, 2], 'ref': data['pref_pos'][:, 2]}
     ]
     myPlot(t, fig_pos_data, ["Position X [m]", "Position Y [m]", "Position Z [m]"], 
-           "Drone Position vs MPC optimal trajectory", ncols=3, use_tex=args.tex, block=block, fignum=1, task_start=task_start)
+           "Drone Position vs MPC optimal trajectory", ncols=3, use_tex=args.tex, block=block, fignum=1, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 2: Orientation (RPY) ---
     fig_rpy_data = [
@@ -96,7 +120,7 @@ def main():
         {'sim': data['rpy'][:, 1], 'ref': data['pref_rpy'][:, 1]}
     ]
     myPlot(t, fig_rpy_data, ["Roll [rad]", "Pitch [rad]"], 
-           "Drone Orientation (Roll/Pitch)", ncols=2, use_tex=args.tex, block=block, fignum=2, task_start=task_start)
+           "Drone Orientation (Roll/Pitch)", ncols=2, use_tex=args.tex, block=block, fignum=2, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 3: Velocities ---
     fig_vel_data = [
@@ -109,7 +133,7 @@ def main():
     ]
     myPlot(t, fig_vel_data, ["Vel X [m/s]", "Vel Y [m/s]", "Vel Z [m/s]", 
                   "Omega X [rad/s]", "Omega Y [rad/s]", "Omega Z [rad/s]"], 
-           "Drone Velocities vs MPC Reference", ncols=3, use_tex=args.tex, block=block, fignum=3, task_start=task_start)
+           "Drone Velocities vs MPC Reference", ncols=3, use_tex=args.tex, block=block, fignum=3, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 4: Riferimento Cartesiano Camera vs Posizione Effettiva Camera ---
     # Usiamo direttamente p_cam e p_cam_target salvati dal logger.py
@@ -120,7 +144,7 @@ def main():
         {'sim': data['p_cam'][:, 2], 'ref': data['p_cam_target'][:, 2]}
     ]
     myPlot(t, fig_cart_ref_data, ["Cam X [m]", "Cam Y [m]", "Cam Z [m]"], 
-           "Camera Cartesian Position vs Derived Target", ncols=3, use_tex=args.tex, block=block, fignum=4, task_start=task_start)
+           "Camera Cartesian Position vs Derived Target", ncols=3, use_tex=args.tex, block=block, fignum=4, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 5: Coordinate Cilindriche (r_cyl, beta, z) vs Riferimento ---
     # Allineamento dell'azimut per evitare che ref e sim si sdoppino di 2*pi nel plot
@@ -136,7 +160,7 @@ def main():
     myPlot(t, fig4_data,
            ["Distance r_cyl [m]", "Azimuth beta [rad]", "Elevation z [m]"],
            "Cylindrical PoV Tracking (World Frame)",
-           ncols=3, use_tex=args.tex, block=block, fignum=5, task_start=task_start)
+           ncols=3, use_tex=args.tex, block=block, fignum=5, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 6: Yaw Tracking (puntamento verso oggetto) ---
     # yaw_err_cyl è già loggato direttamente dall'MPC (wrap_pi applicato correttamente)
@@ -151,10 +175,11 @@ def main():
     myPlot(t, fig5_data,
            ["Yaw Actual vs Desired [rad]", "Yaw Error [rad]"],
            "Yaw Tracking: Drone Pointing Toward Target",
-           ncols=2, use_tex=args.tex, block=block, fignum=6, task_start=task_start)
+           ncols=2, use_tex=args.tex, block=block, fignum=6, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 6: Errori di Tracking Primari (cilindrici + posizione + orientamento) ---
-    err_pos = np.linalg.norm(data['pos'][:, :2] - data['pref_pos'][:, :2], axis=1)
+    # Errore XY reale di missione: camera vs target assoluto (non previsione MPC)
+    err_pos = np.linalg.norm(data['p_cam'][:, :2] - data['p_cam_target'][:, :2], axis=1)
     err_r   = np.abs(data['r_cyl']    - data['online_cyl_ref'][:, 0])
     err_beta  = np.abs(np.arctan2(
         np.sin(data['beta_cyl']  - data['online_cyl_ref'][:, 1]),
@@ -172,11 +197,11 @@ def main():
         {'sim': err_rp,    'ref': 0},
     ]
     myPlot(t, fig6_data,
-           ["Norm Pos Error XY [m]", "Distance Error |r_cyl_err| [m]",
+           ["Cam XY Error [m]", "Distance Error |r_cyl_err| [m]",
             "Azimuth Error |beta_err| [rad]", "Elevation Error |z_err| [m]",
             "Yaw Error |yaw_err| [rad]", "Norm Roll/Pitch Error"],
            "Primary Tracking Errors (Cylindrical)",
-           ncols=3, use_tex=args.tex, block=block, fignum=7, task_start=task_start)
+           ncols=3, use_tex=args.tex, block=block, fignum=7, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 7: Dynamic States Errors & Derivatives ---
     err_vel = np.linalg.norm(data['v'] - data['vref'], axis=1)
@@ -191,7 +216,7 @@ def main():
     ]
     myPlot(t, fig7_data, ["Norm Vel Error [m/s]", "Norm Omega Error [rad/s]", "Norm Acc [m/s^2]",
                "Norm AngAcc [rad/s^2]", "Norm Jerk [m/s^3]", "Norm Snap [m/s^4]"], 
-           "Dynamic States Errors and Feedforward Derivatives", ncols=3, use_tex=args.tex, block=block, fignum=8, task_start=task_start)
+           "Dynamic States Errors and Feedforward Derivatives", ncols=3, use_tex=args.tex, block=block, fignum=8, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 8: Wrench ---
     fig8_data = [
@@ -201,7 +226,7 @@ def main():
         {'sim': data['optimal_wrench'][:, 3], 'ref': data['wrench_target'][:, 3]}
     ]
     myPlot(t, fig8_data, ["Force Z (Thrust) [N]", "Torque X [Nm]", "Torque Y [Nm]", "Torque Z [Nm]"], 
-           f"Control Wrench (Hover Force = {mass*g:.2f}N)", ncols=2, use_tex=args.tex, block=block, fignum=9, task_start=task_start)
+           f"Control Wrench (Hover Force = {mass*g:.2f}N)", ncols=2, use_tex=args.tex, block=block, fignum=9, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 9: Haptic Forces ---
     if indata('haptic_force'):
@@ -211,7 +236,7 @@ def main():
             {'sim': data['haptic_force'][:, 2], 'ref': 0.0}
         ]
         myPlot(t, fig9_data, ["Force X (Zoom) [N]", "Force Y (Pan) [N]", "Force Z (Altitude) [N]"], 
-               "Haptic Feedback Forces Transmitted to haptic device", ncols=3, use_tex=args.tex, block=block, fignum=10, task_start=task_start)
+               "Haptic Feedback Forces Transmitted to haptic device", ncols=3, use_tex=args.tex, block=block, fignum=10, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 10: Individual Linear and Angular Accelerations ---
     fig10_data = [
@@ -225,7 +250,7 @@ def main():
     myPlot(t, fig10_data, 
            ["Linear Acc X [m/s^2]", "Linear Acc Y [m/s^2]", "Linear Acc Z [m/s^2]", 
             "Angular Acc X [rad/s^2]", "Angular Acc Y [rad/s^2]", "Angular Acc Z [rad/s^2]"], 
-           "Drone Linear and Angular Accelerations", ncols=3, use_tex=args.tex, block=block, fignum=11, task_start=task_start)
+           "Drone Linear and Angular Accelerations", ncols=3, use_tex=args.tex, block=block, fignum=11, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 11: Peg External Forces ---
     if indata('peg_ext_force'):
@@ -236,7 +261,7 @@ def main():
         ]
         myPlot(t, fig11_data, 
                ["Force X (Sensor) [N]", "Force Y (Sensor) [N]", "Force Z (Sensor) [N]"], 
-               "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=12, task_start=task_start)
+               "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=12, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 12: Admittance delta_p (spostamento di ammettenza in ENU) ---
     if indata('delta_p'):
@@ -252,7 +277,7 @@ def main():
                [r"$\Delta p_x$ [m] (ENU)", r"$\Delta p_y$ [m] (ENU)", r"$\Delta p_z$ [m] (ENU)",
                 r"$\|\Delta p\|$ [m]"],
                "Admittance Displacement $\\Delta p$ (ENU frame)",
-               ncols=2, use_tex=args.tex, block=block, fignum=13, task_start=task_start)
+               ncols=2, use_tex=args.tex, block=block, fignum=13, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 12b: delta_p in terna SENSORE ---
     if indata('delta_p_sensor'):
@@ -268,7 +293,7 @@ def main():
                [r"$\Delta p_{sx}$ [m] (Sensor X)", r"$\Delta p_{sy}$ [m] (Sensor Y)",
                 r"$\Delta p_{sz}$ [m] (Sensor Z)", r"$\|\Delta p_s\|$ [m]"],
                "Admittance Displacement in Sensor Frame",
-               ncols=2, use_tex=args.tex, block=block, fignum=131, task_start=task_start)
+               ncols=2, use_tex=args.tex, block=block, fignum=131, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 13: Confronto ||delta_p|| vs ||F_ext|| ---
     if indata('delta_p') and indata('peg_ext_force'):
@@ -315,7 +340,7 @@ def main():
         myPlot(t, fig14_data,
                ["Peg X [m]", "Peg Y [m]", "Peg Z [m]"] + (["Peg Yaw [rad]"] if has_peg_yaw else []),
                "Interaction Drone Position ENU (Actual vs Planner Reference)",
-               ncols=2, use_tex=args.tex, block=block, fignum=14, task_start=task_start)
+               ncols=2, use_tex=args.tex, block=block, fignum=14, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 15: Interaction Drone Velocities (ENU) + Yaw Rate ---
     has_peg_vel      = indata('peg_actual_vel')
@@ -337,7 +362,7 @@ def main():
             labels15.append("Yaw Rate [rad/s]")
         myPlot(t, fig15_data, labels15,
                "Interaction Drone Velocities (ENU) and Yaw Rate",
-               ncols=2, use_tex=args.tex, block=block, fignum=15, task_start=task_start)
+               ncols=2, use_tex=args.tex, block=block, fignum=15, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 16: Estimated Wrench (Momentum Based Estimator) ---
     if indata('estimated_wrench'):
@@ -352,7 +377,7 @@ def main():
         myPlot(t, fig16_data, 
                ["Force X [N]", "Force Y [N]", "Force Z [N]", 
                 "Torque X [Nm]", "Torque Y [Nm]", "Torque Z [Nm]"], 
-               "Estimated Wrench (Momentum-Based Estimator)", ncols=3, use_tex=args.tex, block=block, fignum=16, task_start=task_start)
+               "Estimated Wrench (Momentum-Based Estimator)", ncols=3, use_tex=args.tex, block=block, fignum=16, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 17: Violazione geometrica vincolo soft r_min ---
     if indata('r_cyl'):
@@ -404,7 +429,7 @@ def main():
         ]
         myPlot(t, fig18_data, 
                ["Integral e_x [m*s]", "Integral e_y [m*s]", "Integral e_z [m*s]"], 
-               "Cartesian Integral Action (Anti-windup clipped)", ncols=3, use_tex=args.tex, block=block, fignum=18, task_start=task_start)
+               "Cartesian Integral Action (Anti-windup clipped)", ncols=3, use_tex=args.tex, block=block, fignum=18, task_start=task_start, task_end=task_end)
 
     if args.save:
         if args.out_dir != "." and not os.path.exists(args.out_dir):
