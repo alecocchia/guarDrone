@@ -125,7 +125,7 @@ class MpcPlannerNode(Node):
         # === Tempo/Orizzonte ===
         self.Hz = 100.0
         self.ts = 1.0/self.Hz             # 10 ms
-        self.N_horiz = 30          # Orizzonte di predizione (numero di campioni)
+        self.N_horiz = 50          # Orizzonte di predizione (numero di campioni)
         self.Tp = self.N_horiz * self.ts  # Tempo totale dell'orizzonte 
 
         self.path_pub_counter = 0  # Contatore per limitare la frequenza di pubblicazione del path
