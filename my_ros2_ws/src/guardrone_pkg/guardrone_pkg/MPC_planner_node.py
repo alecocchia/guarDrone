@@ -603,7 +603,7 @@ class MpcPlannerNode(Node):
 
         V       = np.array([0.2, 0.2, 0.3]) 
         ANG_DOT = np.array([0.15, 0.15, 0.5]) 
-        ACC     = np.array([0.4, 0.4, 0.4]) 
+        ACC     = np.array([0.4, 0.4, 0.4])/2 ## OK ANCHE DIVIDENDO PER 2 (CON ESTIMATOR)
         ACC_ANG = np.array([0.3, 0.3, 0.6]) 
         JERK    = 20.0
         SNAP    = 200.0
