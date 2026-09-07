@@ -638,7 +638,7 @@ class MpcPlannerNode(Node):
         #PesoJerk   = PesoAcc / 5
         #PesoSnap   = PesoJerk 
         PesoForce  = PesoVis / 600
-        PesoTorque = PesoForce * 2
+        PesoTorque = PesoForce * 4
 
         # Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
         Q_cyl = np.diag([PesoRadius / R_CYL**2,
