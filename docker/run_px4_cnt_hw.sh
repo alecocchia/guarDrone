@@ -1,6 +1,8 @@
 #!/bin/bash
 
-# docker exec -itu 0 px4-cnt bash  // run root
+# docker exec -itu 0 px4-cnt_hw bash  // run root
+# Rispetto al file di simulazione, qui è specificato un certo CYCLONE_URI
+
 
 # enable access to xhost from the container (Abilita GPU e GUI)
 xhost +local:docker
