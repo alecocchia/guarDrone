@@ -617,7 +617,7 @@ class MpcPlannerNode(Node):
         Y_CYL  = np.pi/2  # range yaw [rad]
         E_INT_CART = np.array([1, 1, 1])
 
-        V       = np.array([0.2, 0.2, 0.3]) 
+        V       = np.array([0.15, 0.15, 0.3]) 
         ANG_DOT = np.array([0.15, 0.15, 0.25]) 
         ACC     = np.array([0.3, 0.3, 0.4])/2 ## OK ANCHE DIVIDENDO PER 2 (CON ESTIMATOR)
         ACC_ANG = np.array([0.3, 0.3, 0.35])
