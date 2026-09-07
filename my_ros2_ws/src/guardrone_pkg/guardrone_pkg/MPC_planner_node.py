@@ -595,7 +595,7 @@ class MpcPlannerNode(Node):
 #        # Pesi normalizzati
 #        # [r_cyl_err, beta_err, z_err, yaw_rel_err]
 
-        R_CYL  = 1.0      # range distanza [m]
+        R_CYL  = 0.5      # range distanza [m]
         B_CYL  = np.pi/3  # range azimut [rad]
         Z_CYL  = 1.0      # range quota [m]
         Y_CYL  = np.pi/2  # range yaw [rad]
