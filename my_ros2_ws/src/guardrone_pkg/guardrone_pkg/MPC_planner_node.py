@@ -91,10 +91,13 @@ class MpcPlannerNode(Node):
         self.U_F = self.get_parameter('f_max').value
         self.U_TAU_X = arm_l_y * self.U_F / 2.0
         self.U_TAU_Y = arm_l_x * self.U_F / 2.0
-        self.U_TAU_X = self.U_TAU_X/1.5
-        self.U_TAU_Y = self.U_TAU_Y/1.5
+        #self.U_TAU_X = self.U_TAU_X/1.5        ## MODIFICA PER HARDWARE
+        #self.U_TAU_Y = self.U_TAU_Y/1.5        ## MODIFICA PER HARDWARE
+        self.U_TAU_X = self.U_TAU_X
+        self.U_TAU_Y = self.U_TAU_Y
         self.U_TAU_Z = moment_const * self.U_F
-        self.U_TAU_Z = self.U_TAU_Z / 1.25         ## MODIFICA PER HARDWARE
+        #self.U_TAU_Z = self.U_TAU_Z / 1.25         ## MODIFICA PER HARDWARE
+        self.U_TAU_Z = self.U_TAU_Z
         self.start_x = self.get_parameter('start_x').value
         self.start_y = self.get_parameter('start_y').value
         self.start_z = self.get_parameter('start_z').value
@@ -194,6 +197,7 @@ class MpcPlannerNode(Node):
         self.is_armed = False      
         self.is_offboard = False   
         self.task_started = False
+        self._first_mpc_solve = True   # flag per warm-start allo switch
         self.last_u0_applied = None
         self.safety_switch_passed = False
         self.current_F_ext = np.zeros(3)
@@ -610,35 +614,91 @@ class MpcPlannerNode(Node):
 
 #        # Pesi normalizzati
 #        # [r_cyl_err, beta_err, z_err, yaw_rel_err]
+########################### GUADAGNI HARDWARE
+        #R_CYL  = 0.5      # range distanza [m]
+        #B_CYL  = np.pi/4  # range azimut [rad]
+        #Z_CYL  = 0.5      # range quota [m]
+        #Y_CYL  = np.pi/2  # range yaw [rad]
+        #E_INT_CART = np.array([1, 1, 1])
+#
+        #V       = np.array([0.2, 0.2, 0.3]) 
+        #ANG_DOT = np.array([0.15, 0.15, 0.25]) 
+        #ACC     = np.array([0.25, 0.25, 0.25]) ## OK ANCHE DIVIDENDO PER 2 (CON ESTIMATOR)
+        #ACC_ANG = np.array([0.3, 0.3, 0.35])
+        #JERK    = 20.0
+        #SNAP    = 200.0
+#
+        #PesoVis    = 500
+        #PesoRadius = PesoVis    
+        #PesoBeta   = PesoVis 
+        #PesoZ  = PesoVis 
+        #PesoYaw    = PesoVis 
+        #PesoInt    = PesoVis/50    # peso azione integrale cartesiana [ex, ey, ez]
+#
+        #PesoVel    = PesoVis / 200
+        #PesoAngVel = PesoVis / 100 
+        #PesoAcc    = PesoVel * 2   
+        #PesoAngAcc = PesoAngVel * 2 
+        ##PesoJerk   = PesoAcc / 5
+        ##PesoSnap   = PesoJerk 
+        #PesoForce  = PesoVis / 600
+        #PesoTorque = PesoForce * 4
+#
+        ## Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
+        #Q_cyl = np.diag([PesoRadius / R_CYL**2,
+        #                 PesoBeta  / B_CYL**2,
+        #                 PesoZ / Z_CYL**2, 
+        #                 PesoYaw   / Y_CYL**2])
+        ##Q_int     = np.diag([PesoInt]*3)    / np.array(E_INT_CART)**2
+        #Q_vel     = np.diag([PesoVel]*3)    / np.array(V)**2
+        #Q_ang_dot = np.diag([PesoAngVel]*3) / np.array(ANG_DOT)**2
+        #Q_acc     = np.diag([PesoAcc]*3)    / np.array(ACC)**2
+        #Q_acc_ang = np.diag([PesoAngAcc]*3) / np.array(ACC_ANG)**2
+        ##Q_jerk    = np.diag([PesoJerk]*3)   / JERK**2
+        ##Q_snap    = np.diag([PesoSnap]*3)   / SNAP**2
+#
+        #R_f   = np.diag([PesoForce / self.U_F**2])
+        #R_tau = ca.diagcat(PesoTorque / self.U_TAU_X**2,
+        #                   PesoTorque / self.U_TAU_Y**2,
+        #                   PesoTorque / self.U_TAU_Z**2)
+#
+        #R   = ca.diagcat(R_f, R_tau)
+        #Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
+        #Q_e = ca.diagcat(5 * Q_cyl, 5.5*Q_vel, 5.5*Q_ang_dot,2*Q_acc, 2*Q_acc_ang)
+
+
 
         R_CYL  = 0.5      # range distanza [m]
-        B_CYL  = np.pi/4  # range azimut [rad]
-        Z_CYL  = 0.5      # range quota [m]
-        Y_CYL  = np.pi/2  # range yaw [rad]
-        E_INT_CART = np.array([1, 1, 1])
+        B_CYL  = 20*(np.pi/180)  # range azimut [rad]
+        Z_CYL  = 0.3      # range quota [m]
+        Y_CYL  = 10*(np.pi/180)  # range yaw [rad]
+        #E_INT_CART = np.array([1, 1, 1])
 
         V       = np.array([0.2, 0.2, 0.3]) 
-        ANG_DOT = np.array([0.15, 0.15, 0.25]) 
+        ANG_DOT = np.array([0.15, 0.15, 0.2]) 
         ACC     = np.array([0.25, 0.25, 0.25]) ## OK ANCHE DIVIDENDO PER 2 (CON ESTIMATOR)
-        ACC_ANG = np.array([0.3, 0.3, 0.35])
+        ACC_ANG = np.array([0.3, 0.3, 0.3])
         JERK    = 20.0
         SNAP    = 200.0
+
+        U_F =   self.U_F
+        U_TAU = np.array([self.U_TAU_X,self.U_TAU_Y,self.U_TAU_Z])
 
         PesoVis    = 500
         PesoRadius = PesoVis    
         PesoBeta   = PesoVis 
         PesoZ  = PesoVis 
         PesoYaw    = PesoVis 
-        PesoInt    = PesoVis/50    # peso azione integrale cartesiana [ex, ey, ez]
+        #PesoInt    = PesoVis/50    # peso azione integrale cartesiana [ex, ey, ez]
 
-        PesoVel    = PesoVis / 200
-        PesoAngVel = PesoVis / 100 
-        PesoAcc    = PesoVel * 2   
-        PesoAngAcc = PesoAngVel * 2 
+        PesoVel    = PesoVis / 100
+        PesoAngVel = PesoVis / 25 
+        PesoAcc    = PesoVel / 2   
+        PesoAngAcc = PesoAngVel / 2 
         #PesoJerk   = PesoAcc / 5
         #PesoSnap   = PesoJerk 
-        PesoForce  = PesoVis / 600
-        PesoTorque = PesoForce * 4
+        PesoForce  = PesoVis / 10
+        PesoTorque = PesoForce /2
 
         # Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
         Q_cyl = np.diag([PesoRadius / R_CYL**2,
@@ -653,14 +713,12 @@ class MpcPlannerNode(Node):
         #Q_jerk    = np.diag([PesoJerk]*3)   / JERK**2
         #Q_snap    = np.diag([PesoSnap]*3)   / SNAP**2
 
-        R_f   = np.diag([PesoForce / self.U_F**2])
-        R_tau = ca.diagcat(PesoTorque / self.U_TAU_X**2,
-                           PesoTorque / self.U_TAU_Y**2,
-                           PesoTorque / self.U_TAU_Z**2)
+        R_f   = np.diag([PesoForce])/U_F**2
+        R_tau = np.diag([PesoTorque]*3)/np.array(U_TAU)**2
 
         R   = ca.diagcat(R_f, R_tau)
         Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
-        Q_e = ca.diagcat(5 * Q_cyl, 5.5*Q_vel, 5.5*Q_ang_dot,2*Q_acc, 2*Q_acc_ang)
+        Q_e = ca.diagcat(5 * Q_cyl, 5*Q_vel, 5*Q_ang_dot,1*Q_acc, 1*Q_acc_ang)
 
 
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
@@ -900,6 +958,19 @@ class MpcPlannerNode(Node):
             # Rb è già calcolato sopra dal quaternione corrente.
             cam_world_offset = Rb @ self.camera_offset
             p_obj_base = self.current_obj_pos - cam_world_offset
+
+            # --- WARM-START MIGLIORATO AL PRIMO SOLVE DOPO LO SWITCH ---
+            # Sostituisce il piano iniziale (cloni di x0) con lo stato corrente reale
+            if self._first_mpc_solve:
+                self._first_mpc_solve = False
+                for i in range(self.N_horiz + 1):
+                    self.ocp_solver.set(i, "x", xk)
+                    self.x_prev[i] = xk.copy()
+                for i in range(self.N_horiz):
+                    self.ocp_solver.set(i, "u", self.u_hover)
+                    self.u_prev[i] = self.u_hover.copy()
+                self.get_logger().info("[MPC] Warm-start con stato corrente applicato.")
+
             u0_new, x_seq_new, yref0, u_plan_new, x_plan_new = self.solve_MPC(xk, cyl_ref, yaw_ref, vel_ref, F_ext, Tau_ext, p_obj_base)
             t_end = time.perf_counter()
             
