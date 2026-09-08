@@ -635,8 +635,8 @@ class MpcPlannerNode(Node):
         PesoYaw    = PesoVis 
         PesoInt    = PesoVis/50    # peso azione integrale cartesiana [ex, ey, ez]
 
-        PesoVel    = PesoVis / 100
-        PesoAngVel = PesoVis / 50 
+        PesoVel    = PesoVis / 200
+        PesoAngVel = PesoVis / 100 
         PesoAcc    = PesoVel * 2   
         PesoAngAcc = PesoAngVel * 2 
         #PesoJerk   = PesoAcc / 5
@@ -716,9 +716,9 @@ class MpcPlannerNode(Node):
         #R_f   = np.diag([PesoForce])/U_F**2
         #R_tau = np.diag([PesoTorque]*3)/np.array(U_TAU)**2
 
-        R   = ca.diagcat(R_f, R_tau)
-        Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
-        Q_e = ca.diagcat(5 * Q_cyl, 5*Q_vel, 5*Q_ang_dot,1*Q_acc, 1*Q_acc_ang)
+        #R   = ca.diagcat(R_f, R_tau)
+        #Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
+        #Q_e = ca.diagcat(5 * Q_cyl, 5*Q_vel, 5*Q_ang_dot,1*Q_acc, 1*Q_acc_ang)
 
 
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
