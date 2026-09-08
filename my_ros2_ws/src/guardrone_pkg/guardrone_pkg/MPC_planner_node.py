@@ -15,7 +15,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from geometry_msgs.msg import PoseStamped, TwistStamped, TransformStamped, Wrench, Vector3, Vector3Stamped
 from nav_msgs.msg import Path
-from std_msgs.msg import Bool, Float64MultiArray, String
+from std_msgs.msg import Bool, Float64MultiArray, String, Float64
 
 # --- PX4 MESSAGES IMPORTS ---
 from px4_msgs.msg import VehicleOdometry, VehicleThrustSetpoint, VehicleTorqueSetpoint, OffboardControlMode, VehicleCommand, VehicleControlMode
@@ -91,13 +91,12 @@ class MpcPlannerNode(Node):
         self.U_F = self.get_parameter('f_max').value
         self.U_TAU_X = arm_l_y * self.U_F / 2.0
         self.U_TAU_Y = arm_l_x * self.U_F / 2.0
-        self.U_TAU_X = self.U_TAU_X/1.5        ## MODIFICA PER HARDWARE
-        self.U_TAU_Y = self.U_TAU_Y/1.5        ## MODIFICA PER HARDWARE
+        #self.U_TAU_X = self.U_TAU_X/1.5        ## MODIFICA PER HARDWARE
+        #self.U_TAU_Y = self.U_TAU_Y/1.5        ## MODIFICA PER HARDWARE
         #self.U_TAU_X = self.U_TAU_X
         #self.U_TAU_Y = self.U_TAU_Y
         self.U_TAU_Z = moment_const * self.U_F
-        self.U_TAU_Z = self.U_TAU_Z / 1.25         ## MODIFICA PER HARDWARE
-        #self.U_TAU_Z = self.U_TAU_Z
+        #self.U_TAU_Z = self.U_TAU_Z / 1.25         ## MODIFICA PER HARDWARE
         self.start_x = self.get_parameter('start_x').value
         self.start_y = self.get_parameter('start_y').value
         self.start_z = self.get_parameter('start_z').value
@@ -128,7 +127,7 @@ class MpcPlannerNode(Node):
         # === Tempo/Orizzonte ===
         self.Hz = 100.0
         self.ts = 1.0/self.Hz             # 10 ms
-        self.N_horiz = 30          # Orizzonte di predizione (numero di campioni)
+        self.N_horiz = 15         # Orizzonte di predizione (numero di campioni)
         self.Tp = self.N_horiz * self.ts  # Tempo totale dell'orizzonte 
 
         self.path_pub_counter = 0  # Contatore per limitare la frequenza di pubblicazione del path
@@ -198,6 +197,7 @@ class MpcPlannerNode(Node):
         self.is_offboard = False   
         self.task_started = False
         self._first_mpc_solve = True   # flag per warm-start allo switch
+        self._last_yref_val = None     # cache yref per evitare chiamate ctypes ridondanti
         self.last_u0_applied = None
         self.safety_switch_passed = False
         self.current_F_ext = np.zeros(3)
@@ -267,6 +267,7 @@ class MpcPlannerNode(Node):
         self.ref_pub = self.create_publisher(Float64MultiArray, '/online_cylindrical_ref', 1)
         self.actual_pov_pub = self.create_publisher(Float64MultiArray, '/actual_pov', 1)
         self.integral_action_pub = self.create_publisher(Vector3, '/integral_action', 1)
+        self.solve_time_pub = self.create_publisher(Float64, '/mpc_solve_time', 1)
 
         self.control_timer = self.create_timer(self.ts, self.control_step, callback_group=self.callback_group)
         self.start_subscription = self.create_subscription(PoseStamped, '/peg_pose', self.start_callback, 10, callback_group=self.callback_group)
@@ -638,10 +639,10 @@ class MpcPlannerNode(Node):
         PesoVel    = PesoVis / 200
         PesoAngVel = PesoVis / 100 
         PesoAcc    = PesoVel * 2   
-        PesoAngAcc = PesoAngVel * 2 
+        PesoAngAcc = PesoAngVel * 2
         #PesoJerk   = PesoAcc / 5
         #PesoSnap   = PesoJerk 
-        PesoForce  = PesoVis / 600
+        PesoForce  = PesoVis / 10
         PesoTorque = PesoForce * 2
 
         # Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
@@ -664,7 +665,7 @@ class MpcPlannerNode(Node):
 
         R   = ca.diagcat(R_f, R_tau)
         Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
-        Q_e = ca.diagcat(5 * Q_cyl, 5.5*Q_vel, 5.5*Q_ang_dot,1.5*Q_acc, 1.5*Q_acc_ang)
+        Q_e = ca.diagcat(10 * Q_cyl, 8*Q_vel, 3*Q_ang_dot,1.5*Q_acc, 1.5*Q_acc_ang)
 
 
 
@@ -779,14 +780,19 @@ class MpcPlannerNode(Node):
         for i in range(self.N_horiz + 1):
             params[0:3] = p_base + self.current_obj_vel * (i * self.ts)
             self.ocp_solver.set(i, "p", params)
-            if i < self.N_horiz:
+
+        # Riferimenti yref: aggiorna nel solver solo se variati (risparmia N+1 chiamate ctypes a ciclo)
+        if self._last_yref_val is None or not np.array_equal(self._last_yref_val, yref_val):
+            for i in range(self.N_horiz):
                 self.ocp_solver.set(i, "yref", yref_val)
-            else:
-                self.ocp_solver.set(self.N_horiz, "yref", yref_e)
+            self.ocp_solver.set(self.N_horiz, "yref", yref_e)
+            self._last_yref_val = yref_val.copy()
 
         t0 = time.perf_counter()
         status = self.ocp_solver.solve()
-        self.get_logger().info(f"Solve time: {(time.perf_counter()-t0)*1e3:.2f} ms")
+
+        ###### DEBUG ######
+        #self.get_logger().info(f"Solve time: {(time.perf_counter()-t0)*1e3:.2f} ms")
         if status != 0:
             # Se il solver fallisce, usiamo l'ultimo comando valido o l'hover
             u0 = self.u_prev[0].copy() if self.u_prev is not None else self.u_hover.copy()
@@ -805,10 +811,11 @@ class MpcPlannerNode(Node):
             return u0, x_seq, yref_val, u_plan_fallback, x_plan_fallback
 
         # --- SUCCESS: Get results and shift buffers ---
-        u0 = self.ocp_solver.get(0, "u")
-        x_seq = [self.ocp_solver.get(i, "x") for i in range(self.N_horiz + 1)]
+        # Lettura unica dei buffer dal solver (evita doppie chiamate ctypes per u0 e x_seq)
         new_u_plan = [self.ocp_solver.get(i, "u") for i in range(self.N_horiz)]
         new_x_plan = [self.ocp_solver.get(i, "x") for i in range(self.N_horiz + 1)]
+        u0 = new_u_plan[0]
+        x_seq = new_x_plan
 
         for i in range(self.N_horiz - 1):
             self.u_prev[i] = new_u_plan[i+1]
@@ -976,6 +983,11 @@ class MpcPlannerNode(Node):
             
             # Calcolo tempo di risoluzione dell'iterazione corrente dell'MPC 
             dt_solve = t_end - t_start
+            
+            # Pubblica tempo di solve [ms] per monitoraggio e logger
+            st_msg = Float64()
+            st_msg.data = float(dt_solve * 1e3)
+            self.solve_time_pub.publish(st_msg)
             
             with self.state_lock:
                 self.u_plan = u_plan_new

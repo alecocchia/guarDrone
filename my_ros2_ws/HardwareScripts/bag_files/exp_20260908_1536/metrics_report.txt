@@ -1,0 +1,24 @@
+======================================================================
+             EXPERIMENT METRICS & BENCHMARK REPORT
+======================================================================
+File log          : /root/my_ros2_ws/HardwareScripts/bag_files/exp_20260908_1536/hw_run.mat
+Campioni totali   : 703
+Durata totale     : 35.49 s
+Tempo missione    : 14.89 s (da t=20.60s a t=35.49s)
+
+----------------------------------------------------------------------
+ 1. SAMPLING PERIOD & REAL-TIME CLOCK JITTER (delta_t)
+----------------------------------------------------------------------
+Frequenza media nominale : 19.78 Hz
+Delta_t medio            : 50.55 ms
+Jitter Campionamento (Std): 92.02 ms
+Delta_t Min / Max        : 20.01 ms / 1507.16 ms
+
+----------------------------------------------------------------------
+ 3. TRACKING PERFORMANCE SUMMARY (in Missione)
+----------------------------------------------------------------------
+Errore Raggio (r_cyl)    : RMS = 0.6235 m | Max = 1.4365 m
+Errore Azimut (beta)     : RMS = 1.4302 rad (81.95 deg) | Max = 2.5662 rad
+Errore Quota (z_cyl)     : RMS = 0.1509 m | Max = 0.5168 m
+Errore Yaw               : RMS = 0.9403 rad (53.87 deg) | Max = 1.9512 rad
+======================================================================

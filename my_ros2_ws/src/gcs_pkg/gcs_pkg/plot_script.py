@@ -164,17 +164,16 @@ def main():
 
     # --- FIGURE 6: Yaw Tracking (puntamento verso oggetto) ---
     # yaw_err_cyl è già loggato direttamente dall'MPC (wrap_pi applicato correttamente)
-    # yaw_desired = beta_cyl + pi (coerente con la definizione MPC)
-    # Wrappiamo entrambi in [-pi, pi] per la visualizzazione usando utils_np
+    # yaw_desired = beta_cyl + pi (puntamento ottico reale coerente con la definizione MPC)
     yaw_actual  = wrap_pi(data['rpy'][:, 2])
-    yaw_desired = wrap_pi(data['online_cyl_ref'][:, 1] + np.pi)
+    yaw_desired = wrap_pi(data['beta_cyl'] + np.pi)
     fig5_data = [
         {'sim': yaw_actual,               'ref': yaw_desired},
         {'sim': data['yaw_err_cyl'],      'ref': 0.0},
     ]
     myPlot(t, fig5_data,
            ["Yaw Actual vs Desired [rad]", "Yaw Error [rad]"],
-           "Yaw Tracking: Drone Pointing Toward Target",
+           "Yaw Tracking: Drone Pointing Target",
            ncols=2, use_tex=args.tex, block=block, fignum=6, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 6: Errori di Tracking Primari (cilindrici + posizione + orientamento) ---
@@ -431,9 +430,124 @@ def main():
                ["Integral e_x [m*s]", "Integral e_y [m*s]", "Integral e_z [m*s]"], 
                "Cartesian Integral Action (Anti-windup clipped)", ncols=3, use_tex=args.tex, block=block, fignum=18, task_start=task_start, task_end=task_end)
 
+    # --- GENERAZIONE REPORT METRICHE COMPLETO (Benchmark, Jitter, Tracking) ---
+    report_lines = []
+    report_lines.append("=" * 70)
+    report_lines.append("             EXPERIMENT METRICS & BENCHMARK REPORT")
+    report_lines.append("=" * 70)
+    report_lines.append(f"File log          : {os.path.abspath(args.log)}")
+    report_lines.append(f"Campioni totali   : {len(t)}")
+    report_lines.append(f"Durata totale     : {t[-1]:.2f} s")
+    if task_start > 0:
+        t_end_m = task_end if task_end > 0 else t[-1]
+        report_lines.append(f"Tempo missione    : {t_end_m - task_start:.2f} s (da t={task_start:.2f}s a t={t_end_m:.2f}s)")
+
+    # 1. SAMPLING & CLOCK JITTER
+    dt = np.diff(t)
+    if len(dt) > 0:
+        dt_ms = dt * 1e3
+        dt_mean = float(np.mean(dt_ms))
+        dt_std = float(np.std(dt_ms))
+        dt_min = float(np.min(dt_ms))
+        dt_max = float(np.max(dt_ms))
+        freq_mean = 1000.0 / dt_mean if dt_mean > 0 else 0.0
+
+        report_lines.append("\n" + "-" * 70)
+        report_lines.append(" 1. SAMPLING PERIOD & REAL-TIME CLOCK JITTER (delta_t)")
+        report_lines.append("-" * 70)
+        report_lines.append(f"Frequenza media nominale : {freq_mean:.2f} Hz")
+        report_lines.append(f"Delta_t medio            : {dt_mean:.2f} ms")
+        report_lines.append(f"Jitter Campionamento (Std): {dt_std:.2f} ms")
+        report_lines.append(f"Delta_t Min / Max        : {dt_min:.2f} ms / {dt_max:.2f} ms")
+
+    # 2. MPC SOLVER TIMING & JITTER
+    if indata('solve_time'):
+        st_raw = np.asarray(data['solve_time'])
+        if task_start > 0:
+            mask = (t >= task_start) & (st_raw > 0)
+            if task_end > 0:
+                mask &= (t <= task_end)
+            st_valid = st_raw[mask] if np.any(mask) else st_raw[st_raw > 0]
+        else:
+            st_valid = st_raw[st_raw > 0]
+
+        if len(st_valid) > 0:
+            mean_st = float(np.mean(st_valid))
+            std_st = float(np.std(st_valid))
+            min_st = float(np.min(st_valid))
+            max_st = float(np.max(st_valid))
+            p95_st = float(np.percentile(st_valid, 95))
+            p99_st = float(np.percentile(st_valid, 99))
+            st_step_diff = float(np.mean(np.abs(np.diff(st_valid)))) if len(st_valid) > 1 else 0.0
+            ts_ms = 10.0  # Periodo nominale Ts = 10 ms (100 Hz)
+            overruns = int(np.sum(st_valid > ts_ms))
+            overrun_pct = (overruns / len(st_valid)) * 100.0
+            cpu_usage_pct = (mean_st / ts_ms) * 100.0
+
+            report_lines.append("\n" + "-" * 70)
+            report_lines.append(" 2. MPC SOLVER PERFORMANCE & TIMING JITTER")
+            report_lines.append("-" * 70)
+            report_lines.append(f"Campioni solve analizzati: {len(st_valid)}")
+            report_lines.append(f"Periodo nominale (Ts)    : {ts_ms:.1f} ms (100 Hz)")
+            report_lines.append(f"Tempo Medio Solve        : {mean_st:.2f} ms  (Carico medio CPU: {cpu_usage_pct:.1f}%)")
+            report_lines.append(f"Deviazione Standard (Jit): {std_st:.2f} ms")
+            report_lines.append(f"Minimo / Massimo         : {min_st:.2f} ms / {max_st:.2f} ms")
+            report_lines.append(f"Step-to-Step Jitter      : {st_step_diff:.2f} ms (variazione media passo-passo)")
+            report_lines.append(f"Percentile 95%           : {p95_st:.2f} ms")
+            report_lines.append(f"Percentile 99%           : {p99_st:.2f} ms")
+            report_lines.append(f"Overrun (> {ts_ms:.0f} ms)         : {overruns} / {len(st_valid)} ({overrun_pct:.2f}%)")
+
+            # --- FIGURE 19: MPC Solve Time ---
+            fig19_data = [
+                {'sim': st_raw, 'ref': ts_ms}
+            ]
+            myPlot(t, fig19_data,
+                   [f"Solve Time [ms] (Mean: {mean_st:.2f} ms, Max: {max_st:.2f} ms, Ts limit: {ts_ms:.0f} ms)"],
+                   "MPC Solver Execution Time & Timing Jitter", ncols=1, use_tex=args.tex, block=block, fignum=19, task_start=task_start, task_end=task_end)
+
+    # 3. TRACKING PERFORMANCE (in Missione)
+    if indata('r_cyl') and indata('online_cyl_ref'):
+        mask_trk = np.ones(len(t), dtype=bool)
+        if task_start > 0:
+            mask_trk &= (t >= task_start)
+        if task_end > 0:
+            mask_trk &= (t <= task_end)
+
+        if np.any(mask_trk):
+            rms_r = float(np.sqrt(np.mean(err_r[mask_trk]**2)))
+            max_r = float(np.max(err_r[mask_trk]))
+            rms_beta = float(np.sqrt(np.mean(err_beta[mask_trk]**2)))
+            max_beta = float(np.max(err_beta[mask_trk]))
+            rms_z = float(np.sqrt(np.mean(err_z[mask_trk]**2)))
+            max_z = float(np.max(err_z[mask_trk]))
+            rms_yaw = float(np.sqrt(np.mean(err_yaw[mask_trk]**2)))
+            max_yaw = float(np.max(err_yaw[mask_trk]))
+
+            report_lines.append("\n" + "-" * 70)
+            report_lines.append(" 3. TRACKING PERFORMANCE SUMMARY (in Missione)")
+            report_lines.append("-" * 70)
+            report_lines.append(f"Errore Raggio (r_cyl)    : RMS = {rms_r:.4f} m | Max = {max_r:.4f} m")
+            report_lines.append(f"Errore Azimut (beta)     : RMS = {rms_beta:.4f} rad ({np.degrees(rms_beta):.2f} deg) | Max = {max_beta:.4f} rad")
+            report_lines.append(f"Errore Quota (z_cyl)     : RMS = {rms_z:.4f} m | Max = {max_z:.4f} m")
+            report_lines.append(f"Errore Yaw               : RMS = {rms_yaw:.4f} rad ({np.degrees(rms_yaw):.2f} deg) | Max = {max_yaw:.4f} rad")
+    report_lines.append("=" * 70 + "\n")
+
+    report_text = "\n".join(report_lines)
+    print(report_text)
+
     if args.save:
         if args.out_dir != "." and not os.path.exists(args.out_dir):
             os.makedirs(args.out_dir)
+
+        # Salvataggio del report metriche su file TXT
+        report_txt_path = os.path.join(args.out_dir, "metrics_report.txt")
+        try:
+            with open(report_txt_path, "w") as f:
+                f.write(report_text)
+            print(f"Report metriche salvato in: {report_txt_path}")
+        except Exception as e:
+            print(f"Errore nel salvataggio di metrics_report.txt: {e}")
+
         # Opzioni di salvataggio per formato vettoriale (pdf/eps): dpi alto, niente trasparenza
         fmt_opts = {
             "png": {"dpi": 150},

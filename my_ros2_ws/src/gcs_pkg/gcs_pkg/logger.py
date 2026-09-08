@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import os
+import signal
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
@@ -9,7 +11,7 @@ from scipy.spatial.transform import Rotation as Rot
 from utils_pkg.utils_np import cylindrical_to_cartesian
 
 # --- PX4 MESSAGES IMPORTS ---
-from px4_msgs.msg import VehicleOdometry
+from px4_msgs.msg import VehicleOdometry, VehicleStatus
 
 
 class Logger(Node):
@@ -46,6 +48,10 @@ class Logger(Node):
         self.mass          = self.get_parameter('mass').value
         self.ft_topic      = self.get_parameter('ft_topic').value
 
+        # Namespace del secondo drone (interaction)
+        self.declare_parameter('peg_px4_ns', 'px4_1')
+        peg_px4_ns = self.get_parameter('peg_px4_ns').value.strip('/')
+
         # Declare spawn coordinates to broadcast local frame
         self.declare_parameter('start_x', 0.0)
         self.declare_parameter('start_y', 0.0)
@@ -75,6 +81,9 @@ class Logger(Node):
         self.logging_enabled = False
         self.last_log_time   = None
         self.task_start_time = None
+        self._saved          = False   # Flag anti-doppio-salvataggio
+        self._d1_was_armed   = False   # Tracciamento arm Drone 1
+        self._d2_was_armed   = False   # Tracciamento arm Drone 2
 
         # ------------------------------------------------------------------ #
         #  Arrays di logging (tutti in ENU/FLU — nessuna trasformazione qui)  #
@@ -114,6 +123,7 @@ class Logger(Node):
         self.estimated_wrench = []
         self.delta_p         = []
         self.delta_p_sensor  = []
+        self.solve_time      = []
 
         # Stato drone peg (ENU) — da fake_publisher (sim) / admittance_planner (real)
         self.peg_actual_pos      = []
@@ -160,6 +170,7 @@ class Logger(Node):
         self.last_peg_ref_yaw      = 0.0
         self.last_peg_ref_vel      = [0.0, 0.0, 0.0]
         self.last_peg_ref_yaw_rate = 0.0
+        self.last_solve_time       = 0.0
 
         # ------------------------------------------------------------------ #
         #  QoS                                                                 #
@@ -225,6 +236,18 @@ class Logger(Node):
         # Trigger
         self.create_subscription(Bool, '/logging/start', self.cb_logging_start, qos_latched)
         self.create_subscription(Bool, '/mpc_task/start', self.cb_task_start,   qos_latched)
+        self.create_subscription(Float64, '/mpc_solve_time', self.cb_solve_time, 10)
+
+        # Monitoraggio Kill Switch / Disarm da radiocomando per entrambi i droni
+        self.create_subscription(
+            VehicleStatus, '/fmu/out/vehicle_status',
+            lambda msg: self.cb_vehicle_status(msg, 'GuaDrone (D1)', '_d1_was_armed'), px4_qos
+        )
+        peg_status_topic = f"/{peg_px4_ns}/fmu/out/vehicle_status" if peg_px4_ns else "/px4_1/fmu/out/vehicle_status"
+        self.create_subscription(
+            VehicleStatus, peg_status_topic,
+            lambda msg: self.cb_vehicle_status(msg, 'InteractionDrone (D2)', '_d2_was_armed'), px4_qos
+        )
 
         self.get_logger().info(f'Logger avviato | Salva in: {self.final_save_path}')
 
@@ -362,6 +385,29 @@ class Logger(Node):
             self.task_start_time = self.now_sec()
             self.get_logger().info('Ricevuto start task, salvo timestamp.')
 
+    def cb_solve_time(self, msg: Float64):
+        self.last_solve_time = float(msg.data)
+
+    def cb_vehicle_status(self, msg: VehicleStatus, drone_name: str, armed_flag_attr: str):
+        """Intercetta il Kill da radiocomando o disarm imprevisto per chiudere il log."""
+        if msg.arming_state == VehicleStatus.ARMING_STATE_ARMED:
+            setattr(self, armed_flag_attr, True)
+            return
+
+        # Scatta solo se il logging era attivo e il drone era stato armato
+        was_armed = getattr(self, armed_flag_attr, False)
+        if (self.logging_enabled and was_armed) and not self._saved:
+            if msg.arming_state == VehicleStatus.ARMING_STATE_DISARMED:
+                reason = msg.latest_disarming_reason
+                is_rc_kill = reason in (
+                    VehicleStatus.ARM_DISARM_REASON_KILL_SWITCH,
+                    VehicleStatus.ARM_DISARM_REASON_RC_SWITCH
+                )
+                tag = "KILL SWITCH RC" if is_rc_kill else f"DISARM (reason {reason})"
+                self.get_logger().warn(f"[{tag}] Rilevato su {drone_name}! Chiusura logging e salvataggio automatico...")
+                # Invia SIGINT per arrestare pulitamente il nodo (logica OR con ^C)
+                os.kill(os.getpid(), signal.SIGINT)
+
     # ================================================================== #
     #  Clock — /fmu/out/vehicle_odometry usato solo per il rate-limiting  #
     # ================================================================== #
@@ -406,6 +452,7 @@ class Logger(Node):
         self.peg_ref_yaw.append(self.last_peg_ref_yaw)
         self.peg_ref_vel.append(list(self.last_peg_ref_vel))
         self.peg_ref_yaw_rate.append(self.last_peg_ref_yaw_rate)
+        self.solve_time.append(self.last_solve_time)
 
         self.last_log_time = t_now
 
@@ -414,6 +461,10 @@ class Logger(Node):
     # ================================================================== #
 
     def save(self):
+        if self._saved:
+            return
+        self._saved = True
+
         T = np.asarray(self.t)
         if not T.size:
             self.get_logger().warn("Nessun dato loggato, salvataggio annullato.")
@@ -490,6 +541,7 @@ class Logger(Node):
             # Derivate numeriche
             acc=acc, ang_acc=ang_acc, jerk=jerk, snap=snap,
             mass=self.mass,
+            solve_time=np.asarray(self.solve_time),
             task_start_time=np.array([t_start_rel]),
             task_end_time=np.array([T_rel[-1]])  # ultimo campione = momento del kill
         )
@@ -526,7 +578,8 @@ def main(args=None):
     finally:
         node.save()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
