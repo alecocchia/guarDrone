@@ -641,7 +641,7 @@ class MpcPlannerNode(Node):
         PesoAngAcc = PesoAngVel * 2 
         #PesoJerk   = PesoAcc / 5
         #PesoSnap   = PesoJerk 
-        PesoForce  = PesoVis / 400
+        PesoForce  = PesoVis / 600
         PesoTorque = PesoForce * 2
 
         # Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
@@ -664,7 +664,7 @@ class MpcPlannerNode(Node):
 
         R   = ca.diagcat(R_f, R_tau)
         Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
-        Q_e = ca.diagcat(5 * Q_cyl, 5.5*Q_vel, 5.5*Q_ang_dot,2*Q_acc, 2*Q_acc_ang)
+        Q_e = ca.diagcat(5 * Q_cyl, 5.5*Q_vel, 5.5*Q_ang_dot,1.5*Q_acc, 1.5*Q_acc_ang)
 
 
 
