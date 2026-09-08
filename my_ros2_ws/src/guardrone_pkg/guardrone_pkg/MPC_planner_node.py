@@ -615,90 +615,34 @@ class MpcPlannerNode(Node):
 #        # Pesi normalizzati
 #        # [r_cyl_err, beta_err, z_err, yaw_rel_err]
 ########################### GUADAGNI HARDWARE
-        #R_CYL  = 0.5      # range distanza [m]
-        #B_CYL  = np.pi/4  # range azimut [rad]
-        #Z_CYL  = 0.5      # range quota [m]
-        #Y_CYL  = np.pi/2  # range yaw [rad]
-        #E_INT_CART = np.array([1, 1, 1])
-#
-        #V       = np.array([0.2, 0.2, 0.3]) 
-        #ANG_DOT = np.array([0.15, 0.15, 0.25]) 
-        #ACC     = np.array([0.25, 0.25, 0.25]) ## OK ANCHE DIVIDENDO PER 2 (CON ESTIMATOR)
-        #ACC_ANG = np.array([0.3, 0.3, 0.35])
-        #JERK    = 20.0
-        #SNAP    = 200.0
-#
-        #PesoVis    = 500
-        #PesoRadius = PesoVis    
-        #PesoBeta   = PesoVis 
-        #PesoZ  = PesoVis 
-        #PesoYaw    = PesoVis 
-        #PesoInt    = PesoVis/50    # peso azione integrale cartesiana [ex, ey, ez]
-#
-        #PesoVel    = PesoVis / 200
-        #PesoAngVel = PesoVis / 100 
-        #PesoAcc    = PesoVel * 2   
-        #PesoAngAcc = PesoAngVel * 2 
-        ##PesoJerk   = PesoAcc / 5
-        ##PesoSnap   = PesoJerk 
-        #PesoForce  = PesoVis / 600
-        #PesoTorque = PesoForce * 4
-#
-        ## Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
-        #Q_cyl = np.diag([PesoRadius / R_CYL**2,
-        #                 PesoBeta  / B_CYL**2,
-        #                 PesoZ / Z_CYL**2, 
-        #                 PesoYaw   / Y_CYL**2])
-        ##Q_int     = np.diag([PesoInt]*3)    / np.array(E_INT_CART)**2
-        #Q_vel     = np.diag([PesoVel]*3)    / np.array(V)**2
-        #Q_ang_dot = np.diag([PesoAngVel]*3) / np.array(ANG_DOT)**2
-        #Q_acc     = np.diag([PesoAcc]*3)    / np.array(ACC)**2
-        #Q_acc_ang = np.diag([PesoAngAcc]*3) / np.array(ACC_ANG)**2
-        ##Q_jerk    = np.diag([PesoJerk]*3)   / JERK**2
-        ##Q_snap    = np.diag([PesoSnap]*3)   / SNAP**2
-#
-        #R_f   = np.diag([PesoForce / self.U_F**2])
-        #R_tau = ca.diagcat(PesoTorque / self.U_TAU_X**2,
-        #                   PesoTorque / self.U_TAU_Y**2,
-        #                   PesoTorque / self.U_TAU_Z**2)
-#
-        #R   = ca.diagcat(R_f, R_tau)
-        #Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
-        #Q_e = ca.diagcat(5 * Q_cyl, 5.5*Q_vel, 5.5*Q_ang_dot,2*Q_acc, 2*Q_acc_ang)
-
-
-
         R_CYL  = 0.5      # range distanza [m]
-        B_CYL  = 20*(np.pi/180)  # range azimut [rad]
-        Z_CYL  = 0.3      # range quota [m]
-        Y_CYL  = 10*(np.pi/180)  # range yaw [rad]
-        #E_INT_CART = np.array([1, 1, 1])
+        B_CYL  = np.pi/4  # range azimut [rad]
+        Z_CYL  = 0.5      # range quota [m]
+        Y_CYL  = np.pi/2  # range yaw [rad]
+        E_INT_CART = np.array([1, 1, 1])
 
         V       = np.array([0.2, 0.2, 0.3]) 
-        ANG_DOT = np.array([0.15, 0.15, 0.2]) 
+        ANG_DOT = np.array([0.15, 0.15, 0.25]) 
         ACC     = np.array([0.25, 0.25, 0.25]) ## OK ANCHE DIVIDENDO PER 2 (CON ESTIMATOR)
-        ACC_ANG = np.array([0.3, 0.3, 0.3])
+        ACC_ANG = np.array([0.3, 0.3, 0.35])
         JERK    = 20.0
         SNAP    = 200.0
-
-        U_F =   self.U_F
-        U_TAU = np.array([self.U_TAU_X,self.U_TAU_Y,self.U_TAU_Z])
 
         PesoVis    = 500
         PesoRadius = PesoVis    
         PesoBeta   = PesoVis 
         PesoZ  = PesoVis 
         PesoYaw    = PesoVis 
-        #PesoInt    = PesoVis/50    # peso azione integrale cartesiana [ex, ey, ez]
+        PesoInt    = PesoVis/50    # peso azione integrale cartesiana [ex, ey, ez]
 
-        PesoVel    = PesoVis / 100
-        PesoAngVel = PesoVis / 25 
-        PesoAcc    = PesoVel / 2   
-        PesoAngAcc = PesoAngVel / 2 
+        PesoVel    = PesoVis / 200
+        PesoAngVel = PesoVis / 100 
+        PesoAcc    = PesoVel * 2   
+        PesoAngAcc = PesoAngVel * 2 
         #PesoJerk   = PesoAcc / 5
         #PesoSnap   = PesoJerk 
-        PesoForce  = PesoVis / 10
-        PesoTorque = PesoForce /2
+        PesoForce  = PesoVis / 600
+        PesoTorque = PesoForce * 4
 
         # Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
         Q_cyl = np.diag([PesoRadius / R_CYL**2,
@@ -713,8 +657,64 @@ class MpcPlannerNode(Node):
         #Q_jerk    = np.diag([PesoJerk]*3)   / JERK**2
         #Q_snap    = np.diag([PesoSnap]*3)   / SNAP**2
 
-        R_f   = np.diag([PesoForce])/U_F**2
-        R_tau = np.diag([PesoTorque]*3)/np.array(U_TAU)**2
+        R_f   = np.diag([PesoForce / self.U_F**2])
+        R_tau = ca.diagcat(PesoTorque / self.U_TAU_X**2,
+                           PesoTorque / self.U_TAU_Y**2,
+                           PesoTorque / self.U_TAU_Z**2)
+
+        R   = ca.diagcat(R_f, R_tau)
+        Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
+        Q_e = ca.diagcat(5 * Q_cyl, 5.5*Q_vel, 5.5*Q_ang_dot,2*Q_acc, 2*Q_acc_ang)
+
+
+
+        #R_CYL  = 0.5      # range distanza [m]
+        #B_CYL  = 45*(np.pi/180)  # range azimut [rad]
+        #Z_CYL  = 0.3      # range quota [m]
+        #Y_CYL  = 90*(np.pi/180)  # range yaw [rad]
+        ##E_INT_CART = np.array([1, 1, 1])
+#
+        #V       = np.array([0.2, 0.2, 0.3]) 
+        #ANG_DOT = np.array([0.15, 0.15, 0.2]) 
+        #ACC     = np.array([0.25, 0.25, 0.25]) ## OK ANCHE DIVIDENDO PER 2 (CON ESTIMATOR)
+        #ACC_ANG = np.array([0.3, 0.3, 0.3])
+        #JERK    = 20.0
+        #SNAP    = 200.0
+#
+        #U_F =   self.U_F
+        #U_TAU = np.array([self.U_TAU_X,self.U_TAU_Y,self.U_TAU_Z])
+#
+        #PesoVis    = 500
+        #PesoRadius = PesoVis    
+        #PesoBeta   = PesoVis 
+        #PesoZ  = PesoVis 
+        #PesoYaw    = PesoVis 
+        ##PesoInt    = PesoVis/50    # peso azione integrale cartesiana [ex, ey, ez]
+#
+        #PesoVel    = PesoVis / 100
+        #PesoAngVel = PesoVis / 50 
+        #PesoAcc    = PesoVel / 2   
+        #PesoAngAcc = PesoAngVel / 2 
+        ##PesoJerk   = PesoAcc / 5
+        ##PesoSnap   = PesoJerk 
+        #PesoForce  = PesoVis / 10
+        #PesoTorque = PesoForce /2
+#
+        ## Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
+        #Q_cyl = np.diag([PesoRadius / R_CYL**2,
+        #                 PesoBeta  / B_CYL**2,
+        #                 PesoZ / Z_CYL**2, 
+        #                 PesoYaw   / Y_CYL**2])
+        ##Q_int     = np.diag([PesoInt]*3)    / np.array(E_INT_CART)**2
+        #Q_vel     = np.diag([PesoVel]*3)    / np.array(V)**2
+        #Q_ang_dot = np.diag([PesoAngVel]*3) / np.array(ANG_DOT)**2
+        #Q_acc     = np.diag([PesoAcc]*3)    / np.array(ACC)**2
+        #Q_acc_ang = np.diag([PesoAngAcc]*3) / np.array(ACC_ANG)**2
+        ##Q_jerk    = np.diag([PesoJerk]*3)   / JERK**2
+        ##Q_snap    = np.diag([PesoSnap]*3)   / SNAP**2
+#
+        #R_f   = np.diag([PesoForce])/U_F**2
+        #R_tau = np.diag([PesoTorque]*3)/np.array(U_TAU)**2
 
         R   = ca.diagcat(R_f, R_tau)
         Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
