@@ -128,7 +128,7 @@ class MpcPlannerNode(Node):
         # === Tempo/Orizzonte ===
         self.Hz = 100.0
         self.ts = 1.0/self.Hz             # 10 ms
-        self.N_horiz = 50          # Orizzonte di predizione (numero di campioni)
+        self.N_horiz = 30          # Orizzonte di predizione (numero di campioni)
         self.Tp = self.N_horiz * self.ts  # Tempo totale dell'orizzonte 
 
         self.path_pub_counter = 0  # Contatore per limitare la frequenza di pubblicazione del path
@@ -635,8 +635,8 @@ class MpcPlannerNode(Node):
         PesoYaw    = PesoVis 
         PesoInt    = PesoVis/50    # peso azione integrale cartesiana [ex, ey, ez]
 
-        PesoVel    = PesoVis / 200
-        PesoAngVel = PesoVis / 100 
+        PesoVel    = PesoVis / 100
+        PesoAngVel = PesoVis / 50 
         PesoAcc    = PesoVel * 2   
         PesoAngAcc = PesoAngVel * 2 
         #PesoJerk   = PesoAcc / 5
