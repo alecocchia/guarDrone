@@ -10,6 +10,7 @@ from std_msgs.msg import Bool, Float64MultiArray, String, Float64
 from geometry_msgs.msg import PoseStamped, TwistStamped
 import numpy as np
 from scipy.spatial.transform import Rotation
+from utils_pkg.planner import generate_trapezoidal_trajectory
 
 class FakePublisherNode(Node):
     def __init__(self):
@@ -77,7 +78,6 @@ class FakePublisherNode(Node):
         self.peg_start_y = self.get_parameter('peg_start_y').value
         self.peg_start_z = self.get_parameter('peg_start_z').value
 
-        self.guardrone_start_yaw = 0.0
         
         # Posizione ENU globale del drone, aggiornata continuamente da odom1_cb.
         # Placeholder con i parametri di spawn finché non arriva la prima odometria.
@@ -106,6 +106,18 @@ class FakePublisherNode(Node):
         self.user_ok = False
         self.wait_msg_printed = False
         self.switch_msg_printed = False
+
+        # Posizione e velocita dinamica del fake peg (inizialmente sopra il suo spawn point a quota takeoff_alt_1)
+        self.fake_peg_pos = np.array([self.peg_start_x, self.peg_start_y, self.takeoff_alt_1], dtype=float)
+        self.fake_peg_vel = np.zeros(3, dtype=float)
+        # Traiettoria trapezoidale continua (utils_pkg.planner)
+        self.peg_traj_p = None
+        self.peg_traj_v = None
+        self.peg_traj_idx = 0
+        self.detachment_started = False
+        self.return_home_started = False
+        self.landing_started = False
+        self.msg_cnt = 0
         
         self.state = 'WAIT_EKF'
         self.wait_ticks = 0
@@ -135,9 +147,19 @@ class FakePublisherNode(Node):
             self.get_logger().info("Segnale MPC Pronto ricevuto!")
 
     def keyboard_cb(self, msg):
-        if msg.data.strip().lower() == 'ok':
+        cmd = msg.data.strip().lower()
+        if cmd == 'ok':
             self.user_ok = True
-            self.get_logger().info("Comando OK ricevuto dal terminale GCS!")
+            self.get_logger().info('Comando OK ricevuto dal terminale GCS!')
+        elif cmd == 'land':
+            self.get_logger().warn('Comando LAND ricevuto dal terminale GCS! Avvio sequenza di atterraggio.')
+            self.state = 'LANDING'
+            self.landing_started = False
+            self.user_ok = False
+        elif cmd == 'stop':
+            self.get_logger().error("Comando STOP ricevuto! Atterraggio d'emergenza!")
+            self.publish_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
+            self.state = 'EMERGENCY'
 
     def publish_command(self, command, param1=0.0, param2=0.0):
         msg = VehicleCommand()
@@ -152,9 +174,36 @@ class FakePublisherNode(Node):
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.cmd_pub_1.publish(msg)
 
+    def plan_peg_trajectory(self, target_pos, v_max=0.2, a_max=0.2):
+        """Genera profilo trapezoidale continuo per il fake peg a 50Hz (dt=0.02s)."""
+        x0 = [float(self.fake_peg_pos[0]), float(self.fake_peg_pos[1]), float(self.fake_peg_pos[2]), 0.0, 0.0, 0.0]
+        x_ref = [float(target_pos[0]), float(target_pos[1]), float(target_pos[2]), 0.0, 0.0, 0.0]
+        t_vec, p_vals, _ = generate_trapezoidal_trajectory(x0, x_ref, dt=0.02, v_max=v_max, a_max=a_max)
+        self.peg_traj_p = p_vals
+        if len(p_vals) > 1:
+            self.peg_traj_v = np.gradient(p_vals, 0.02, axis=0)
+        else:
+            self.peg_traj_v = np.zeros_like(p_vals)
+        self.peg_traj_idx = 0
+        return float(t_vec[-1])
+
+    def is_peg_trajectory_done(self):
+        """Verifica se la traiettoria trapezoidale in corso ha raggiunto la destinazione."""
+        return self.peg_traj_p is not None and self.peg_traj_idx >= len(self.peg_traj_p)
+
     def timer_callback(self):
         now = self.get_clock().now()
         stamp = now.to_msg()
+        
+        # Aggiornamento cinematica trapezoidale del peg a 50Hz
+        if self.peg_traj_p is not None:
+            if self.peg_traj_idx < len(self.peg_traj_p):
+                self.fake_peg_pos = self.peg_traj_p[self.peg_traj_idx].copy()
+                self.fake_peg_vel = self.peg_traj_v[self.peg_traj_idx].copy()
+                self.peg_traj_idx += 1
+            else:
+                self.fake_peg_pos = self.peg_traj_p[-1].copy()
+                self.fake_peg_vel[:] = 0.0
         
         # =========================================================================
         # PUBBLICAZIONE COSTANTE ODOMETRIA PEG (50Hz)
@@ -162,38 +211,34 @@ class FakePublisherNode(Node):
         peg_odom_msg = VehicleOdometry()
         peg_odom_msg.timestamp = int(now.nanoseconds / 1000)
         
-        # Posizione del peg (coordinate NED).
-        # L'odometria PX4 è locale rispetto al punto di spawn.
-        # Il peg deve essere in hovering esattamente sopra il suo punto di spawn,
-        # quindi N=0, E=0. La quota locale (D) è negativo (takeoff_alt_1 - peg_start_z).
-        local_z = float(self.takeoff_alt_1 - self.peg_start_z)
-        peg_odom_msg.position = [0.0, 0.0, -local_z]
+        # Posizione del peg (coordinate NED relative al punto di spawn del peg)
+        delta_enu = self.fake_peg_pos - np.array([self.peg_start_x, self.peg_start_y, self.peg_start_z])
+        delta_ned = self.M_ned2enu @ delta_enu
+        peg_odom_msg.position = [float(delta_ned[0]), float(delta_ned[1]), float(delta_ned[2])]
         peg_odom_msg.q = [1.0, 0.0, 0.0, 0.0]
-        peg_odom_msg.velocity = [0.0, 0.0, 0.0]
+        vel_ned = self.M_ned2enu @ self.fake_peg_vel
+        peg_odom_msg.velocity = [float(vel_ned[0]), float(vel_ned[1]), float(vel_ned[2])]
         peg_odom_msg.angular_velocity = [0.0, 0.0, 0.0]
         self.odom_pub.publish(peg_odom_msg)
 
         # =========================================================================
         # PUBBLICAZIONE STATO ATTUALE PEG IN ENU (50Hz)
-        # Nella sim il peg è fermo in hovering: posizione fissa, vel/yaw/yaw_rate = 0
-        # Nella configurazione reale questi topic sono pubblicati da offboard_admittance_planner
         # =========================================================================
-        # Posizione ENU del peg: M_ned2enu @ [0,0,-local_z] + [peg_start_x, peg_start_y, peg_start_z]
-        #   = [0, 0, local_z] + [peg_start_x, peg_start_y, peg_start_z]
-        #   = [peg_start_x, peg_start_y, takeoff_alt_1]
         peg_pose_msg = PoseStamped()
         peg_pose_msg.header.stamp = stamp
         peg_pose_msg.header.frame_id = 'world'
-        peg_pose_msg.pose.position.x = float(self.peg_start_x)
-        peg_pose_msg.pose.position.y = float(self.peg_start_y)
-        peg_pose_msg.pose.position.z = float(self.takeoff_alt_1)
+        peg_pose_msg.pose.position.x = float(self.fake_peg_pos[0])
+        peg_pose_msg.pose.position.y = float(self.fake_peg_pos[1])
+        peg_pose_msg.pose.position.z = float(self.fake_peg_pos[2])
         peg_pose_msg.pose.orientation.w = 1.0  # identità (yaw=0)
         self.peg_actual_pose_pub.publish(peg_pose_msg)
 
         peg_vel_msg = TwistStamped()
         peg_vel_msg.header.stamp = stamp
         peg_vel_msg.header.frame_id = 'world'
-        # velocità = 0 (hovering)
+        peg_vel_msg.twist.linear.x = float(self.fake_peg_vel[0])
+        peg_vel_msg.twist.linear.y = float(self.fake_peg_vel[1])
+        peg_vel_msg.twist.linear.z = float(self.fake_peg_vel[2])
         self.peg_actual_vel_pub.publish(peg_vel_msg)
 
         yaw_msg = Float64()
@@ -205,14 +250,7 @@ class FakePublisherNode(Node):
         self.peg_actual_yaw_rate_pub.publish(yaw_rate_msg)
 
         # =========================================================================
-        # 2) PUBBLICAZIONE POV TARGET (50Hz)
-        # =========================================================================
-        pov_msg = Float64MultiArray()
-        pov_msg.data = [self.r_hover, self.beta_hover, 0.0, 0.0] 
-        self.pov_pub.publish(pov_msg)
-        
-        # =========================================================================
-        # 3) MACCHINA A STATI DEL SUPERVISOR (~10Hz)
+        # 2) MACCHINA A STATI DEL SUPERVISOR (~10Hz)
         # =========================================================================
         self.wait_ticks += 1
         if self.wait_ticks % 5 != 0:
@@ -292,17 +330,17 @@ class FakePublisherNode(Node):
                     current_yaw_enu = float(Rotation.from_matrix(R_flu2enu).as_euler('xyz')[2])
                     yaw_quat = Rotation.from_euler('z', current_yaw_enu).as_quat()  # [x,y,z,w]
 
-                    cam_pose = PoseStamped()
-                    cam_pose.header.frame_id = 'world'
-                    cam_pose.pose.position.x = float(self.drone_pos_enu[0])
-                    cam_pose.pose.position.y = float(self.drone_pos_enu[1])
-                    cam_pose.pose.position.z = cam_body_takeoff_z
-                    cam_pose.pose.orientation.x = float(yaw_quat[0])
-                    cam_pose.pose.orientation.y = float(yaw_quat[1])
-                    cam_pose.pose.orientation.z = float(yaw_quat[2])
-                    cam_pose.pose.orientation.w = float(yaw_quat[3])
+                    cam_takeoff_target = PoseStamped()
+                    cam_takeoff_target.header.frame_id = 'world'
+                    cam_takeoff_target.pose.position.x = float(self.drone_pos_enu[0])
+                    cam_takeoff_target.pose.position.y = float(self.drone_pos_enu[1])
+                    cam_takeoff_target.pose.position.z = cam_body_takeoff_z
+                    cam_takeoff_target.pose.orientation.x = float(yaw_quat[0])
+                    cam_takeoff_target.pose.orientation.y = float(yaw_quat[1])
+                    cam_takeoff_target.pose.orientation.z = float(yaw_quat[2])
+                    cam_takeoff_target.pose.orientation.w = float(yaw_quat[3])
                     self.get_logger().info(f"Target decollo: z={cam_body_takeoff_z:.3f}m, yaw={math.degrees(current_yaw_enu):.1f}°")
-                    self.cam_target_pub.publish(cam_pose)
+                    self.cam_target_pub.publish(cam_takeoff_target)
                     
                     # Accende il trajectory planner
                     msg_traj = Bool()
@@ -360,7 +398,12 @@ class FakePublisherNode(Node):
                     msg_traj.data = False
                     self.cam_traj_enabled_pub.publish(msg_traj)
             
-                    # 2. Avvia MPC
+                    # 2. Invia target PoV iniziale per l'MPC (inviato una sola volta allo switch)
+                    pov_msg = Float64MultiArray()
+                    pov_msg.data = [self.r_hover, self.beta_hover, 0.0, 0.0]
+                    self.pov_pub.publish(pov_msg)
+
+                    # 3. Avvia MPC
                     msg_start = Bool()
                     msg_start.data = True
                     self.task_start_pub.publish(msg_start)
@@ -369,8 +412,83 @@ class FakePublisherNode(Node):
                     self.get_logger().info("MISSIONE AVVIATA. Hovering mantenuto tramite MPC.")
                 
         elif self.state == 'MISSION':
-            # Il loop principale a 50Hz continua a mandare pov_target e odometria peg
+            if self.user_ok:
+                self.user_ok = False
+                self.get_logger().info("Comando 'ok' ricevuto in MISSION: inizio fase di DETACHMENT...")
+                self.state = 'DETACHMENT'
+                self.detachment_started = False
+                self.msg_cnt = 0
+            elif self.msg_cnt == 0:
+                self.get_logger().info('MISSIONE in corso con MPC. Digita "ok" per procedere al distacco (DETACHMENT) o "land" per atterrare.')
+                self.msg_cnt += 1
+
+        elif self.state == 'DETACHMENT':
+            if not self.detachment_started:
+                self.detachment_started = True
+                detach_target = np.array([self.peg_start_x, self.peg_start_y + 1.5, self.takeoff_alt_1])
+                dur = self.plan_peg_trajectory(detach_target, v_max=0.2, a_max=0.2)
+                self.get_logger().info(f"Distacco avviato (trapezoidale, {dur:.1f}s): peg verso {detach_target}. GuarDrone segue in MPC...")
+
+            if self.is_peg_trajectory_done():
+                if self.user_ok:
+                    self.user_ok = False
+                    self.get_logger().info("Distacco completato + 'ok' ricevuto! Inizio RETURN_HOME...")
+                    self.state = 'RETURN_HOME'
+                    self.return_home_started = False
+                    self.msg_cnt = 0
+                elif self.msg_cnt == 0:
+                    self.get_logger().info('Peg staccato dalla parete in sicurezza. Digita "ok" per procedere a RETURN_HOME (o "land" per atterrare)...')
+                    self.msg_cnt += 1
+
+        elif self.state == 'RETURN_HOME':
+            if not self.return_home_started:
+                self.return_home_started = True
+                home_target = np.array([self.peg_start_x, self.peg_start_y, self.takeoff_alt_1])
+                dur = self.plan_peg_trajectory(home_target, v_max=0.3, a_max=0.2)
+                self.get_logger().info(f"Ritorno alla base avviato (trapezoidale, {dur:.1f}s): peg verso {home_target}. GuarDrone segue in MPC...")
+
+            if self.is_peg_trajectory_done():
+                if self.user_ok:
+                    self.user_ok = False
+                    self.get_logger().info("Ritorno completato + 'ok' ricevuto! Inizio LANDING...")
+                    self.state = 'LANDING'
+                    self.landing_started = False
+                    self.msg_cnt = 0
+                elif self.msg_cnt == 0:
+                    self.get_logger().info('Peg tornato alla base sopra lo spawn. Digita "ok" per procedere a LANDING...')
+                    self.msg_cnt += 1
+
+        elif self.state == 'LANDING':
+            if not self.landing_started:
+                self.landing_started = True
+                target_ground = np.array([self.peg_start_x, self.peg_start_y, self.peg_start_z])
+                dur = self.plan_peg_trajectory(target_ground, v_max=0.2, a_max=0.2)
+                self.get_logger().info(f"LANDING avviato (trapezoidale, {dur:.1f}s): il peg scende verso il suolo, GuarDrone segue in MPC.")
+
+            # Controlla la quota reale di GuarDrone
+            # drone1_local_pos.z e NED (negativo verso l'alto). La quota relativa allo spawn e -z
+            guardrone_alt_rel = -self.drone1_local_pos.z
+            if guardrone_alt_rel < 0.7:
+                # GuarDrone e vicino al suolo: spegni l'MPC e dai comando di LAND PX4 per il touchdown finale
+                self.get_logger().info(f"GuarDrone vicino al suolo (quota rel = {guardrone_alt_rel:.2f}m). Stop MPC e invio VEHICLE_CMD_NAV_LAND!")
+                msg_stop = Bool()
+                msg_stop.data = False
+                self.task_start_pub.publish(msg_stop)
+
+                self.publish_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
+                self.state = 'DISARM_WAIT'
+
+        elif self.state == 'DISARM_WAIT':
+            if not self.drone1_mode.flag_armed:
+                self.get_logger().info("GuarDrone atterrato e DISARMATO. Missione completata con successo!")
+                self.state = 'MISSION_COMPLETE'
+
+        elif self.state == 'MISSION_COMPLETE':
             pass
+
+        elif self.state == 'EMERGENCY':
+            # Keep sending land
+            self.publish_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
 
 def main(args=None):
     rclpy.init(args=args)

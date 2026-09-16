@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
+import os, sys
 import argparse, numpy as np
 import matplotlib.pyplot as plt
+
+# Aggiunta percorsi di ricerca per utils_pkg (esecuzione sia standalone che ROS2)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+ws_src_dir = os.path.abspath(os.path.join(current_dir, '..', '..'))
+for p in [current_dir, os.path.join(ws_src_dir, 'utils_pkg'), '/root/my_ros2_ws/src/utils_pkg']:
+    if os.path.exists(p) and p not in sys.path:
+        sys.path.insert(0, p)
+
 from utils_pkg.utils_np import wrap_pi, cylindrical_to_cartesian
 
 def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, fignum=None, task_start=-1.0, task_end=-1.0):
+    """Generazione grafici ad alta leggibilità con palette moderna Tableau, griglia discreta e marker eleganti."""
     plt.rcParams.update({"text.usetex": use_tex, "font.family": "serif"})
     n = len(data_list)
     nrows = int(np.ceil(n / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(12, 3.5 * nrows), squeeze=False, num=fignum)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(12.5, 3.4 * nrows), squeeze=False, num=fignum)
+    fig.patch.set_facecolor('#ffffff')
     if fignum is not None:
         try:
             fig.canvas.manager.set_window_title(f"Figure {fignum}: {title}")
@@ -17,30 +28,55 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
             except Exception:
                 pass
     axes = axes.flatten()
+
+    # Stile cromatico moderno: Tableau blue per Actual, Crimson red tratteggiato per Reference
+    c_actual = '#1f77b4'
+    c_ref = '#d62728'
+    c_start = '#2ca02c'   # Emerald green
+    c_end = '#7f7f7f'     # Slate gray
     
     for i in range(n):
+        ax = axes[i]
         time_plot = time[:len(data_list[i]['sim'])]
-        axes[i].plot(time_plot, data_list[i]['sim'], 'b-', label='Actual', linewidth=1.5)
+
+        # Ombreggiatura leggera per evidenziare la durata della missione attiva
+        if task_start > 0 and task_end > task_start:
+            ax.axvspan(task_start, task_end, color='#2ca02c', alpha=0.04, zorder=0)
+
+        # Plot segnale effettivo
+        ax.plot(time_plot, data_list[i]['sim'], color=c_actual, label='Actual', linewidth=1.7, zorder=3)
+
+        # Plot riferimento
         if 'ref' in data_list[i] and data_list[i]['ref'] is not None:
             ref_data = data_list[i]['ref']
             if np.isscalar(ref_data):
-                axes[i].axhline(y=ref_data, color='r', linestyle='--', label='Ref')
+                ax.axhline(y=ref_data, color=c_ref, linestyle='--', label='Ref', linewidth=1.3, alpha=0.85, zorder=2)
             else:
-                axes[i].plot(time_plot, ref_data[:len(time_plot)], 'r--', label='Reference', linewidth=1.2)
+                ax.plot(time_plot, ref_data[:len(time_plot)], color=c_ref, linestyle='--', label='Reference', linewidth=1.3, alpha=0.85, zorder=2)
+
+        # Indicatori inizio e fine missione
         if task_start > 0:
-            axes[i].axvline(x=task_start, color='k', linestyle='--', linewidth=1.5, label='Mission Start')
+            ax.axvline(x=task_start, color=c_start, linestyle='--', linewidth=1.3, alpha=0.75, label='Mission Start')
         if task_end > 0:
-            axes[i].axvline(x=task_end, color='r', linestyle=':', linewidth=1.5, label='Mission End')
+            ax.axvline(x=task_end, color=c_end, linestyle=':', linewidth=1.3, alpha=0.75, label='Mission End')
         
-        axes[i].set_title(labels[i])
-        axes[i].grid(True, alpha=0.3)
-        axes[i].legend(loc='upper right', fontsize='small')
+        ax.set_title(labels[i], fontsize=10.5, fontweight='semibold', color='#0f172a', pad=4)
+        ax.set_xlabel('Time [s]', fontsize=9, color='#334155')
+        ax.tick_params(axis='both', which='both', labelsize=8.5, colors='#334155')
+        ax.grid(True, linestyle='--', alpha=0.45, color='#94a3b8')
+
+        # Bordi e assi sottili ed eleganti
+        for spine in ax.spines.values():
+            spine.set_color('#cbd5e1')
+            spine.set_linewidth(0.8)
+
+        ax.legend(loc='upper right', fontsize=8, frameon=True, facecolor='white', framealpha=0.88, edgecolor='#e2e8f0')
     
     for j in range(i + 1, len(axes)):
         fig.delaxes(axes[j])
         
-    fig.suptitle(title, fontsize=16)
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    fig.suptitle(title, fontsize=13.5, fontweight='bold', color='#0f172a', y=0.98)
+    plt.tight_layout(rect=[0, 0.02, 1, 0.96])
     
     if block:
         plt.show()

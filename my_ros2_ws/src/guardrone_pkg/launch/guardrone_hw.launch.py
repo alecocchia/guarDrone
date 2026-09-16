@@ -61,8 +61,9 @@ def launch_setup(context, *args, **kwargs):
     peg_x     = LaunchConfiguration('peg_x')
     peg_y     = LaunchConfiguration('peg_y')
     peg_z     = LaunchConfiguration('peg_z')
-    cf        = LaunchConfiguration('cf')
-    ct        = LaunchConfiguration('ct')
+    cf         = LaunchConfiguration('cf')
+    ct         = LaunchConfiguration('ct')
+    controller = LaunchConfiguration('controller')
 
     # --- NODI ---
 
@@ -87,6 +88,7 @@ def launch_setup(context, *args, **kwargs):
             'w_min': w_min, 'w_max': w_max,
             'arm_l_x': arm_l_x, 'arm_l_y': arm_l_y, 'moment_const': moment_const,
             'use_mbe': True,
+            'controller': controller,
         }]
     )
 
@@ -141,8 +143,8 @@ def generate_launch_description():
         DeclareLaunchArgument('fov_v',     default_value='58.0', description='FOV verticale camera [deg]'),
 
         # === Controllo ===
-        DeclareLaunchArgument('MPC_controller', default_value='1',
-                              description='1 = PX4 thrust/torque integrato, altro = wrench standard'),
+        DeclareLaunchArgument('controller', default_value='1',
+                              description='1: MPC come controllore (spinta e coppie), 0: MPC come planner (setpoint pos/vel)'),
 
         # === Pose iniziali (con MOCAP/OptiTrack: default 0.0, il frame è già globale) ===
         DeclareLaunchArgument('drone_x',   default_value='0.0'),

@@ -18,7 +18,7 @@ from nav_msgs.msg import Path
 from std_msgs.msg import Bool, Float64MultiArray, String, Float64
 
 # --- PX4 MESSAGES IMPORTS ---
-from px4_msgs.msg import VehicleOdometry, VehicleThrustSetpoint, VehicleTorqueSetpoint, OffboardControlMode, VehicleCommand, VehicleControlMode
+from px4_msgs.msg import VehicleOdometry, VehicleThrustSetpoint, VehicleTorqueSetpoint, OffboardControlMode, VehicleCommand, VehicleControlMode, TrajectorySetpoint
 import numpy as np
 import casadi as ca
 from casadi import pi as pi
@@ -49,6 +49,9 @@ class MpcPlannerNode(Node):
         self.solver_is_running = False
 
         # === Modello e condizioni iniziali ===
+        self.declare_parameter('controller', 1)  # 1: Controller (thrust/torque), 0: Planner (pos/vel setpoints)
+        self.is_controller = bool(self.get_parameter('controller').value)
+
         self.declare_parameter('mass', 2.064)
         self.declare_parameter('ixx', 0.0216)
         self.declare_parameter('iyy', 0.0216)
@@ -127,7 +130,7 @@ class MpcPlannerNode(Node):
         # === Tempo/Orizzonte ===
         self.Hz = 100.0
         self.ts = 1.0/self.Hz             # 10 ms
-        self.N_horiz = 15         # Orizzonte di predizione (numero di campioni)
+        self.N_horiz = 30         # Orizzonte di predizione (numero di campioni) # SIMULAZIONE CONTROLLER
         self.Tp = self.N_horiz * self.ts  # Tempo totale dell'orizzonte 
 
         self.path_pub_counter = 0  # Contatore per limitare la frequenza di pubblicazione del path
@@ -136,7 +139,8 @@ class MpcPlannerNode(Node):
 
         # === Momentum Based Estimator ===
         self.declare_parameter('use_mbe', True)
-        self.use_mbe = self.get_parameter('use_mbe').value
+        # In modalità planner (controller=0), l'MBE è disabilitato in quanto superfluo
+        self.use_mbe = self.get_parameter('use_mbe').value and self.is_controller
         if self.use_mbe:
             self.mbe = MomentumBasedEstimator(self.mass, self.ixx, self.iyy, self.izz, self.ts, g0)
             self.get_logger().info("MBE abilitato.")
@@ -198,6 +202,7 @@ class MpcPlannerNode(Node):
         self.task_started = False
         self._first_mpc_solve = True   # flag per warm-start allo switch
         self._last_yref_val = None     # cache yref per evitare chiamate ctypes ridondanti
+        self.last_yaw_desired = 0.0    # cache ultimo yaw desiderato per modalità planner
         self.last_u0_applied = None
         self.safety_switch_passed = False
         self.current_F_ext = np.zeros(3)
@@ -225,10 +230,14 @@ class MpcPlannerNode(Node):
 
         self.single_wrench_pub = self.create_publisher(Wrench, '/optimal_wrench', 1)
 
-        self.get_logger().info("MPC in modalità PX4 Controller Integrato: attiva pub offboard, thrust e torque.")
-        self.thrust_pub = self.create_publisher(VehicleThrustSetpoint, '/fmu/in/vehicle_thrust_setpoint', 1)
-        self.torque_pub = self.create_publisher(VehicleTorqueSetpoint, '/fmu/in/vehicle_torque_setpoint', 1)
         self.offboard_control_mode_publisher = self.create_publisher(OffboardControlMode, '/fmu/in/offboard_control_mode', 1)
+        if self.is_controller:
+            self.get_logger().info("MPC in modalità CONTROLLER: attiva pub offboard, thrust e torque.")
+            self.thrust_pub = self.create_publisher(VehicleThrustSetpoint, '/fmu/in/vehicle_thrust_setpoint', 1)
+            self.torque_pub = self.create_publisher(VehicleTorqueSetpoint, '/fmu/in/vehicle_torque_setpoint', 1)
+        else:
+            self.get_logger().info("MPC in modalità PLANNER: attiva pub offboard e trajectory_setpoint (pos/vel).")
+            self.trajectory_setpoint_pub = self.create_publisher(TrajectorySetpoint, '/fmu/in/trajectory_setpoint', 1)
 
 
 
@@ -292,20 +301,22 @@ class MpcPlannerNode(Node):
             Bool, '/mpc_task/start', self.supervisor_start_callback, 10, callback_group=self.callback_group)
         self.supervisor_status_pub = self.create_publisher(String, '/mpc_task/status', 10)
 
-        self.thrust_out_sub = self.create_subscription(
-            VehicleThrustSetpoint,
-            '/fmu/out/vehicle_thrust_setpoint',
-            self.thrust_out_cb,
-            px4_qos_profile,
-            callback_group=self.callback_group
-        )
-        self.torque_out_sub = self.create_subscription(
-            VehicleTorqueSetpoint,
-            '/fmu/out/vehicle_torque_setpoint',
-            self.torque_out_cb,
-            px4_qos_profile,
-            callback_group=self.callback_group
-        )
+        # Sottoscrizione comandi PX4 solo per modalità controller (necessari a safe switch e MBE pre-switch)
+        if self.is_controller:
+            self.thrust_out_sub = self.create_subscription(
+                VehicleThrustSetpoint,
+                '/fmu/out/vehicle_thrust_setpoint',
+                self.thrust_out_cb,
+                px4_qos_profile,
+                callback_group=self.callback_group
+            )
+            self.torque_out_sub = self.create_subscription(
+                VehicleTorqueSetpoint,
+                '/fmu/out/vehicle_torque_setpoint',
+                self.torque_out_cb,
+                px4_qos_profile,
+                callback_group=self.callback_group
+            )
 
         self.current_px4_thrust = np.zeros(3)   # FLU
         self.current_px4_torque = np.zeros(3)   # FLU
@@ -316,10 +327,13 @@ class MpcPlannerNode(Node):
     # ==================== Callbacks I/O ====================
 
     def supervisor_start_callback(self, msg: Bool):
-        if msg.data == True:
+        if msg.data:
             self.get_logger().info("Ricevuto comando dal Supervisor: Inizio MPC Task!")
             self.task_started = True
             self.planner_configure()
+        else:
+            self.get_logger().info("Ricevuto comando dal Supervisor: Stop MPC Task!")
+            self.task_started = False
 
     def control_mode_callback(self, msg: VehicleControlMode):
         with self.state_lock:
@@ -594,7 +608,7 @@ class MpcPlannerNode(Node):
             dt_j = (now - self.joy_timestamp).nanoseconds / 1e9
             j_active = (dt_j < dt_off)
 
-        # --- Selezione priorità (MUX) ---
+        # --- Selezione priorità ---
         if h_active:
             ref = self.haptic_pov
         elif j_active:
@@ -616,34 +630,91 @@ class MpcPlannerNode(Node):
 #        # Pesi normalizzati
 #        # [r_cyl_err, beta_err, z_err, yaw_rel_err]
 ########################### GUADAGNI HARDWARE
-        R_CYL  = 0.5      # range distanza [m]
-        B_CYL  = np.pi/4  # range azimut [rad]
-        Z_CYL  = 0.5      # range quota [m]
+        #R_CYL  = 0.5      # range distanza [m]
+        #B_CYL  = np.pi/6  # range azimut [rad]
+        #Z_CYL  = 0.5      # range quota [m]
+        #Y_CYL  = np.pi/2  # range yaw [rad]
+        #E_INT_CART = np.array([1, 1, 1])
+#
+        #V       = np.array([0.3, 0.3, 0.3]) 
+        #ANG_DOT = np.array([0.15, 0.15, 0.5]) 
+        #ACC     = np.array([0.4, 0.4, 0.4]) ## OK ANCHE DIVIDENDO PER 2 (CON ESTIMATOR)
+        #ACC_ANG = np.array([2.0, 2.0, 3.0])
+        #JERK    = 20.0
+        #SNAP    = 200.0
+        ## MEDIA VOLO TAKEOFF HARDWARE
+        ##V = [0.05, 0.05, 0.08]
+        ##ANG_DOT = [0.05, 0.05, 0.03]
+        ##ACC = [0.12, 0.12, 0.11]
+        ##ACC_ANG = [1.5, 1.0, 0.5]
+#
+#
+        #PesoVis    = 10
+        #PesoRadius = PesoVis 
+        #PesoBeta   = PesoVis 
+        #PesoZ  = PesoVis 
+        #PesoYaw    = PesoVis 
+        #PesoInt    = PesoVis/50    # peso azione integrale cartesiana [ex, ey, ez]
+#
+        #PesoVel    = PesoVis / 50
+        #PesoAngVel = PesoVis / 10
+        #PesoAcc    = PesoVel / 5
+        #PesoAngAcc = PesoAngVel  
+        ##PesoJerk   = PesoAcc / 5
+        ##PesoSnap   = PesoJerk 
+        #PesoForce  = PesoVis / 100
+        #PesoTorque = PesoForce *2
+#
+        ## Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
+        #Q_cyl = np.diag([PesoRadius / R_CYL**2,
+        #                 PesoBeta  / B_CYL**2,
+        #                 PesoZ / Z_CYL**2, 
+        #                 PesoYaw   / Y_CYL**2])
+        ##Q_int     = np.diag([PesoInt]*3)    / np.array(E_INT_CART)**2
+        #Q_vel     = np.diag([PesoVel]*3)    / np.array(V)**2
+        #Q_ang_dot = np.diag([PesoAngVel]*3) / np.array(ANG_DOT)**2
+        #Q_acc     = np.diag([PesoAcc]*3)    / np.array(ACC)**2
+        #Q_acc_ang = np.diag([PesoAngAcc]*3) / np.array(ACC_ANG)**2
+        ##Q_jerk    = np.diag([PesoJerk]*3)   / JERK**2
+        ##Q_snap    = np.diag([PesoSnap]*3)   / SNAP**2
+        #R_f   = np.diag([PesoForce / self.U_F**2])
+        #R_tau = np.diag([PesoTorque / self.U_TAU_X**2,
+        #                   PesoTorque / self.U_TAU_Y**2,
+        #                   PesoTorque / self.U_TAU_Z**2])
+#
+        #R   = ca.diagcat(R_f, R_tau)
+        #Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
+        #Q_e = ca.diagcat(5 * Q_cyl, 5*Q_vel, 3*Q_ang_dot,1*Q_acc, 1*Q_acc_ang)
+###########################
+        # Guadagni simulazione
+        R_CYL  = 0.25      # range distanza [m]
+        B_CYL  = np.pi/6  # range azimut [rad]
+        Z_CYL  = 0.3      # range quota [m]
         Y_CYL  = np.pi/2  # range yaw [rad]
         E_INT_CART = np.array([1, 1, 1])
 
-        V       = np.array([0.2, 0.2, 0.3]) 
-        ANG_DOT = np.array([0.15, 0.15, 0.25]) 
-        ACC     = np.array([0.25, 0.25, 0.25]) ## OK ANCHE DIVIDENDO PER 2 (CON ESTIMATOR)
-        ACC_ANG = np.array([0.3, 0.3, 0.35])
+        V       = np.array([0.6, 0.6, 0.3]) 
+        ANG_DOT = np.array([0.15, 0.15, 0.5]) 
+        ACC     = np.array([1.0, 1.0, 0.4]) 
+        ACC_ANG = np.array([1.0, 1.0, 1.5]) 
         JERK    = 20.0
         SNAP    = 200.0
 
-        PesoVis    = 500
+        PesoVis    = 10
         PesoRadius = PesoVis    
         PesoBeta   = PesoVis 
         PesoZ  = PesoVis 
         PesoYaw    = PesoVis 
         PesoInt    = PesoVis/50    # peso azione integrale cartesiana [ex, ey, ez]
 
-        PesoVel    = PesoVis / 200
-        PesoAngVel = PesoVis / 100 
-        PesoAcc    = PesoVel * 2   
-        PesoAngAcc = PesoAngVel * 2
-        #PesoJerk   = PesoAcc / 5
-        #PesoSnap   = PesoJerk 
-        PesoForce  = PesoVis / 10
-        PesoTorque = PesoForce * 2
+        PesoVel    = PesoVis / 20
+        PesoAngVel = PesoVis / 30 
+        PesoAcc    = PesoVis / 40 
+        PesoAngAcc = PesoVis / 50  
+        PesoJerk   = PesoAcc / 5
+        PesoSnap   = PesoJerk 
+        PesoForce  = PesoVis / 500
+        PesoTorque = PesoForce 
 
         # Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
         Q_cyl = np.diag([PesoRadius / R_CYL**2,
@@ -665,41 +736,38 @@ class MpcPlannerNode(Node):
 
         R   = ca.diagcat(R_f, R_tau)
         Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
-        Q_e = ca.diagcat(10 * Q_cyl, 8*Q_vel, 3*Q_ang_dot,1.5*Q_acc, 1.5*Q_acc_ang)
+        Q_e = ca.diagcat(5 * Q_cyl, 5*Q_vel, 5*Q_ang_dot,1*Q_acc, 1*Q_acc_ang)
+###########################
 
-
-
-        #R_CYL  = 0.5      # range distanza [m]
-        #B_CYL  = 45*(np.pi/180)  # range azimut [rad]
-        #Z_CYL  = 0.3      # range quota [m]
-        #Y_CYL  = 90*(np.pi/180)  # range yaw [rad]
-        ##E_INT_CART = np.array([1, 1, 1])
+        ### BUONO PER SIMULAZIONE CON PLANNER
+        #R_CYL  = 0.2      # range distanza [m]
+        #B_CYL  = 0.2  # range azimut [rad]
+        #Z_CYL  = 0.2      # range quota [m]
+        #Y_CYL  = np.pi/2  # range yaw [rad]
+        #E_INT_CART = np.array([1, 1, 1])
 #
-        #V       = np.array([0.2, 0.2, 0.3]) 
-        #ANG_DOT = np.array([0.15, 0.15, 0.2]) 
-        #ACC     = np.array([0.25, 0.25, 0.25]) ## OK ANCHE DIVIDENDO PER 2 (CON ESTIMATOR)
-        #ACC_ANG = np.array([0.3, 0.3, 0.3])
+        #V       = np.array([0.5, 0.5, 0.5]) 
+        #ANG_DOT = np.array([0.2, 0.2, 0.4]) 
+        #ACC     = np.array([0.4, 0.4, 0.4]) 
+        #ACC_ANG = np.array([1.0, 1.0, 1.2]) 
         #JERK    = 20.0
         #SNAP    = 200.0
 #
-        #U_F =   self.U_F
-        #U_TAU = np.array([self.U_TAU_X,self.U_TAU_Y,self.U_TAU_Z])
-#
-        #PesoVis    = 500
+        #PesoVis    = 10
         #PesoRadius = PesoVis    
-        #PesoBeta   = PesoVis 
+        #PesoBeta   = PesoVis  * 2
         #PesoZ  = PesoVis 
         #PesoYaw    = PesoVis 
-        ##PesoInt    = PesoVis/50    # peso azione integrale cartesiana [ex, ey, ez]
+        #PesoInt    = PesoVis/50    # peso azione integrale cartesiana [ex, ey, ez]
 #
-        #PesoVel    = PesoVis / 100
-        #PesoAngVel = PesoVis / 50 
-        #PesoAcc    = PesoVel / 2   
-        #PesoAngAcc = PesoAngVel / 2 
-        ##PesoJerk   = PesoAcc / 5
-        ##PesoSnap   = PesoJerk 
+        #PesoVel    = PesoVis / 5
+        #PesoAngVel = PesoVis / 25 
+        #PesoAcc    = PesoVis   / 20
+        #PesoAngAcc = PesoVis  / 100
+        #PesoJerk   = PesoAcc / 5
+        #PesoSnap   = PesoJerk 
         #PesoForce  = PesoVis / 10
-        #PesoTorque = PesoForce /2
+        #PesoTorque = PesoForce 
 #
         ## Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
         #Q_cyl = np.diag([PesoRadius / R_CYL**2,
@@ -714,12 +782,14 @@ class MpcPlannerNode(Node):
         ##Q_jerk    = np.diag([PesoJerk]*3)   / JERK**2
         ##Q_snap    = np.diag([PesoSnap]*3)   / SNAP**2
 #
-        #R_f   = np.diag([PesoForce])/U_F**2
-        #R_tau = np.diag([PesoTorque]*3)/np.array(U_TAU)**2
-
+        #R_f   = np.diag([PesoForce / self.U_F**2])
+        #R_tau = ca.diagcat(PesoTorque / self.U_TAU_X**2,
+        #                   PesoTorque / self.U_TAU_Y**2,
+        #                   PesoTorque / self.U_TAU_Z**2)
+#
         #R   = ca.diagcat(R_f, R_tau)
         #Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
-        #Q_e = ca.diagcat(5 * Q_cyl, 5*Q_vel, 5*Q_ang_dot,1*Q_acc, 1*Q_acc_ang)
+        #Q_e = ca.diagcat(10 * Q_cyl, 10*Q_vel, 5*Q_ang_dot,1*Q_acc, 1*Q_acc_ang)
 
 
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
@@ -895,7 +965,10 @@ class MpcPlannerNode(Node):
                     u0 = self.u_plan[0]
                     next_x = self.x_plan[1]
                     
-                    self.publish_optimal_wrench(u0)
+                    if self.is_controller:
+                        self.publish_optimal_wrench(u0)
+                    else:
+                        self.publish_trajectory_setpoint(next_x, self.last_yaw_desired)
                     self.publish_pose_and_twist(next_x)
                 return
 
@@ -904,13 +977,20 @@ class MpcPlannerNode(Node):
             self.R = Rotation.from_euler('xyz',self.current_rpy).as_matrix()
 
             # Costruzione dello stato aumentato [p, v, q, w, e_int] (16 componenti)
-            xk = np.array([
-                self.current_position[0], self.current_position[1], self.current_position[2],
-                self.current_vel[0], self.current_vel[1], self.current_vel[2],
-                self.current_quat[0], self.current_quat[1], self.current_quat[2], self.current_quat[3],
-                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
-                self.e_int[0], self.e_int[1], self.e_int[2]
-            ])
+            # In modalità planner (is_controller=False), usiamo la predizione nominale al passo precedente
+            if not self.is_controller and self.x_plan is not None and not self._first_mpc_solve:
+                xk = self.x_plan[1].copy()
+                q_norm = np.linalg.norm(xk[6:10])
+                if q_norm > 1e-6:
+                    xk[6:10] /= q_norm
+            else:
+                xk = np.array([
+                    self.current_position[0], self.current_position[1], self.current_position[2],
+                    self.current_vel[0], self.current_vel[1], self.current_vel[2],
+                    self.current_quat[0], self.current_quat[1], self.current_quat[2], self.current_quat[3],
+                    self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
+                    self.e_int[0], self.e_int[1], self.e_int[2]
+                ])
 
             F_ext = self.current_F_ext
             Tau_ext = self.current_Tau_ext
@@ -938,9 +1018,14 @@ class MpcPlannerNode(Node):
             cyl_act = cartesian_to_cylindrical(p_rel)
             r_cyl_act, beta_act, z_act = cyl_act[0], cyl_act[1], cyl_act[2]
             
-            yaw_actual = self.current_rpy[2]
+            if not self.is_controller and self.x_plan is not None and not self._first_mpc_solve:
+                # Yaw calcolato coerentemente dallo stato predetto xk
+                yaw_actual = Rotation.from_quat([q_drone[1], q_drone[2], q_drone[3], q_drone[0]]).as_euler('xyz')[2]
+            else:
+                yaw_actual = self.current_rpy[2]
             # yaw_desired coerente con il costo MPC: beta_attuale + π + offset
             yaw_desired = float(wrap_pi(beta_act + np.pi + yaw_ref))
+            self.last_yaw_desired = yaw_desired
             yaw_rel_act = min_angle(yaw_actual - yaw_desired)
                         
             actual_pov_msg = Float64MultiArray()
@@ -1010,27 +1095,35 @@ class MpcPlannerNode(Node):
 
             # Safe Switch Check
             if not self.safety_switch_passed:
-                u_px4 = np.array([self.current_px4_thrust[2], self.current_px4_torque[0], self.current_px4_torque[1], self.current_px4_torque[2]])
-                
-                # Se non riceviamo dati da PX4, usiamo hover come fallback
-                if self.current_px4_thrust[2] == 0.0:
-                    u_px4 = self.u_hover
-                    
-                err_thrust = abs(u0[0] - u_px4[0])
-                err_torque = np.linalg.norm(u0[1:4] - u_px4[1:4])
-                
-                # Thresholds
-                thrust_thresh = 2  # Newton (circa 10% della spinta di hovering)
-                torque_thresh = 0.1  # Nm (margine sufficiente per evitare scatti angolari)
-                
-                if err_thrust < thrust_thresh and err_torque < torque_thresh:
-                    self.get_logger().info(f"Safe Switch OK! (err_thrust={err_thrust:.2f}N, err_torque={err_torque:.3f}Nm). L'MPC prende il controllo di PX4!")
+                if not self.is_controller:
+                    # In modalità planner non controlliamo spinta/coppie: switch immediato
+                    self.get_logger().info("Safe Switch OK (Planner mode: pos/vel setpoints)! L'MPC prende il controllo di PX4.")
                     self.safety_switch_passed = True
                 else:
-                    self.get_logger().warn(f"Safe Switch FALLITO. (err_thrust={err_thrust:.2f}N > {thrust_thresh} o err_torque={err_torque:.3f}Nm > {torque_thresh}). Attendo convergenza...", throttle_duration_sec=1.0)
-                    return
+                    u_px4 = np.array([self.current_px4_thrust[2], self.current_px4_torque[0], self.current_px4_torque[1], self.current_px4_torque[2]])
+                    
+                    # Se non riceviamo dati da PX4, usiamo hover come fallback
+                    if self.current_px4_thrust[2] == 0.0:
+                        u_px4 = self.u_hover
+                        
+                    err_thrust = abs(u0[0] - u_px4[0])
+                    err_torque = np.linalg.norm(u0[1:4] - u_px4[1:4])
+                    
+                    # Thresholds
+                    thrust_thresh = 2  # Newton (circa 10% della spinta di hovering)
+                    torque_thresh = 0.1  # Nm (margine sufficiente per evitare scatti angolari)
+                    
+                    if err_thrust < thrust_thresh and err_torque < torque_thresh:
+                        self.get_logger().info(f"Safe Switch OK! (err_thrust={err_thrust:.2f}N, err_torque={err_torque:.3f}Nm). L'MPC prende il controllo di PX4!")
+                        self.safety_switch_passed = True
+                    else:
+                        self.get_logger().warn(f"Safe Switch FALLITO. (err_thrust={err_thrust:.2f}N > {thrust_thresh} o err_torque={err_torque:.3f}Nm > {torque_thresh}). Attendo convergenza...", throttle_duration_sec=1.0)
+                        return
 
-            self.publish_optimal_wrench(u0)
+            if self.is_controller:
+                self.publish_optimal_wrench(u0)
+            else:
+                self.publish_trajectory_setpoint(next_x, yaw_desired)
             self.publish_pose_and_twist(next_x) 
 
             self.path_pub_counter += 1
@@ -1072,15 +1165,44 @@ class MpcPlannerNode(Node):
 
     def publish_offboard_control_mode(self):
         msg = OffboardControlMode()
-        msg.position = False
-        msg.velocity = False
+        if self.is_controller:
+            msg.position = False
+            msg.velocity = False
+            msg.thrust_and_torque = True
+        else:
+            msg.position = True
+            msg.velocity = True
+            msg.thrust_and_torque = False
         msg.acceleration = False
         msg.attitude = False
         msg.body_rate = False
-        msg.thrust_and_torque = True
-        #msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
-        msg.timestamp = 0  # PX4 auto-compila con hrt_absolute_time()
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        #msg.timestamp = 0  # PX4 auto-compila con hrt_absolute_time()
         self.offboard_control_mode_publisher.publish(msg)
+
+    def publish_trajectory_setpoint(self, next_x, yaw_desired_enu):
+        """Pubblica setpoint di posizione e velocità per PX4 (modalità Planner)."""
+        self.publish_offboard_control_mode()
+
+        # Conversione ENU -> NED tramite matrice self.M_enu2ned già esistente
+        local_enu = np.array([
+            next_x[0] - self.start_x,
+            next_x[1] - self.start_y,
+            next_x[2] - self.start_z
+        ])
+        pos_ned = self.M_enu2ned @ local_enu
+        vel_ned = self.M_enu2ned @ next_x[3:6]
+
+        # Convenzione yaw NED
+        yaw_ned = float(-yaw_desired_enu + np.pi / 2.0)
+
+        msg = TrajectorySetpoint()
+        #msg.timestamp = 0
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        msg.position = [float(pos_ned[0]), float(pos_ned[1]), float(pos_ned[2])]
+        msg.velocity = [float(vel_ned[0]), float(vel_ned[1]), float(vel_ned[2])]
+        msg.yaw = yaw_ned
+        self.trajectory_setpoint_pub.publish(msg)
 
     # (manage_offboard_state rimosso perché delegato al supervisor)
 

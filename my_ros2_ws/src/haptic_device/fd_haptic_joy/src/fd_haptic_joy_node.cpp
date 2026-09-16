@@ -45,7 +45,7 @@ public:
 
     // Parametri integrazione PoV cilindrico
     this->declare_parameter("v_r_max", 1.2);    // velocità radiale max [m/s]
-    this->declare_parameter("v_beta_max", 0.5); // velocità azimut max [rad/s]
+    this->declare_parameter("v_beta_max", 0.2); // velocità azimut max [rad/s]
     this->declare_parameter("v_z_max", 1.0); // velocità verticale max [m/s]
     this->declare_parameter("dt", 0.01);
 

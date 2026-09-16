@@ -45,6 +45,8 @@ PX4-Autopilot/
 # Cartelle e file di log/bag di SIMULAZIONE (NON tracciati su Git)
 my_ros2_ws/SimulationScripts/bag_files/
 
-# Ignora file temporanei di Python
+# Ignora file temporanei di Python e archivi compressi
 __pycache__/
 *.pyc
+*.tar.gz
+

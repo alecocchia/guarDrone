@@ -47,8 +47,9 @@ def launch_setup(context, *args, **kwargs):
     peg_x     = LaunchConfiguration('peg_x')
     peg_y     = LaunchConfiguration('peg_y')
     peg_z     = LaunchConfiguration('peg_z')
-    cf        = LaunchConfiguration('cf')
-    ct        = LaunchConfiguration('ct')
+    cf         = LaunchConfiguration('cf')
+    ct         = LaunchConfiguration('ct')
+    controller = LaunchConfiguration('controller')
 
     # --- NODI ---
 
@@ -73,6 +74,7 @@ def launch_setup(context, *args, **kwargs):
             'w_min': auto_wmin, 'w_max': auto_wmax,
             'arm_l_x': auto_lx, 'arm_l_y': auto_ly, 'moment_const': auto_mc,
             'use_mbe': True,
+            'controller': controller,
         }]
     )
 
@@ -118,8 +120,8 @@ def generate_launch_description():
         # Modello PX4/Gazebo del GuaDrone
         DeclareLaunchArgument('model',          default_value='x500_depth',
                               description='Modello Gazebo del GuaDrone (es. x500_depth)'),
-        DeclareLaunchArgument('MPC_controller', default_value='1'),
-        DeclareLaunchArgument('controller',     default_value='2'),
+        DeclareLaunchArgument('controller', default_value='1',
+                              description='1: MPC come controllore (spinta e coppie), 0: MPC come planner (setpoint pos/vel)'),
         # Posa iniziale GuaDrone
         DeclareLaunchArgument('drone_x',   default_value='-4.0'),
         DeclareLaunchArgument('drone_y',   default_value='-53.0'),

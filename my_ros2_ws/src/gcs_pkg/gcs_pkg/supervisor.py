@@ -99,6 +99,9 @@ class SupervisorNode(Node):
         self.task_goal_pose_received = False
         self.mpc_ready = False
 
+        self.detachment_sent = False
+        self.return_home_sent = False
+
         # Flag conferma operatore (da tastiera)
         self._operator_confirmed = False
         self.msg_cnt = 0
@@ -140,7 +143,11 @@ class SupervisorNode(Node):
         cmd = msg.data.strip().lower()
         if cmd == 'ok':
             self._operator_confirmed = True
-            self.get_logger().info('Conferma operatore ricevuta.')
+            self.get_logger().info('Conferma operatore ricevuta ("ok").')
+        elif cmd == 'land':
+            self.get_logger().warn('COMANDO "land" RICEVUTO! Avvio immediato della sequenza di atterraggio.')
+            self.state = 'LANDING'
+            self._operator_confirmed = False
         elif cmd == 'stop':
             self.get_logger().error('COMANDO STOP RICEVUTO! Atterraggio d\'emergenza!')
             self.publish_command(self.cmd_pub_1, 1, VehicleCommand.VEHICLE_CMD_NAV_LAND)
@@ -335,33 +342,21 @@ class SupervisorNode(Node):
                 self.get_logger().info(f"In attesa che il drone interaction raggiunga la posizione di missione ed allineamento. D2: ({d2_x}, {d2_y}, {d2_z}) -> ({peg_target_x}, {peg_target_y}, {peg_target_z})")
 
         elif self.state == 'MISSION':
-            # Emergency monitoring
-            d1_fail = not self.drone1_mode.flag_armed or not self.drone1_mode.flag_control_offboard_enabled
-            d2_fail = not self.drone2_mode.flag_armed or not self.drone2_mode.flag_control_offboard_enabled
+            if self._check_emergency():
+                return
 
-            if d1_fail and self.drone2_mode.flag_armed:
-                self.get_logger().error("EMERGENZA: Drone 1 ha fallito. Atterraggio Drone 2!")
-                self.publish_command(self.cmd_pub_2, 2, VehicleCommand.VEHICLE_CMD_NAV_LAND)
-                self.state = 'EMERGENCY'
-            elif d2_fail and self.drone1_mode.flag_armed:
-                self.get_logger().error("EMERGENZA: Drone 2 ha fallito. Atterraggio Drone 1!")
-                self.publish_command(self.cmd_pub_1, 1, VehicleCommand.VEHICLE_CMD_NAV_LAND)
-                self.state = 'EMERGENCY'
-            elif not self.task_goal_pose_received and self.task_started:
+            if not self.task_goal_pose_received and self.task_started:
                 msg_peg_target = PoseStamped()
+                msg_peg_target.header.frame_id = 'world'
                 msg_peg_target.pose.position.x = float(self.contact_point[0])
                 #msg_peg_target.pose.position.y = float(self.contact_point[1]+1.5)   #-55.91 for contact with wall;-14 for testing teleoperation with cube, -1.91
                 msg_peg_target.pose.position.y = float(-55.95)
                 msg_peg_target.pose.position.z = float(self.contact_point[2])
                 
                 # Impostazione del target di yaw desiderato (in radianti)
-                # Esempio: rotazione di 90 gradi rispetto all'asse Z
                 target_yaw = self.mission_start_yaw # ENU
-                
-                # converto rpy in quaternione con scipy
                 rot = Rotation.from_euler('xyz', [0.0, 0.0, target_yaw])
-                quat = rot.as_quat() # Restituisce un array [x, y, z, w]
-                
+                quat = rot.as_quat()
                 msg_peg_target.pose.orientation.x = float(quat[0])
                 msg_peg_target.pose.orientation.y = float(quat[1])
                 msg_peg_target.pose.orientation.z = float(quat[2])
@@ -369,12 +364,145 @@ class SupervisorNode(Node):
                 
                 self.peg_target_pub.publish(msg_peg_target)
                 self.task_goal_pose_received = True
+                self.get_logger().info("Target di contatto inviato a Drone 2. Inizio fase di interazione a parete.")
+
+            if self.task_goal_pose_received:
+                if self._operator_confirmed:
+                    self.get_logger().info("Conferma operatore ricevuta: Fine interazione a parete. Passo a DETACHMENT.")
+                    self.state = 'DETACHMENT'
+                    self._operator_confirmed = False
+                    self.detachment_sent = False
+                    self.msg_cnt = 0
+                elif self.msg_cnt == 0:
+                    self.get_logger().info('In missione a parete. Digita "ok" per procedere al distacco (DETACHMENT) o "land" per atterrare.')
+                    self.msg_cnt += 1
+
+        elif self.state == 'DETACHMENT':
+            if self._check_emergency():
+                return
+
+            # Posizione corrente reale di Drone 2 in ENU
+            d2_local_ENU = self._M_NED2ENU @ np.array([self.drone2_local_pos.x, self.drone2_local_pos.y, self.drone2_local_pos.z])
+            d2_pos = np.array([d2_local_ENU[0] + self.peg_start_x,
+                               d2_local_ENU[1] + self.peg_start_y,
+                               d2_local_ENU[2] + self.peg_start_z])
+
+            if not self.detachment_sent:
+                # Calcola il target arretrando di 1.5m nella direzione opposta alla parete (asse z negativo del contatto)
+                detach_distance = 0.5  # [m] arretramento dal punto di contatto
+                detach_direction = -np.array([math.cos(self.mission_start_yaw), math.sin(self.mission_start_yaw), 0.0])
+                self.detach_target = d2_pos + detach_distance * detach_direction
+
+                peg_pose_target = PoseStamped()
+                peg_pose_target.header.frame_id = 'world'
+                peg_pose_target.pose.position.x = float(self.detach_target[0])
+                peg_pose_target.pose.position.y = float(self.detach_target[1])
+                peg_pose_target.pose.position.z = float(self.detach_target[2])
+                rot = Rotation.from_euler('xyz', [0.0, 0.0, self.mission_start_yaw])
+                quat = rot.as_quat()
+                peg_pose_target.pose.orientation.x = float(quat[0])
+                peg_pose_target.pose.orientation.y = float(quat[1])
+                peg_pose_target.pose.orientation.z = float(quat[2])
+                peg_pose_target.pose.orientation.w = float(quat[3])
+                self.peg_target_pub.publish(peg_pose_target)
+                self.detachment_sent = True
+                self.get_logger().info(f"Target trapezoidale di distacco inviato al Drone 2: {self.detach_target}. Drone 1 continua a seguire in MPC.")
+
+            # Verifica se Drone 2 ha raggiunto la posizione di distacco
+            d2_dist = np.linalg.norm(d2_pos - self.detach_target)
+
+            if d2_dist < 0.1 and self._operator_confirmed:
+                self.get_logger().info("Distacco completato + conferma operatore! Passo a RETURN_HOME (posa desiderata iniziale di hovering).")
+                self.state = 'RETURN_HOME'
+                self.return_home_sent = False
+                self._operator_confirmed = False
+                self.msg_cnt = 0
+            elif d2_dist < 0.2 and not self._operator_confirmed:
+                if self.msg_cnt == 0:
+                    self.get_logger().info('Drone 2 staccato dalla parete in sicurezza. In attesa "ok" per RETURN_HOME (posa hovering iniziale)...')
+                    self.msg_cnt += 1
+
+        elif self.state == 'RETURN_HOME':
+            if self._check_emergency():
+                return
+
+            home_target = np.array([self.peg_start_x, self.peg_start_y, self.takeoff_alt_2])
+            if not self.return_home_sent:
+                peg_pose_target = PoseStamped()
+                peg_pose_target.header.frame_id = 'world'
+                peg_pose_target.pose.position.x = float(home_target[0])
+                peg_pose_target.pose.position.y = float(home_target[1])
+                peg_pose_target.pose.position.z = float(home_target[2])
+                rot = Rotation.from_euler('xyz', [0.0, 0.0, self.mission_start_yaw])
+                quat = rot.as_quat()
+                peg_pose_target.pose.orientation.x = float(quat[0])
+                peg_pose_target.pose.orientation.y = float(quat[1])
+                peg_pose_target.pose.orientation.z = float(quat[2])
+                peg_pose_target.pose.orientation.w = float(quat[3])
+                self.peg_target_pub.publish(peg_pose_target)
+                self.return_home_sent = True
+                self.get_logger().info(f"Target di RITORNO inviato a Drone 2: {home_target}. Drone 1 continua a seguire in MPC.")
+
+            d2_local_ENU = self._M_NED2ENU @ np.array([self.drone2_local_pos.x, self.drone2_local_pos.y, self.drone2_local_pos.z])
+            d2_pos = np.array([d2_local_ENU[0] + self.peg_start_x,
+                               d2_local_ENU[1] + self.peg_start_y,
+                               d2_local_ENU[2] + self.peg_start_z])
+            d2_dist = np.linalg.norm(d2_pos - home_target)
+
+            if d2_dist < 0.25 and self._operator_confirmed:
+                self.get_logger().info("Droni sopra lo spawn di decollo + conferma operatore! Passo a LANDING.")
+                self.state = 'LANDING'
+                self._operator_confirmed = False
+                self.msg_cnt = 0
+            elif d2_dist < 0.25 and not self._operator_confirmed:
+                if self.msg_cnt == 0:
+                    self.get_logger().info('Drone 2 sopra la base di decollo. In attesa "ok" per LANDING...')
+                    self.msg_cnt += 1
+
+        elif self.state == 'LANDING':
+            # Stop MPC Task on Drone 1
+            msg_stop = Bool()
+            msg_stop.data = False
+            self.task_start_pub.publish(msg_stop)
+
+            # Comando NAV_LAND PX4 a entrambi i droni
+            self.publish_command(self.cmd_pub_1, 1, VehicleCommand.VEHICLE_CMD_NAV_LAND)
+            self.publish_command(self.cmd_pub_2, 2, VehicleCommand.VEHICLE_CMD_NAV_LAND)
+            self.get_logger().info("Comando di Atterraggio (VEHICLE_CMD_NAV_LAND) inviato a entrambi i droni. Attesa disarmo...")
+            self.state = 'DISARM_WAIT'
+
+        elif self.state == 'DISARM_WAIT':
+            d1_disarmed = not self.drone1_mode.flag_armed
+            d2_disarmed = not self.drone2_mode.flag_armed
+            if d1_disarmed and d2_disarmed:
+                self.get_logger().info("Entrambi i droni sono atterrati e DISARMATI. Missione completata con successo!")
+                self.state = 'MISSION_COMPLETE'
+
+        elif self.state == 'MISSION_COMPLETE':
+            pass
 
         elif self.state == 'EMERGENCY':
             # Keep sending land just in case
             self.get_logger().error("EMERGENZA: Atterraggio forzato per entrambi i droni")
             self.publish_command(self.cmd_pub_1, 1, VehicleCommand.VEHICLE_CMD_NAV_LAND)
             self.publish_command(self.cmd_pub_2, 2, VehicleCommand.VEHICLE_CMD_NAV_LAND)
+
+    def _check_emergency(self):
+        """Controlla se uno dei droni ha perso l'offboard o si e disarmato improvvisamente."""
+        d1_fail = not self.drone1_mode.flag_armed or not self.drone1_mode.flag_control_offboard_enabled
+        d2_fail = not self.drone2_mode.flag_armed or not self.drone2_mode.flag_control_offboard_enabled
+
+        if d1_fail and self.drone2_mode.flag_armed:
+            self.get_logger().error("EMERGENZA: Drone 1 ha fallito. Atterraggio Drone 2!")
+            self.publish_command(self.cmd_pub_2, 2, VehicleCommand.VEHICLE_CMD_NAV_LAND)
+            self.state = 'EMERGENCY'
+            return True
+        elif d2_fail and self.drone1_mode.flag_armed:
+            self.get_logger().error("EMERGENZA: Drone 2 ha fallito. Atterraggio Drone 1!")
+            self.publish_command(self.cmd_pub_1, 1, VehicleCommand.VEHICLE_CMD_NAV_LAND)
+            self.state = 'EMERGENCY'
+            return True
+        return False
 
 def main(args=None):
     rclpy.init(args=args)

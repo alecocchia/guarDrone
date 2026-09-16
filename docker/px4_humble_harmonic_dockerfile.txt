@@ -74,16 +74,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-joint-state-publisher-gui \
     ros-humble-xacro \
     ros-humble-plotjuggler-ros \
-    ros-humble-mavros \
-    ros-humble-mavros-extras \
-    ros-humble-mavros-msgs \
     ros-humble-octomap \
     ros-humble-octomap-msgs \
     ros-humble-gazebo-msgs* \
  && rm -rf /var/lib/apt/lists/*
-
-RUN wget https://raw.githubusercontent.com/mavlink/mavros/master/mavros/scripts/install_geographiclib_datasets.sh \
-    && bash ./install_geographiclib_datasets.sh   
 
 RUN apt-get update && apt-get install -y --no-install-recommends \     
     libcanberra-gtk-module libcanberra-gtk3-module \

@@ -29,11 +29,19 @@ pkg_check_modules(libusb REQUIRED libusb-1.0)
 find_package(ament_cmake REQUIRED)
 include(FetchContent)
 
-# Downdload SDK binaries
+# Download SDK binaries (usa archivio locale se presente, altrimenti scarica)
 #------------------------
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/sdk-${FD_SDK_VERSION}-linux-x86_64-gcc.tar.gz")
+  message(STATUS "[fd_sdk_vendor] Trovato archivio SDK locale in ${CMAKE_CURRENT_SOURCE_DIR}")
+  set(FD_SDK_URL "${CMAKE_CURRENT_SOURCE_DIR}/sdk-${FD_SDK_VERSION}-linux-x86_64-gcc.tar.gz")
+else()
+  message(STATUS "[fd_sdk_vendor] Download SDK da remote URL...")
+  set(FD_SDK_URL "https://downloads.forcedimension.com/sdk/sdk-${FD_SDK_VERSION}-linux-x86_64-gcc.tar.gz")
+endif()
+
 fetchcontent_declare(
   fd_sdk_binaries
-  URL https://downloads.forcedimension.com/sdk/sdk-${FD_SDK_VERSION}-linux-x86_64-gcc.tar.gz
+  URL ${FD_SDK_URL}
 )
 fetchcontent_makeavailable(fd_sdk_binaries)
 

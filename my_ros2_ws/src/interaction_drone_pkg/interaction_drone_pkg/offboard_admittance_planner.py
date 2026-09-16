@@ -88,8 +88,8 @@ class OffboardAdmittancePlanner(Node):
         self.declare_parameter('start_x', 0.0)
         self.declare_parameter('start_y', 0.0)
         self.declare_parameter('start_z', 0.0)
-        self.declare_parameter('v_max', 0.5)
-        self.declare_parameter('a_max', 1.0)
+        self.declare_parameter('v_max', 0.2)
+        self.declare_parameter('a_max', 0.2)
         self.declare_parameter('dt', 0.01)   # 100 Hz
 
         # -- Parametri ammettenza --
