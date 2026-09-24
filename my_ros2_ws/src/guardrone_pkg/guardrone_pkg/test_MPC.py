@@ -33,6 +33,14 @@ for p in search_paths:
 
 import casadi as ca
 from scipy.spatial.transform import Rotation
+try:
+    import mpl_toolkits
+    _local_mpl = '/usr/local/lib/python3.10/dist-packages/mpl_toolkits'
+    if os.path.exists(_local_mpl) and _local_mpl not in mpl_toolkits.__path__:
+        mpl_toolkits.__path__.insert(0, _local_mpl)
+    from mpl_toolkits.mplot3d import Axes3D
+except Exception:
+    pass
 import matplotlib
 # Se DISPLAY non è definito, imposta backend non interattivo 'Agg' per salvare i grafici
 if not os.environ.get('DISPLAY'):
@@ -43,12 +51,12 @@ import matplotlib.pyplot as plt
 from guardrone_pkg.drone_MPC_settings import (
     setup_model, setup_initial_conditions, configure_mpc, set_initial_state, build_yref_online
 )
-from utils_pkg.common import quat_to_RPY, g0, wrap_pi
+from utils_pkg.common import quat_to_RPY, g0, wrap_pi, traj_plot3D_animated_with_orientation
 from utils_pkg.utils_np import min_angle, cylindrical_to_cartesian
 from utils_pkg.planner import generate_trapezoidal_trajectory
 
 
-def run_standalone_test(sim_time=20.0, plot_save_path=None):
+def run_standalone_test(sim_time=30.0, plot_save_path=None, save_gif=False):
     if plot_save_path is None:
         plot_save_path = os.path.join(current_dir, 'mpc_test_results.png')
     print("=" * 60)
@@ -74,7 +82,7 @@ def run_standalone_test(sim_time=20.0, plot_save_path=None):
     # 2. Parametri tempo e orizzonte
     Hz = 100.0
     ts = 1.0 / Hz          # 10 ms
-    N_horiz = 20         # Orizzonte di predizione (150 ms)
+    N_horiz = 15         # Orizzonte di predizione (150 ms)
     Tp = N_horiz * ts
     n_steps = int(sim_time / ts)
 
@@ -102,9 +110,9 @@ def run_standalone_test(sim_time=20.0, plot_save_path=None):
     x0, x0_rpy = setup_initial_conditions(start_x, start_y, start_z, start_roll, start_pitch, start_yaw)
 
     # 3b. Generazione traiettoria trapezoidale per il target da punto A a punto B
-    v_target_max = 0.2    # [m/s] velocità massima target
-    a_target_max = 0.1   # [m/s^2] accelerazione massima target
-    delay_start_target = 1.5  # [s] attesa iniziale prima della partenza del target
+    v_target_max = 0.1    # [m/s] velocità massima target
+    a_target_max = 0.2   # [m/s^2] accelerazione massima target
+    delay_start_target = 1  # [s] attesa iniziale prima della partenza del target
 
     _, p_trap, _ = generate_trapezoidal_trajectory(
         np.hstack([p_A, [0, 0, 0]]),
@@ -122,68 +130,80 @@ def run_standalone_test(sim_time=20.0, plot_save_path=None):
         p_obj_hist[idx_start_mov:, :] = p_trap[:n_steps - idx_start_mov]
 
     v_obj_hist = np.gradient(p_obj_hist, ts, axis=0)
+    rpy_obj_hist = np.zeros((n_steps, 3))
     p_obj = p_A.copy()
 
-    # 4. Pesi della funzione di costo (identici a MPC_planner_node.py)
-    R_CYL = 0.1
-    B_CYL = 0.1
-    Z_CYL = 0.2
-    Y_CYL = np.pi / 12
-
-    V = np.array([0.4, 0.4, 0.3])
-    ANG_DOT = np.array([0.15, 0.15, 0.5])
-    ACC = np.array([0.6, 0.6, 0.3])
-    ACC_ANG = np.array([0.5, 0.5, 1])
-
+    # 4. Pesi della funzione di costo — formulazione cartesiana
+    # Range cartesiani: errore massimo atteso su x, y, z [m] e yaw [rad]
+    X_CART = 0.2
+    Y_CART = 0.2
+    Z_CART = 0.2
+    Y_CYL  = np.pi / 3   
+    E_INT_CART = np.array([0.1, 0.1, 0.1])
+    
+    V = np.array([0.3, 0.3, 0.3])
+    ANG_DOT = np.array([0.15, 0.15, 0.3])
+    ACC = np.array([0.4, 0.4, 0.4])
+    ACC_ANG = np.array([0.4, 0.4, 0.8])
+    
     PesoVis = 10.0
-    PesoRadius = PesoVis
-    PesoBeta = PesoVis
-    PesoZ = PesoVis
+    PesoX   = PesoVis
+    PesoY   = PesoVis
+    PesoZ   = PesoVis
     PesoYaw = PesoVis
-
-    PesoVel = PesoVis / 5
-    PesoAngVel = PesoVis / 20 
-    PesoAcc = PesoVis / 10
-    PesoAngAcc = PesoVis / 40
-    PesoForce = PesoVis /10
+    PesoInt = PesoVis/10
+    PesoVel    = PesoVis / 10
+    PesoAngVel = PesoVis / 50
+    PesoAcc    = PesoVis / 20
+    PesoAngAcc = PesoVis / 100
+    PesoForce  = PesoVis / 100
     PesoTorque = PesoForce 
-
-    Q_cyl = np.diag([
-        PesoRadius / R_CYL**2,
-        PesoBeta / B_CYL**2,
-        PesoZ / Z_CYL**2,
+    # Q cartesiana: [ex, ey, ez, yaw_err]
+    Q_cart = np.diag([
+        PesoX   / X_CART**2,
+        PesoY   / Y_CART**2,
+        PesoZ   / Z_CART**2,
         PesoYaw / Y_CYL**2
     ])
-    Q_vel = np.diag([PesoVel] * 3) / np.array(V)**2
+    Q_int = np.diag([PesoInt]*3) / np.array(E_INT_CART)**2
+    Q_vel     = np.diag([PesoVel] * 3) / np.array(V)**2
     Q_ang_dot = np.diag([PesoAngVel] * 3) / np.array(ANG_DOT)**2
-    Q_acc = np.diag([PesoAcc] * 3) / np.array(ACC)**2
+    Q_acc     = np.diag([PesoAcc] * 3) / np.array(ACC)**2
     Q_acc_ang = np.diag([PesoAngAcc] * 3) / np.array(ACC_ANG)**2
-
-    R_f = np.diag([PesoForce / u_f_max**2])
+    R_f   = np.diag([PesoForce / u_f_max**2])
     R_tau = np.diag([
         PesoTorque / u_tau_x**2,
         PesoTorque / u_tau_y**2,
         PesoTorque / u_tau_z**2
     ])
+    R   = ca.diagcat(R_f, R_tau)
+    Q   = ca.diagcat(Q_cart,Q_int, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
+    Q_e = ca.diagcat(10 * Q_cart, 10 * Q_int, 10 * Q_vel, 10 * Q_ang_dot, 1 * Q_acc, 1 * Q_acc_ang)
 
-    R = ca.diagcat(R_f, R_tau)
-    Q = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
-    Q_e = ca.diagcat(10 * Q_cyl, 10 * Q_vel, 5 * Q_ang_dot, 1 * Q_acc, 1 * Q_acc_ang)
-
+        
     u_min = np.array([0.0, -u_tau_x, -u_tau_y, -u_tau_z])
     u_max = np.array([u_f_max, u_tau_x, u_tau_y, u_tau_z])
 
-    W = ca.diagcat(Q, R).full()
+    W   = ca.diagcat(Q, R).full()
     W_e = Q_e.full()
+
+    # Target cartesiano iniziale (conversione cyl→cart avviene qui, non nel solver)
+    p_target_init = p_A + cylindrical_to_cartesian(cyl_ref)
 
     print("[INFO] Configurazione del solver Acados...")
     ocp_solver, N_horiz, nx, nu, y_idx, ny, ny_e = configure_mpc(
         model=model, x0=x0,
-        p_obj=np.array([p_A]), Tf=Tp, ts=ts,
+        p_target=p_target_init, Tf=Tp, ts=ts,
         W=W, W_e=W_e, u_min=u_min, u_max=u_max,
-        cyl_ref=cyl_ref
+        yaw_des=yaw0
     )
     print("[INFO] Solver Acados configurato con successo.")
+
+    # Diagnostica condizionamento matrice pesi W
+    cond = np.linalg.cond(W)
+    w_diag = np.diag(W)
+    print(f"[INFO] Condition number di W: {cond:.2e}")
+    print(f"[INFO] W min={w_diag.min():.2e} (idx {w_diag.argmin()}), max={w_diag.max():.2e} (idx {w_diag.argmax()})")
 
     # 5. Costruzione integratore RK4 della dinamica del drone
     # f_expl_expr modella: p_dot = v, v_dot = 1/m*(R*Fz + F_ext) - g, q_dot, w_dot, e_int_dot
@@ -203,11 +223,11 @@ def run_standalone_test(sim_time=20.0, plot_save_path=None):
 
     # 6. Preparazione loop di simulazione a ciclo chiuso
     xk = x0.copy()
-    params = np.zeros(13)
-    params[3:6] = cyl_ref
-    params[6] = yaw_ref
-    params[7:10] = np.zeros(3)   # F_ext
-    params[10:13] = np.zeros(3)  # Tau_ext
+    # Parametri (10): [p_target(3), yaw_des(1), F_ext(3), Tau_ext(3)]
+    params = np.zeros(10)
+    params[3]    = yaw0
+    params[4:7]  = np.zeros(3)   # F_ext
+    params[7:10] = np.zeros(3)   # Tau_ext
 
     yref_val = build_yref_online(y_idx, np.zeros(3), u_ref=u_hover)
     yref_e = yref_val[:ny_e]
@@ -260,10 +280,15 @@ def run_standalone_test(sim_time=20.0, plot_save_path=None):
         # Imposta lo stato iniziale per questo passo nel solver
         set_initial_state(ocp_solver, xk)
 
-        # Aggiorna parametri lungo l'orizzonte (previsione della posizione futura dell'oggetto)
+        # Aggiorna p_target e yaw_des sull'orizzonte (precalcolati fuori dal solver)
         for i in range(N_horiz + 1):
             k_future = min(k + i, n_steps - 1)
-            params[0:3] = p_obj_hist[k_future]
+            p_target_k = p_obj_hist[k_future] + cylindrical_to_cartesian(cyl_ref)
+            # Direzione verso l'oggetto (norma = r_cyl > 0, mai singolarità)
+            p_diff_k = p_obj_hist[k_future] - p_target_k
+            yaw_des_k = wrap_pi(np.arctan2(p_diff_k[1], p_diff_k[0]) + yaw_ref)
+            params[0:3] = p_target_k
+            params[3]    = yaw_des_k
             ocp_solver.set(i, "p", params)
 
         # Risoluzione MPC
@@ -455,7 +480,19 @@ def run_standalone_test(sim_time=20.0, plot_save_path=None):
     fig_kin.savefig(plot_kin_save_path, dpi=150)
     print(f"[SUCCESS] Grafici cinematica salvati con successo in: {os.path.abspath(plot_kin_save_path)}")
 
-    # Se c'è un server X attivo e non siamo headless, mostriamo la finestra
+    # 9. Animazione 3D traiettorie e orientamenti (Drone vs Oggetto)
+    if save_gif:
+        plot_anim_save_path = plot_save_path.replace('.png', '_animation.gif')
+        print(f"[INFO] Creazione animazione 3D su '{plot_anim_save_path}'...")
+        # 1 frame ogni 0.1s (10 Hz)
+        anim_step = max(1, int(0.1 / ts))
+        ani = traj_plot3D_animated_with_orientation(
+            t_hist, x_hist[:, 0:3], rpy_hist, p_obj_hist, rpy_obj_hist,
+            interval=30, step=anim_step, axis_length=0.2,
+            save_path=plot_anim_save_path, show=False
+        )
+
+    # Se c'è un server X attivo e non siamo headless, mostriamo le finestre
     if os.environ.get('DISPLAY'):
         try:
             plt.show()

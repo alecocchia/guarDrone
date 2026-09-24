@@ -208,7 +208,7 @@ RUN pip3 install --upgrade --break-system-packages pip setuptools wheel \
     && pip3 install --break-system-packages /opt/acados/interfaces/acados_template
 
 RUN mkdir -p /opt/acados/bin && \
-    curl -L https://github.com/acados/tera_renderer/releases/download/v0.2.0/t_renderer-v0.2.0-linux-amd64 \
+    curl -L https://github.com/acados/tera_renderer/releases/download/v0.2.1/t_renderer-v0.2.1-linux-amd64 \
     -o /opt/acados/bin/t_renderer && \
     chmod +x /opt/acados/bin/t_renderer
    

@@ -5,7 +5,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from geometry_msgs.msg import PoseStamped, TwistStamped, Wrench, Vector3Stamped, Vector3
-from std_msgs.msg import Float64MultiArray, Bool, Float64
+from std_msgs.msg import Float64MultiArray, Bool, Float64, String
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 from utils_pkg.utils_np import cylindrical_to_cartesian
@@ -81,6 +81,8 @@ class Logger(Node):
         self.logging_enabled = False
         self.last_log_time   = None
         self.task_start_time = None
+        self.phase_events    = []      # [(timestamp_sec, state_name)]
+        self.last_haptic_time = None   # Timestamp ultimo messaggio da /haptic_ref
         self._saved          = False   # Flag anti-doppio-salvataggio
         self._d1_was_armed   = False   # Tracciamento arm Drone 1
         self._d2_was_armed   = False   # Tracciamento arm Drone 2
@@ -119,6 +121,7 @@ class Logger(Node):
         self.online_ref      = []
         self.online_cyl_ref  = []
         self.haptic_force    = []
+        self.haptic_active   = []      # 1.0 se haptic attivo (tasto premuto), 0.0 altrimenti
         self.peg_ext_force   = []
         self.estimated_wrench = []
         self.delta_p         = []
@@ -156,7 +159,7 @@ class Logger(Node):
         self.last_optimal_wrench = [0.0, 0.0, 0.0, 0.0]
         self.last_w_target     = [0.0, 0.0, 0.0, 0.0]
         self.last_peg_pos      = [0.0, 0.0, 0.0]
-        self.last_online_ref   = [0.0, 0.0, 0.0]
+        self.last_online_ref   = [0.0, 0.0, 0.0, 0.0]  # [r, beta, z, yaw_offset]
         self.last_haptic_force      = [0.0, 0.0, 0.0]
         self.last_peg_ext_force     = [0.0, 0.0, 0.0]
         self.last_estimated_wrench  = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -204,13 +207,14 @@ class Logger(Node):
         self.create_subscription(PoseStamped,   '/drone_cam_pose', self.cb_drone_cam_pose, 10)
         self.create_subscription(Vector3,          '/integral_action',self.cb_integral_action,10)
 
-        # Riferimenti drone
+        # Riferimenti drone (da offboard_trajectory_planner in decollo, da MPC in missione)
         self.create_subscription(PoseStamped,      '/optimal_drone_pose',      self.cb_ref_pose,       10)
-        # self.create_subscription(PoseStamped,      '/camera_ref_pose',         self.cb_ref_pose,       10)  # RIMOSSO: sovrascriveva pref_pos (riferimento drone) con il riferimento camera
+        self.create_subscription(PoseStamped,      '/camera_ref_pose',         self.cb_ref_pose,       10)
         self.create_subscription(TwistStamped,     '/velocity_reference',      self.cb_ref_twist,      10)
-        self.create_subscription(Wrench,           '/optimal_wrench',          self.cb_optimal_wrench,     10)
+        self.create_subscription(Wrench,           '/optimal_wrench',          self.cb_optimal_wrench, 10)
         self.create_subscription(Wrench,           '/wrench_reference',        self.cb_wrench_target,  10)
         self.create_subscription(Float64MultiArray,'/online_cylindrical_ref',  self.cb_online_ref,     10)
+        self.create_subscription(Float64MultiArray,'/pov_target',             self.cb_online_ref,     10)
 
         # Posizione peg nel mondo (da MPC, già ENU)
         self.create_subscription(PoseStamped, '/peg_pose', self.cb_peg_pose, 10)
@@ -228,6 +232,8 @@ class Logger(Node):
         # Altro
         self.create_subscription(Float64MultiArray, '/fd/fd_controller/commands',
                                  self.cb_haptic_force, 10)
+        self.create_subscription(Float64MultiArray, '/haptic_ref',
+                                 self.cb_haptic_ref, 10)
         self.create_subscription(Wrench,        self.ft_topic,       self.cb_peg_ft,           10)
         self.create_subscription(Wrench,        '/estimated_wrench', self.cb_estimated_wrench, 10)
         self.create_subscription(Vector3Stamped,'/delta_p',          self.cb_delta_p,          10)
@@ -236,6 +242,7 @@ class Logger(Node):
         # Trigger
         self.create_subscription(Bool, '/logging/start', self.cb_logging_start, qos_latched)
         self.create_subscription(Bool, '/mpc_task/start', self.cb_task_start,   qos_latched)
+        self.create_subscription(String, '/supervisor/state', self.cb_supervisor_state, qos_latched)
         self.create_subscription(Float64, '/mpc_solve_time', self.cb_solve_time, 10)
 
         # Monitoraggio Kill Switch / Disarm da radiocomando per entrambi i droni
@@ -299,6 +306,10 @@ class Logger(Node):
         if len(msg.data) >= 3:
             self.last_haptic_force = [msg.data[0], msg.data[1], msg.data[2]]
 
+    def cb_haptic_ref(self, _msg: Float64MultiArray):
+        """Registra l'istante di ricezione di comandi dall'haptic device."""
+        self.last_haptic_time = self.now_sec()
+
     def cb_peg_ft(self, msg: Wrench):
         self.last_peg_ext_force = [msg.force.x, msg.force.y, msg.force.z]
 
@@ -318,9 +329,10 @@ class Logger(Node):
         p = msg.pose.position
         o = msg.pose.orientation
         self.last_pref_pos = [p.x, p.y, p.z]
-        # RPY dal quaternione (già in ENU — semplice decomposizione, non trasformazione)
-        self.last_pref_rpy = list(Rot.from_quat([o.x, o.y, o.z, o.w]).as_euler('xyz'))
-        self.last_pref_q   = [o.w, o.x, o.y, o.z]
+        # RPY dal quaternione (già in ENU)
+        if abs(o.x) + abs(o.y) + abs(o.z) + abs(o.w) > 1e-6:
+            self.last_pref_rpy = list(Rot.from_quat([o.x, o.y, o.z, o.w]).as_euler('xyz'))
+            self.last_pref_q   = [o.w, o.x, o.y, o.z]
         self.t_ref.append(self.now_sec())
 
     def cb_ref_twist(self, msg: TwistStamped):
@@ -334,7 +346,13 @@ class Logger(Node):
         self.last_peg_pos = [p.x, p.y, p.z]
 
     def cb_online_ref(self, msg: Float64MultiArray):
-        self.last_online_ref = list(msg.data)[:3]
+        d = list(msg.data)
+        # Normalizza sempre a 4 elementi [r, beta, z, yaw_offset]
+        if len(d) >= 4:
+            self.last_online_ref = d[:4]
+        elif len(d) == 3:
+            self.last_online_ref = d[:3] + [0.0]  # padding yaw_offset
+        # Ignora messaggi con meno di 3 elementi
 
     # ================================================================== #
     #  Callbacks — stato attuale drone peg (ENU)                          #
@@ -384,6 +402,13 @@ class Logger(Node):
         if msg.data and self.task_start_time is None:
             self.task_start_time = self.now_sec()
             self.get_logger().info('Ricevuto start task, salvo timestamp.')
+
+    def cb_supervisor_state(self, msg: String):
+        state_name = msg.data.strip()
+        t_now = self.now_sec()
+        if not self.phase_events or self.phase_events[-1][1] != state_name:
+            self.phase_events.append((t_now, state_name))
+            self.get_logger().info(f'[FSM] Transizione registrata: {state_name} a t={t_now:.3f} s')
 
     def cb_solve_time(self, msg: Float64):
         self.last_solve_time = float(msg.data)
@@ -440,6 +465,8 @@ class Logger(Node):
         self.online_ref.append(list(self.last_online_ref))
         self.online_cyl_ref.append(list(self.last_online_ref))   # alias
         self.haptic_force.append(list(self.last_haptic_force))
+        is_haptic = 1.0 if (self.last_haptic_time is not None and (t_now - self.last_haptic_time < 0.25)) else 0.0
+        self.haptic_active.append(is_haptic)
         self.peg_ext_force.append(list(self.last_peg_ext_force))
         self.estimated_wrench.append(list(self.last_estimated_wrench))
         self.delta_p.append(list(self.last_delta_p))
@@ -472,6 +499,15 @@ class Logger(Node):
         T_rel      = T - T[0]
         t_start_rel = (self.task_start_time - T[0]) if self.task_start_time else -1.0
 
+        # Calcolo tempi relativi delle transizioni FSM rispetto all'avvio del logging (T[0])
+        phase_times = []
+        phase_names = []
+        for t_ev, name in self.phase_events:
+            t_rel = float(t_ev - T[0])
+            if t_rel >= -0.5:
+                phase_times.append(max(0.0, t_rel))
+                phase_names.append(name)
+
         # Tutti gli array sono già in ENU/FLU — nessuna trasformazione necessaria
         pos    = np.asarray(self.pos)
         q      = np.asarray(self.q)
@@ -502,7 +538,7 @@ class Logger(Node):
         # ---- Target cartesiano telecamera (geometria semplice da dati già loggati) ----
         online_cyl_ref = np.asarray(self.online_cyl_ref)
         peg_pos_arr    = np.asarray(self.peg_pos)
-        p_cam_target   = cylindrical_to_cartesian(online_cyl_ref, p_origin=peg_pos_arr)
+        p_cam_target   = cylindrical_to_cartesian(online_cyl_ref[:, :3], p_origin=peg_pos_arr)
 
         out = dict(
             t=T_rel, t_ref=np.asarray(self.t_ref),
@@ -516,6 +552,7 @@ class Logger(Node):
             optimal_wrench=np.asarray(self.optimal_wrench),
             wrench_target=np.asarray(self.wrench_target),
             haptic_force=np.asarray(self.haptic_force),
+            haptic_active=np.asarray(self.haptic_active),
             peg_pos=peg_pos_arr,
             online_ref=np.asarray(self.online_ref),
             online_cyl_ref=online_cyl_ref,
@@ -543,7 +580,9 @@ class Logger(Node):
             mass=self.mass,
             solve_time=np.asarray(self.solve_time),
             task_start_time=np.array([t_start_rel]),
-            task_end_time=np.array([T_rel[-1]])  # ultimo campione = momento del kill
+            task_end_time=np.array([T_rel[-1]]),  # ultimo campione = momento del kill
+            phase_times=np.array(phase_times, dtype=float),
+            phase_names=np.array(phase_names, dtype=object)
         )
 
         import os

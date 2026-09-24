@@ -51,9 +51,12 @@ def launch_setup(context, *args, **kwargs):
             'peg_start_x': peg_x,
             'peg_start_y': peg_y,
             'peg_start_z': peg_z,
-            # Offset z camera nel body frame: il drone body viene comandato a
-            # takeoff_alt_1 - cam_z_offset così la camera si trova esattamente a takeoff_alt_1
+            # Offset camera nel body frame
+            'cam_offset_x': auto_cam[0],
+            'cam_offset_y': auto_cam[1],
             'cam_z_offset': auto_cam[2],
+            'fov_h_deg': 80.0,
+            'fov_v_deg': 60.0
         }],
     )
 
@@ -96,7 +99,7 @@ def launch_setup(context, *args, **kwargs):
             'peg_start_z': peg_z,
             'cam_offset_x': auto_cam[0],
             'cam_offset_y': auto_cam[1],
-            'cam_offset_z': auto_cam[2],
+            'cam_offset_z': auto_cam[2]
         }]
     )
 

@@ -12,12 +12,17 @@ for p in [current_dir, os.path.join(ws_src_dir, 'utils_pkg'), '/root/my_ros2_ws/
 
 from utils_pkg.utils_np import wrap_pi, cylindrical_to_cartesian
 
-def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, fignum=None, task_start=-1.0, task_end=-1.0):
+def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, fignum=None, task_start=-1.0, task_end=-1.0, phases=None, haptic_intervals=None):
     """Generazione grafici ad alta leggibilità con palette moderna Tableau, griglia discreta e marker eleganti."""
-    plt.rcParams.update({"text.usetex": use_tex, "font.family": "serif"})
+    plt.rcParams.update({"text.usetex": use_tex, "font.family": "serif", "axes.ymargin": 0.15})
+    if phases is None and hasattr(myPlot, 'default_phases'):
+        phases = myPlot.default_phases
+    if haptic_intervals is None and hasattr(myPlot, 'default_haptic_intervals'):
+        haptic_intervals = myPlot.default_haptic_intervals
+
     n = len(data_list)
     nrows = int(np.ceil(n / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(12.5, 3.4 * nrows), squeeze=False, num=fignum)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(12.5, 3.0 * nrows + 0.6), squeeze=False, num=fignum)
     fig.patch.set_facecolor('#ffffff')
     if fignum is not None:
         try:
@@ -35,13 +40,46 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
     c_start = '#2ca02c'   # Emerald green
     c_end = '#7f7f7f'     # Slate gray
     
+    # Mappatura stili grafici per ciascuna fase della missione FSM
+    phase_style_map = {
+        'ARM_OFFBOARD':        {'color': '#64748b', 'linestyle': ':',  'label': 'Arm & Offboard'},
+        'TAKEOFF_MONITOR':     {'color': '#0284c7', 'linestyle': '--', 'label': 'Takeoff'},
+        'MISSION_PREPARATION': {'color': '#f59e0b', 'linestyle': '--', 'label': 'Mission Prep'},
+        'MISSION':             {'color': '#16a34a', 'linestyle': '-',  'label': 'Mission'},
+        'DETACHMENT':          {'color': '#9333ea', 'linestyle': '--', 'label': 'Detachment'},
+        'RETURN_HOME':         {'color': '#2563eb', 'linestyle': '--', 'label': 'Return Home'},
+        'LANDING':             {'color': '#dc2626', 'linestyle': ':',  'label': 'Landing'},
+        'EMERGENCY':           {'color': '#b91c1c', 'linestyle': '-.', 'label': 'Emergency'},
+        'Mission Start':       {'color': '#2ca02c', 'linestyle': '--', 'label': 'Mission Start'},
+        'Mission End':         {'color': '#7f7f7f', 'linestyle': ':',  'label': 'Mission End'},
+    }
+    fallback_colors = ['#0284c7', '#f59e0b', '#16a34a', '#9333ea', '#2563eb', '#dc2626', '#64748b']
+
+    # Identifica l'intervallo temporale della fase MISSION per l'evidenziazione con ombreggiatura
+    mission_t_start = None
+    mission_t_end = None
+    if phases:
+        for idx_p, (pt, pname) in enumerate(phases):
+            if pname == 'MISSION' and mission_t_start is None:
+                mission_t_start = pt
+                if idx_p + 1 < len(phases):
+                    mission_t_end = phases[idx_p + 1][0]
+
     for i in range(n):
         ax = axes[i]
         time_plot = time[:len(data_list[i]['sim'])]
 
         # Ombreggiatura leggera per evidenziare la durata della missione attiva
-        if task_start > 0 and task_end > task_start:
+        if mission_t_start is not None and mission_t_end is not None:
+            ax.axvspan(mission_t_start, mission_t_end, color='#16a34a', alpha=0.04, zorder=0)
+        elif task_start > 0 and task_end > task_start:
             ax.axvspan(task_start, task_end, color='#2ca02c', alpha=0.04, zorder=0)
+
+        # Ombreggiatura intervalli di utilizzo dell'haptic device (rosso chiaro)
+        if haptic_intervals:
+            for idx_h, (t_h_start, t_h_end) in enumerate(haptic_intervals):
+                ax.axvspan(t_h_start, t_h_end, color='#ef4444', alpha=0.15,
+                           label='Haptic Active' if idx_h == 0 else None, zorder=0)
 
         # Plot segnale effettivo
         ax.plot(time_plot, data_list[i]['sim'], color=c_actual, label='Actual', linewidth=1.7, zorder=3)
@@ -54,11 +92,24 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
             else:
                 ax.plot(time_plot, ref_data[:len(time_plot)], color=c_ref, linestyle='--', label='Reference', linewidth=1.3, alpha=0.85, zorder=2)
 
-        # Indicatori inizio e fine missione
-        if task_start > 0:
-            ax.axvline(x=task_start, color=c_start, linestyle='--', linewidth=1.3, alpha=0.75, label='Mission Start')
-        if task_end > 0:
-            ax.axvline(x=task_end, color=c_end, linestyle=':', linewidth=1.3, alpha=0.75, label='Mission End')
+        # Indicatori di transizione delle fasi di missione
+        if phases:
+            for idx_p, (pt, pname) in enumerate(phases):
+                st = phase_style_map.get(pname, {
+                    'color': fallback_colors[idx_p % len(fallback_colors)],
+                    'linestyle': '--',
+                    'label': pname
+                })
+                if pt >= 0:
+                    ax.axvline(x=pt, color=st['color'], linestyle=st['linestyle'],
+                               linewidth=1.3 if pname == 'MISSION' else 1.1,
+                               alpha=0.85 if pname == 'MISSION' else 0.70,
+                               label=st['label'])
+        else:
+            if task_start > 0:
+                ax.axvline(x=task_start, color=c_start, linestyle='--', linewidth=1.3, alpha=0.75, label='Mission Start')
+            if task_end > 0:
+                ax.axvline(x=task_end, color=c_end, linestyle=':', linewidth=1.3, alpha=0.75, label='Mission End')
         
         ax.set_title(labels[i], fontsize=10.5, fontweight='semibold', color='#0f172a', pad=4)
         ax.set_xlabel('Time [s]', fontsize=9, color='#334155')
@@ -70,13 +121,42 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
             spine.set_color('#cbd5e1')
             spine.set_linewidth(0.8)
 
-        ax.legend(loc='upper right', fontsize=8, frameon=True, facecolor='white', framealpha=0.88, edgecolor='#e2e8f0')
-    
     for j in range(i + 1, len(axes)):
         fig.delaxes(axes[j])
-        
-    fig.suptitle(title, fontsize=13.5, fontweight='bold', color='#0f172a', y=0.98)
-    plt.tight_layout(rect=[0, 0.02, 1, 0.96])
+
+    # Legenda unica condivisa posizionata all'esterno in alto (sotto il titolo)
+    handles_dict = {}
+    for ax in axes[:n]:
+        h, l = ax.get_legend_handles_labels()
+        for handle, label in zip(h, l):
+            if label not in handles_dict and label and not label.startswith('_'):
+                handles_dict[label] = handle
+
+    # Margine superiore e posizionamento legenda adattivi
+    if len(handles_dict) > 5:
+        top_rect = 0.79 if nrows == 1 else 0.86
+        leg_y = 0.88 if nrows == 1 else 0.925
+    else:
+        top_rect = 0.83 if nrows == 1 else 0.89
+        leg_y = 0.89 if nrows == 1 else 0.93
+    title_y = 0.98 if nrows == 1 else 0.99
+
+    if handles_dict:
+        fig.legend(
+            list(handles_dict.values()),
+            list(handles_dict.keys()),
+            loc='upper center',
+            bbox_to_anchor=(0.5, leg_y),
+            ncol=min(len(handles_dict), 5),
+            frameon=True,
+            facecolor='white',
+            framealpha=0.92,
+            edgecolor='#cbd5e1',
+            fontsize=8.5
+        )
+
+    fig.suptitle(title, fontsize=13.0, fontweight='bold', color='#0f172a', y=title_y)
+    plt.tight_layout(rect=[0, 0.02, 1, top_rect])
     
     if block:
         plt.show()
@@ -121,23 +201,96 @@ def main():
     task_end = float(np.asarray(data['task_end_time']).flat[0]) if indata('task_end_time') else -1.0
     print(f"[DEBUG] task_end_time presente: {indata('task_end_time')}, value used: {task_end:.3f} s")
 
-    # --- Filling riferimenti pre-task ---
-    # Prima del task_start i riferimenti MPC non sono ancora pubblicati (valgono 0).
-    # Li riempiamo con il primo valore valido post-task per eliminare la discontinuità visiva.
-    def fill_pre_task(arr, idx_s):
-        """Sostituisce i campioni pre-task con il primo valore valido post-task."""
-        if idx_s > 0 and idx_s < len(arr):
-            arr[:idx_s] = arr[idx_s]
+    # --- Caricamento fasi FSM registrate dal supervisore ---
+    phases = []
+    if indata('phase_times') and indata('phase_names'):
+        p_times = np.atleast_1d(data['phase_times'])
+        p_names = np.atleast_1d(data['phase_names'])
+        for pt, pn in zip(p_times, p_names):
+            name_str = str(pn).strip()
+            # Escludiamo gli stati preparatori pre-volo non significativi per i grafici temporali
+            if name_str not in ('WAIT_EKF', 'WAIT_START'):
+                phases.append((float(pt), name_str))
+        print(f"[DEBUG] Fasi FSM caricate dal log ({len(phases)}): {phases}")
+    myPlot.default_phases = phases
+
+    # Se task_start non era esplicito ma abbiamo le fasi, allinea task_start alla preparazione/missione
+    if task_start <= 0 and phases:
+        for pt, pn in phases:
+            if pn in ('MISSION_PREPARATION', 'MISSION'):
+                task_start = pt
+                break
+
+    # --- Rilevamento intervalli di attività dell'haptic device ---
+    haptic_intervals = []
+    if indata('haptic_active'):
+        h_act = np.asarray(data['haptic_active']).flat
+        t_arr = np.asarray(t)
+        in_haptic = False
+        t_h_start = 0.0
+        for idx_h, val in enumerate(h_act):
+            if val > 0.5 and not in_haptic:
+                in_haptic = True
+                t_h_start = float(t_arr[idx_h])
+            elif val <= 0.5 and in_haptic:
+                in_haptic = False
+                haptic_intervals.append((t_h_start, float(t_arr[idx_h])))
+        if in_haptic:
+            haptic_intervals.append((t_h_start, float(t_arr[-1])))
+        if haptic_intervals:
+            print(f"[DEBUG] Intervalli Haptic attivi rilevati ({len(haptic_intervals)}): {haptic_intervals}")
+    myPlot.default_haptic_intervals = haptic_intervals
+
+    # --- Mascheramento riferimenti pre-task con NaN ---
+    # Prima dello switch/task_start i riferimenti dell'MPC non sono attivi.
+    # Impostando a NaN i campioni pre-task, Matplotlib non disegna nulla prima dello switch,
+    # eliminando qualsiasi discontinuità grafica a gradino da zero o falsi errori durante il decollo.
+    def nan_pre_task(arr, idx_s):
+        """Imposta a NaN i campioni prima dell'indice di avvio task."""
+        arr = np.asarray(arr, dtype=float).copy()
+        if idx_s > 0 and idx_s <= len(arr):
+            arr[:idx_s] = np.nan
         return arr
 
+    # Determina l'indice di avvio dell'MPC
+    idx_s = 0
     if task_start > 0:
         idx_s = int(np.searchsorted(t, task_start))
-        for key in ['pref_pos', 'pref_rpy', 'vref', 'omegaref', 'wrench_target', 'peg_pos']:
+
+    # Avanza idx_s al primo campione effettivamente valido (diverso da zero)
+    # per compensare il delay tra il segnale di start e il primo solve dell'MPC
+    ref_check_key = 'pref_pos' if indata('pref_pos') else ('online_cyl_ref' if indata('online_cyl_ref') else None)
+    if ref_check_key is not None:
+        sub_arr = np.asarray(data[ref_check_key])
+        nonzero = np.where(np.any(sub_arr[idx_s:] != 0, axis=-1))[0]
+        if len(nonzero) > 0:
+            idx_s = idx_s + nonzero[0]
+        elif idx_s == 0:
+            nonzero_all = np.where(np.any(sub_arr != 0, axis=-1))[0]
+            if len(nonzero_all) > 0:
+                idx_s = nonzero_all[0]
+
+    if idx_s > 0:
+        # 1. Variabili puramente MPC / task PoV (non esistono durante il decollo): sempre NaN pre-task
+        keys_mpc_only = [
+            'optimal_wrench', 'wrench_target', 'online_cyl_ref', 'online_ref',
+            'actual_pov', 'r_cyl', 'beta_cyl', 'z_cyl', 'yaw_err_cyl'
+        ]
+        for key in keys_mpc_only:
             if indata(key):
-                data[key] = fill_pre_task(np.asarray(data[key]).copy(), idx_s)
-        # Ricalcola online_cyl_ref e p_cam_target dopo il fill
+                data[key] = nan_pre_task(data[key], idx_s)
+
+        # 2. Riferimenti cinematici del drone (pref_pos, pref_rpy, vref, omegaref):
+        # Se contengono la traiettoria di decollo di offboard_trajectory_planner, li manteniamo continui!
+        # Se invece erano rimasti a zero (es. log vecchi), mascheriamo a NaN per evitare il gradino.
+        for key in ['pref_pos', 'pref_rpy', 'pref_q', 'vref', 'omegaref']:
+            if indata(key):
+                sub = np.asarray(data[key])
+                if np.all(sub[:idx_s] == 0):
+                    data[key] = nan_pre_task(data[key], idx_s)
+
+        # Ricalcola p_cam_target dopo il mascheramento con NaN
         if indata('online_cyl_ref') and indata('peg_pos'):
-            data['online_cyl_ref'] = fill_pre_task(np.asarray(data['online_cyl_ref']).copy(), idx_s)
             data['p_cam_target'] = cylindrical_to_cartesian(
                 data['online_cyl_ref'], p_origin=np.asarray(data['peg_pos']))
 
@@ -184,7 +337,11 @@ def main():
 
     # --- FIGURE 5: Coordinate Cilindriche (r_cyl, beta, z) vs Riferimento ---
     # Allineamento dell'azimut per evitare che ref e sim si sdoppino di 2*pi nel plot
-    beta_sim_unwrapped = np.unwrap(data['beta_cyl'])
+    beta_sim_unwrapped = np.full_like(data['beta_cyl'], np.nan)
+    if idx_s < len(data['beta_cyl']):
+        beta_sim_unwrapped[idx_s:] = np.unwrap(data['beta_cyl'][idx_s:])
+    else:
+        beta_sim_unwrapped = np.unwrap(data['beta_cyl'])
     beta_diff_wrapped = (data['online_cyl_ref'][:, 1] - data['beta_cyl'] + np.pi) % (2 * np.pi) - np.pi
     beta_ref_aligned = beta_sim_unwrapped + beta_diff_wrapped
 
@@ -202,10 +359,14 @@ def main():
     # yaw_err_cyl è già loggato direttamente dall'MPC (wrap_pi applicato correttamente)
     # yaw_desired = beta_cyl + pi (puntamento ottico reale coerente con la definizione MPC)
     yaw_actual  = wrap_pi(data['rpy'][:, 2])
-    yaw_desired = wrap_pi(data['beta_cyl'] + np.pi)
+    # yaw_offset_ref: decentramento FoV impostato dal supervisore (default 0 per log vecchi a 3 colonne)
+    _cyl_ref = np.asarray(data['online_cyl_ref'])
+    yaw_offset_ref = _cyl_ref[:, 3] if _cyl_ref.ndim == 2 and _cyl_ref.shape[1] > 3 else 0.0
+    # yaw_desired include il decentramento FoV (yaw_offset_ref) coerentemente con l'MPC
+    yaw_desired = wrap_pi(data['beta_cyl'] + np.pi + yaw_offset_ref)
     fig5_data = [
         {'sim': yaw_actual,               'ref': yaw_desired},
-        {'sim': data['yaw_err_cyl'],      'ref': 0.0},
+        {'sim': data['yaw_err_cyl'],      'ref': yaw_offset_ref},
     ]
     myPlot(t, fig5_data,
            ["Yaw Actual vs Desired [rad]", "Yaw Error [rad]"],
@@ -220,7 +381,7 @@ def main():
         np.sin(data['beta_cyl']  - data['online_cyl_ref'][:, 1]),
         np.cos(data['beta_cyl']  - data['online_cyl_ref'][:, 1])))
     err_z = np.abs(data['z_cyl'] - data['online_cyl_ref'][:, 2])
-    err_yaw = np.abs(data['yaw_err_cyl'])
+    err_yaw = np.abs(data['yaw_err_cyl'] - yaw_offset_ref)
     err_rp = np.linalg.norm(data['q'][:, 1:3], axis=1)  # qx, qy
 
     fig6_data = [
@@ -550,14 +711,14 @@ def main():
             mask_trk &= (t <= task_end)
 
         if np.any(mask_trk):
-            rms_r = float(np.sqrt(np.mean(err_r[mask_trk]**2)))
-            max_r = float(np.max(err_r[mask_trk]))
-            rms_beta = float(np.sqrt(np.mean(err_beta[mask_trk]**2)))
-            max_beta = float(np.max(err_beta[mask_trk]))
-            rms_z = float(np.sqrt(np.mean(err_z[mask_trk]**2)))
-            max_z = float(np.max(err_z[mask_trk]))
-            rms_yaw = float(np.sqrt(np.mean(err_yaw[mask_trk]**2)))
-            max_yaw = float(np.max(err_yaw[mask_trk]))
+            rms_r = float(np.sqrt(np.nanmean(err_r[mask_trk]**2)))
+            max_r = float(np.nanmax(err_r[mask_trk]))
+            rms_beta = float(np.sqrt(np.nanmean(err_beta[mask_trk]**2)))
+            max_beta = float(np.nanmax(err_beta[mask_trk]))
+            rms_z = float(np.sqrt(np.nanmean(err_z[mask_trk]**2)))
+            max_z = float(np.nanmax(err_z[mask_trk]))
+            rms_yaw = float(np.sqrt(np.nanmean(err_yaw[mask_trk]**2)))
+            max_yaw = float(np.nanmax(err_yaw[mask_trk]))
 
             report_lines.append("\n" + "-" * 70)
             report_lines.append(" 3. TRACKING PERFORMANCE SUMMARY (in Missione)")

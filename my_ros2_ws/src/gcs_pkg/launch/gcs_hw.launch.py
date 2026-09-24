@@ -43,6 +43,9 @@ def launch_setup(context, *args, **kwargs):
             'peg_start_x': peg_x,
             'peg_start_y': peg_y,
             'peg_start_z': peg_z,
+            'cam_offset_x': cam_x,
+            'cam_offset_y': cam_y,
+            'cam_z_offset': cam_z,
         }],
     )
 

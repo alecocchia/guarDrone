@@ -11,10 +11,16 @@ from scipy.linalg import solve_continuous_are
 from numpy.linalg import matrix_rank
 from scipy.linalg import eigvals
 
+try:
+    import mpl_toolkits
+    _local_mpl = '/usr/local/lib/python3.10/dist-packages/mpl_toolkits'
+    if os.path.exists(_local_mpl) and _local_mpl not in mpl_toolkits.__path__:
+        mpl_toolkits.__path__.insert(0, _local_mpl)
+    from mpl_toolkits.mplot3d import Axes3D
+except Exception:
+    pass
 import matplotlib.pyplot as plt
-from acados_template import latexify_plot
-#from matplotlib.animation import FuncAnimation
-#from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.animation import FuncAnimation
 
 
 
@@ -563,7 +569,7 @@ def myPlot(time, sim, labels, title, ncols=2):
 #    plt.tight_layout()
 #    plt.show()
 
-def traj_plot3D_animated_with_orientation(t, drone_pos, drone_rot, obj_pos, obj_rot, interval=30, step=2):
+def traj_plot3D_animated_with_orientation(t, drone_pos, drone_rot, obj_pos, obj_rot, interval=30, step=2, axis_length=0.4, save_path=None, show=False):
     """
     Animazione 3D delle traiettorie di drone e oggetto, con assi di orientamento.
 
@@ -575,22 +581,24 @@ def traj_plot3D_animated_with_orientation(t, drone_pos, drone_rot, obj_pos, obj_
     - obj_rot: (N,3) RPY oggetto
     - interval: intervallo animazione [ms]
     - step: passo frame
+    - axis_length: lunghezza degli assi della terna [m]
+    - save_path: percorso opzionale per salvare l'animazione (es. .gif)
     """
 
-    fig = plt.figure()
+    fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection='3d')
 
-    # Limiti globali per tutti i dati
+    # Limiti globali per tutti i dati con margine per non tagliare le terne
     all_pos = np.vstack([drone_pos, obj_pos])
-    ax.set_xlim(np.min(all_pos[:, 0]), np.max(all_pos[:, 0]))
-    ax.set_ylim(np.min(all_pos[:, 1]), np.max(all_pos[:, 1]))
-    ax.set_zlim(np.min(all_pos[:, 2]), np.max(all_pos[:, 2]))
+    margin = max(axis_length * 1.5, 0.4)
+    ax.set_xlim(np.min(all_pos[:, 0]) - margin, np.max(all_pos[:, 0]) + margin)
+    ax.set_ylim(np.min(all_pos[:, 1]) - margin, np.max(all_pos[:, 1]) + margin)
+    ax.set_zlim(np.min(all_pos[:, 2]) - margin, np.max(all_pos[:, 2]) + margin)
 
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    ax.set_title('Animazione con orientamento')
-    ax.legend()
+    ax.set_xlabel('X [m]')
+    ax.set_ylabel('Y [m]')
+    ax.set_zlabel('Z [m]')
+    ax.set_title('Animazione 3D Traiettorie e Orientamenti')
 
     # Linee traiettorie
     drone_line, = ax.plot([], [], [], 'r-', label='Drone Trajectory', linewidth=2)
@@ -600,14 +608,13 @@ def traj_plot3D_animated_with_orientation(t, drone_pos, drone_rot, obj_pos, obj_
     drone_axes_lines = [ax.plot([], [], [], color=c)[0] for c in ['r', 'g', 'b']]
     obj_axes_lines = [ax.plot([], [], [], color=c)[0] for c in ['r', 'g', 'b']]
 
-    ax.legend()
+    ax.legend(loc='upper right')
 
-    def plot_axes(origin, R, length=0.5):
+    def plot_axes(origin, R, length=axis_length):
         """
         Restituisce liste di punti per ogni asse da disegnare.
         """
-        ends = origin[:,None] + R * length  # broadcasting: (3,3) * scalar
-        # ends shape (3,3) = 3 vettori asse, colonne: assi X,Y,Z
+        ends = origin[:, None] + R * length  # broadcasting: (3,3) * scalar
         return [(origin, ends[:, i]) for i in range(3)]
 
     def update(frame):
@@ -622,17 +629,17 @@ def traj_plot3D_animated_with_orientation(t, drone_pos, drone_rot, obj_pos, obj_
 
         # Aggiorna assi drone
         origin = drone_pos[i]
-        R = RPY_to_R(drone_rot[i,0],drone_rot[i,1],drone_rot[i,2]).full()
+        R_d = RPY_to_R(drone_rot[i, 0], drone_rot[i, 1], drone_rot[i, 2]).full()
         for idx, line in enumerate(drone_axes_lines):
-            start, end = plot_axes(origin, R, length=1)[idx]
+            start, end = plot_axes(origin, R_d, length=axis_length)[idx]
             line.set_data([start[0], end[0]], [start[1], end[1]])
             line.set_3d_properties([start[2], end[2]])
 
         # Aggiorna assi oggetto
-        origin = obj_pos[i]
-        R = RPY_to_R(obj_rot[i,0],obj_rot[i,1],obj_rot[i,2]).full()
+        origin_obj = obj_pos[i]
+        R_o = RPY_to_R(obj_rot[i, 0], obj_rot[i, 1], obj_rot[i, 2]).full()
         for idx, line in enumerate(obj_axes_lines):
-            start, end = plot_axes(origin, R, length=1)[idx]
+            start, end = plot_axes(origin_obj, R_o, length=axis_length)[idx]
             line.set_data([start[0], end[0]], [start[1], end[1]])
             line.set_3d_properties([start[2], end[2]])
 
@@ -643,4 +650,15 @@ def traj_plot3D_animated_with_orientation(t, drone_pos, drone_rot, obj_pos, obj_
     ani = FuncAnimation(fig, update, frames=n_frames, interval=interval, blit=False)
 
     plt.tight_layout()
-    plt.show()
+
+    if save_path is not None:
+        print(f"[INFO] Salvataggio animazione 3D in: {save_path}...")
+        fps = max(1, int(1000 / interval))
+        ani.save(save_path, writer='pillow', fps=fps)
+        print(f"[SUCCESS] Animazione 3D salvata con successo in: {os.path.abspath(save_path)}")
+
+    if show and os.environ.get('DISPLAY'):
+        plt.show()
+
+    return ani
+

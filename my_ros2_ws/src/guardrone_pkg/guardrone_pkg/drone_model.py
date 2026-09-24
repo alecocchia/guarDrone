@@ -43,39 +43,23 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz) -> AcadosModel:
     # Rotation matrix from quaternion
     Rb = quat_to_R(q)
 
-    # Model parameters (p) — coordinate cilindriche nel mondo
-    # p[0:3] = p_obj   (posizione oggetto nel mondo)
-    # p[3]   = r_ref   (distanza di riferimento [m])
-    # p[4]   = beta_ref  (azimut di riferimento [rad], angolo drone->obj nel piano XY)
-    # p[5]   = gamma_ref (elevazione di riferimento [rad], 0=piano, +pi/2=zenit)
-    # p[6]   = yaw_offset (offset angolare; 0 = oggetto al centro immagine)
-    # p[7:10] = F_ext
-    # p[10:13] = Tau_ext_z
-    model_params = ca.SX.sym('p', 13)
-    p_obj = model_params[0:3]
-    r_ref = model_params[3]
-    beta_ref = model_params[4]
-    gamma_ref = model_params[5]
-    yaw_offset = model_params[6]
-    F_ext = model_params[7:10]
-    Tau_ext = model_params[10:13]
+    # Model parameters (p) — formulazione cartesiana
+    # p[0:3] = p_target  (target cartesiano per il drone, precalcolato esternamente)
+    # p[3]   = yaw_ref   (offset yaw [rad])
+    # p[4:7] = F_ext     (forza esterna stimata, ENU)
+    # p[7:10]= Tau_ext   (coppia esterna stimata, FLU)
+    model_params = ca.SX.sym('p', 10)
+    p_target_sym = model_params[0:3]
+    # yaw_ref = model_params[3]  # usato solo in drone_MPC_settings.py
+    F_ext = model_params[4:7]
+    Tau_ext = model_params[7:10]
     # (i simboli vengono usati direttamente in drone_MPC_settings.py tramite model.p[...])
 
-    # Integral errors states [e_int_r, e_int_beta, e_int_z]
+    # Integral errors states [e_int_x, e_int_y, e_int_z]
     e_int = ca.SX.sym('e_int', 3)
 
-    # Position relative to target (camera offset gestito esternamente)
-    p_rel = p - p_obj
-    
-    # Errore cartesiano tra target desiderato (da coord. cilindriche ref) e posizione attuale relative p_rel
-    dx_target = r_ref * ca.cos(beta_ref)
-    dy_target = r_ref * ca.sin(beta_ref)
-    dz_target = gamma_ref  # gamma_ref is z_ref
-    
-    ex = dx_target - p_rel[0]
-    ey = dy_target - p_rel[1]
-    ez = dz_target - p_rel[2]
-    e_int_dot = ca.vertcat(ex, ey, ez)
+    # Errore cartesiano: p_target - p_drone
+    e_int_dot = p_target_sym - p
 
     # Equations of motion (ODEs)
     p_dot = v
@@ -166,7 +150,7 @@ def convert_to_rpy_model(model_quat,m,Ixx,Iyy,Izz):
     model_rpy.xdot = xdot
     model_rpy.f_expl_expr = xdot
     model_rpy.name = model_quat.name + "_rpy"
-    model_params = ca.SX.sym('p', 13)  # simbolico 
+    model_params = ca.SX.sym('p', 10)  # simbolico
     model_rpy.p = model_params       #model.p = parameters 
     model_rpy.m = m
     model_rpy.g = g0

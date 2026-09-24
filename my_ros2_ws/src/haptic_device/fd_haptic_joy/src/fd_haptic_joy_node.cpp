@@ -273,8 +273,8 @@ private:
     // Parametri Campo Visivo (FoV)
     double fov_h = this->get_parameter("fov_h").as_double();
     double fov_v = this->get_parameter("fov_v").as_double();
-    double limit_gamma_max = (fov_v / 2.0) * (M_PI / 180.0);
-    double limit_yaw_max = (fov_h / 2.0) * (M_PI / 180.0);
+    double fov_v_half_rad = (fov_v / 2.0) * (M_PI / 180.0);
+    double fov_h_half_rad = (fov_h / 2.0) * (M_PI / 180.0);
 
     // 1. Asse X: Forza repulsiva basata su distanza radiale r_cyl
     double r_actual = actual_pov_[0]; // r_cyl [m]
@@ -286,7 +286,8 @@ private:
 
     // 2. Asse Z: Forza repulsiva basata sui limiti Z derivati dal FoV verticale
     double z_act = actual_pov_[2];
-    double z_max = r_actual * std::tan(limit_gamma_max);
+    double yaw_dev_act = actual_pov_[3]; // Estraggo lo yaw deviation dal centro per la proiezione prospettica
+    double z_max = r_actual * std::cos(yaw_dev_act) * std::tan(fov_v_half_rad);
     
     double dist_z_top = z_max - z_act;
     double dist_z_bot = z_act - (-z_max);
@@ -297,13 +298,12 @@ private:
                                           act_ratio_cam, k_rep, alpha, max_rep);
     double f_rep_z = f_rep_z_top + f_rep_z_bot;
 
-    // 3. Asse Y: Forza repulsiva basata su yaw_err (limite FoV orizzontale)
-    double yaw_err_act = actual_pov_[3];
-    double dist_yaw = limit_yaw_max - std::abs(yaw_err_act);
+    // 3. Asse Y: Forza repulsiva basata su yaw_dev (limite FoV orizzontale)
+    double dist_yaw = fov_h_half_rad - std::abs(yaw_dev_act);
     double f_rep_yaw_mag = repulsive_force(
-        dist_yaw, limit_yaw_max, act_ratio_cam, k_rep, alpha, max_rep);
+        dist_yaw, fov_h_half_rad, act_ratio_cam, k_rep, alpha, max_rep);
     // Se yaw_err > 0, opponiamo una forza per spingere l'utente a correggere
-    double f_rep_y = (yaw_err_act > 0) ? -f_rep_yaw_mag : f_rep_yaw_mag;
+    double f_rep_y = (yaw_dev_act > 0) ? -f_rep_yaw_mag : f_rep_yaw_mag;
 
     std::vector<double> forces(3, 0.0);
     for (int i = 0; i < 3; ++i) {

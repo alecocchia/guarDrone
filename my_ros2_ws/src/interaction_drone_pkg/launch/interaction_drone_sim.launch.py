@@ -35,7 +35,7 @@ def generate_launch_description():
                 'start_x': LaunchConfiguration('peg_x'),
                 'start_y': LaunchConfiguration('peg_y'),
                 'start_z': LaunchConfiguration('peg_z'),
-                'v_max': 0.2,
+                'v_max': 0.1,
                 'a_max': 0.2,
                 'dt': 0.01,         # 100 Hz
                 'px4_ns': 'px4_1',  # Namespace DDS del Drone 2 (UXRCE_DDS_NS=px4_1)

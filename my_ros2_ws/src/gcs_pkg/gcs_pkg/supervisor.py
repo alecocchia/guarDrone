@@ -14,7 +14,7 @@ from scipy.spatial.transform import Rotation
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from px4_msgs.msg import VehicleControlMode, VehicleCommand, VehicleLocalPosition
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, String, Float64MultiArray
 from geometry_msgs.msg import PoseStamped
 from utils_pkg.utils_np import min_angle
 
@@ -48,12 +48,18 @@ class SupervisorNode(Node):
         self.task_start_pub = self.create_publisher(Bool, '/mpc_task/start', qos_latched)
         # Publisher per segnale di avvio logging (al momento dell'arming+offboard)
         self.logging_start_pub = self.create_publisher(Bool, '/logging/start', qos_latched)
+        # Publisher per stato FSM del supervisore
+        self.state_pub = self.create_publisher(String, '/supervisor/state', qos_latched)
+        self._prev_published_state = None
 
         # Publisher per i nodi trajectory_planner
         self.cam_target_pub = self.create_publisher(PoseStamped, '/camera_target_pose', 10)
         self.peg_target_pub = self.create_publisher(PoseStamped, '/peg_target_pose', 10)
         self.cam_traj_enabled_pub = self.create_publisher(Bool, '/camera_traj_enabled', 10)
         self.peg_traj_enabled_pub = self.create_publisher(Bool, '/peg_traj_enabled', 10)
+
+        # Publisher per target PoV cilindrico per MPC [r, beta, z_rel, yaw_offset]
+        self.pov_pub = self.create_publisher(Float64MultiArray, '/pov_target', 10)
 
         # State Variables
         self.drone1_local_pos = VehicleLocalPosition()
@@ -78,9 +84,22 @@ class SupervisorNode(Node):
         self.declare_parameter('peg_start_x', 3.0)
         self.declare_parameter('peg_start_y', 0.0)
         self.declare_parameter('peg_start_z', 4.52)
+        # Offset camera nel frame body (ENU)
+        self.declare_parameter('cam_offset_x', 0.0)
+        self.declare_parameter('cam_offset_y', 0.0)
         # Offset z camera nel frame body (ENU z up): cam_body_takeoff = takeoff_alt_1 - cam_z_offset
         # In questo modo la CAMERA si trova a takeoff_alt_1 dopo il decollo, non il centro del drone.
         self.declare_parameter('cam_z_offset', 0.0)
+
+        # Parametri target PoV opzionali (se pov_r > 0 forza un valore fisso, altrimenti calcolato da hovering)
+        self.pov_r = -1.0
+        self.pov_beta = 0.0
+        self.pov_z = 0.0
+        self.pov_yaw = 0.0
+
+        # Parametri FoV camera per calcolo offset decentrato
+        self.declare_parameter('fov_h_deg', 80.0)      # FoV orizzontale camera [deg]
+        self.declare_parameter('fov_v_deg', 60.0)      # FoV verticale camera [deg]
 
         self.takeoff_alt_1  = self.get_parameter('takeoff_alt_1').value
         self.takeoff_alt_2  = self.get_parameter('takeoff_alt_2').value
@@ -90,17 +109,21 @@ class SupervisorNode(Node):
         self.peg_start_x    = self.get_parameter('peg_start_x').value
         self.peg_start_y    = self.get_parameter('peg_start_y').value
         self.peg_start_z    = self.get_parameter('peg_start_z').value
+        self.cam_offset_x   = self.get_parameter('cam_offset_x').value
+        self.cam_offset_y   = self.get_parameter('cam_offset_y').value
         self.cam_z_offset   = self.get_parameter('cam_z_offset').value
+
+        self.fov_h_deg = self.get_parameter('fov_h_deg').value
+        self.fov_v_deg = self.get_parameter('fov_v_deg').value
 
         self.state = 'WAIT_EKF'
         self.task_started = False
-        self.mission_prep_target_sent = False
+        self.peg_target_sent = False
         self.mission_start_received = False
         self.task_goal_pose_received = False
         self.mpc_ready = False
 
-        self.detachment_sent = False
-        self.return_home_sent = False
+        self.target_to_send = False
 
         # Flag conferma operatore (da tastiera)
         self._operator_confirmed = False
@@ -115,8 +138,8 @@ class SupervisorNode(Node):
         # Initial and final poses for interaction drone
         self.contact_point = np.array([self.peg_start_x, -55.95, 9.5])  # ENU
         # Let the mission begin in front of the wall (same x and z, offset on y)
-        self.mission_start_pose = np.array([self.contact_point[0], self.contact_point[1] + 3.0, self.contact_point[2]]) # ENU
-        self.mission_start_yaw = math.atan2(self.contact_point[1] - self.mission_start_pose[1], self.contact_point[0] - self.mission_start_pose[0]) # ENU
+        self.peg_mission_start_pose = np.array([self.contact_point[0], self.contact_point[1] + 3.0, self.contact_point[2]]) # ENU
+        self.peg_mission_start_yaw = math.atan2(self.contact_point[1] - self.peg_mission_start_pose[1], self.contact_point[0] - self.peg_mission_start_pose[0]) # ENU
 
         self.get_logger().info("Supervisor Node Avviato. Stato: WAIT_EKF")
     
@@ -167,7 +190,66 @@ class SupervisorNode(Node):
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         publisher.publish(msg)
 
+    def compute_actual_pov_target(self):
+        """Calcola il target PoV (r, beta, z) dai parametri o dalla posa reale in hovering."""
+        if self.pov_r > 0.0:
+            return self.pov_r, self.pov_beta, self.pov_z
+        d1_local_ENU = self._M_NED2ENU @ np.array([self.drone1_local_pos.x, self.drone1_local_pos.y, self.drone1_local_pos.z])
+        d1_pos = d1_local_ENU + np.array([self.cam_start_x, self.cam_start_y, self.cam_start_z])
+        d2_local_ENU = self._M_NED2ENU @ np.array([self.drone2_local_pos.x, self.drone2_local_pos.y, self.drone2_local_pos.z])
+        d2_pos = d2_local_ENU + np.array([self.peg_start_x, self.peg_start_y, self.peg_start_z])
+
+        d1_yaw_enu = (math.pi / 2.0) - self.drone1_local_pos.heading
+        R_body = Rotation.from_euler('xyz', [0.0, 0.0, d1_yaw_enu]).as_matrix()
+        cam_pos = d1_pos + R_body @ np.array([self.cam_offset_x, self.cam_offset_y, self.cam_z_offset])
+
+        dx = float(cam_pos[0] - d2_pos[0])
+        dy = float(cam_pos[1] - d2_pos[1])
+        dz = float(cam_pos[2] - d2_pos[2])
+
+        r_target = math.sqrt(dx**2 + dy**2)
+        beta_target = math.atan2(dy, dx)
+        z_target = dz
+        return r_target, beta_target, z_target
+
+    def compute_decentered_pov(self, r, h_fraction=0.0, v_fraction=0.0):
+        """Calcola yaw_offset e z_rel per decentrare l'oggetto nel FoV.
+
+        h_fraction in [-1, 1]: +1 = bordo destro, -1 = bordo sinistro
+        v_fraction in [-1, 1]: +1 = bordo superiore, -1 = bordo inferiore
+        Restituisce (yaw_offset, z_rel) da passare a publish_pov_target.
+        """
+        fov_h_half = math.radians(self.get_parameter('fov_h_deg').value / 2.0)
+        fov_v_half = math.radians(self.get_parameter('fov_v_deg').value / 2.0)
+
+        # Offset angolare orizzontale: positivo = oggetto a destra nel frame
+        yaw_offset = h_fraction * fov_h_half
+
+        # Offset verticale: usa la geometria prospettica con lo yaw_offset corrente
+        # z_max = r * cos(yaw_offset) * tan(fov_v/2)  (come nel nodo haptic)
+        z_max = r * math.cos(yaw_offset) * math.tan(fov_v_half)
+        z_rel = v_fraction * z_max
+
+        return yaw_offset, z_rel
+
+    def publish_pov_target(self, r, beta, z=0.0, yaw=0.0):
+        """Pubblica riferimento PoV cilindrico [r, beta, z_rel, yaw_offset] per l'MPC."""
+        msg = Float64MultiArray()
+        msg.data = [float(r), float(beta), float(z), float(yaw)]
+        self.pov_pub.publish(msg)
+        self.get_logger().info(f"Target PoV inviato all'MPC: r={r:.3f} m, beta={math.degrees(beta):.1f}°, z={z:.3f} m, yaw={math.degrees(yaw):.1f}°")
+
+    def _publish_state_if_changed(self):
+        """Pubblica lo stato della FSM su /supervisor/state ad ogni transizione."""
+        if self.state != self._prev_published_state:
+            self._prev_published_state = self.state
+            msg_state = String()
+            msg_state.data = self.state
+            self.state_pub.publish(msg_state)
+            self.get_logger().info(f"[FSM] Transizione di stato pubblicata: {self.state}")
+
     def loop(self):
+        self._publish_state_if_changed()
         if self.state == 'WAIT_EKF':
             # Check if both drones have full EKF convergence
             d1_ekf_ok = (self.drone1_local_pos.timestamp > 0 and 
@@ -262,12 +344,19 @@ class SupervisorNode(Node):
             if d1_up and d2_up and self._operator_confirmed:
                 self.get_logger().info("Droni in quota + conferma operatore! Disabilito traj planner camera e invio segnale di START all'MPC.")
                 
-                # Spegne offboard_trajectory_planner del camera drone
+                # 1. Spegne offboard_trajectory_planner del camera drone
                 msg_traj = Bool()
                 msg_traj.data = False
                 self.cam_traj_enabled_pub.publish(msg_traj)
 
-                # Accende MPC
+                # 2. Calcola e pubblica target PoV iniziale per l'MPC
+                r_target, beta_target, z_target = self.compute_actual_pov_target()
+                h_frac = 0.0
+                v_frac = 0.0
+                yaw_off, z_off = self.compute_decentered_pov(r_target, h_frac, v_frac)
+                self.publish_pov_target(r_target, beta_target, z_off, yaw_off)
+
+                # 3. Accende MPC
                 msg_start = Bool()
                 msg_start.data = True
                 self.task_start_pub.publish(msg_start)
@@ -276,18 +365,35 @@ class SupervisorNode(Node):
                 self.state = 'MISSION_PREPARATION'
                 self._operator_confirmed = False
                 self.msg_cnt = 0
+                self.target_to_send = True
             elif d1_up and d2_up and not self._operator_confirmed:
-                if self.msg_cnt == 0 :
+                if self.msg_cnt == 0:
                     self.get_logger().info('Droni in quota. In attesa conferma operatore ("ok") per MISSION_PREPARATION...')
+                    # Pubblica target PoV già durante l'hovering in quota per allineare logger e MPC prima dello switch
+                    r_target, beta_target, z_target = self.compute_actual_pov_target()
+                    h_frac = 0.0
+                    v_frac = 0.0
+                    yaw_off, z_off = self.compute_decentered_pov(r_target, h_frac, v_frac)
+                    self.publish_pov_target(r_target, beta_target, z_off, yaw_off)
+                    self.msg_cnt += 1
         
         elif self.state == 'MISSION_PREPARATION':
             
-            yaw_target = self.mission_start_yaw # ENU
+            ## DRONE 1 (CAMERA)
+            if self.target_to_send:
+                r_target, beta_target, z_target = self.compute_actual_pov_target()
+                h_frac = 0.0
+                v_frac = 0.0
+                yaw_off, z_off = self.compute_decentered_pov(r_target, h_frac, v_frac)
+                self.publish_pov_target(r_target, beta_target, z_off, yaw_off)
+                self.target_to_send = False
+            ## DRONE 2 (INTERACTION)
+            yaw_target = self.peg_mission_start_yaw # ENU
 
             # Check if d2 is at the target position for starting the mission
-            peg_target_x =self.mission_start_pose[0]        # ENU
-            peg_target_y =self.mission_start_pose[1]        # ENU
-            peg_target_z = self.mission_start_pose[2]        # ENU
+            peg_target_x =self.peg_mission_start_pose[0]        # ENU
+            peg_target_y =self.peg_mission_start_pose[1]        # ENU
+            peg_target_z = self.peg_mission_start_pose[2]       # ENU
 
             # Publish pose
             peg_pose_target = PoseStamped()
@@ -303,12 +409,12 @@ class SupervisorNode(Node):
             peg_pose_target.pose.orientation.z = float(quat[2])
             peg_pose_target.pose.orientation.w = float(quat[3])
 
-            if not self.mission_prep_target_sent:
+            if not self.peg_target_sent:
                 # Giving target to peg drone to prepare for the mission
-                self.get_logger().info(f"Preparing for the mission and pose target for drone 2: {self.mission_start_pose}")
+                self.get_logger().info(f"Preparing for the mission and pose target for drone 2: {self.peg_mission_start_pose}")
 
                 self.peg_target_pub.publish(peg_pose_target)
-                self.mission_prep_target_sent = True
+                self.peg_target_sent = True
 
             # CHECKS
             d2_local_ENU = self._M_NED2ENU @ np.array([self.drone2_local_pos.x, self.drone2_local_pos.y, self.drone2_local_pos.z])
@@ -333,6 +439,8 @@ class SupervisorNode(Node):
                 self.state = 'MISSION'
                 self._operator_confirmed = False
                 self.msg_cnt  = 0
+                self.target_to_send = True
+                self.peg_target_sent = False
             elif drone_interaction_in_position and yaw_is_aligned and not self._operator_confirmed:
                 if self.msg_cnt == 0:
                     self.get_logger().info('Drone in posizione e allineato. In attesa conferma operatore ("ok") per MISSION...')
@@ -344,8 +452,16 @@ class SupervisorNode(Node):
         elif self.state == 'MISSION':
             if self._check_emergency():
                 return
-
-            if not self.task_goal_pose_received and self.task_started:
+            # DRONE 1
+            if self.target_to_send :
+                r_target, beta_target, z_target = self.compute_actual_pov_target()
+                h_frac = 0.4
+                v_frac = 0.4
+                yaw_off, z_off = self.compute_decentered_pov(r_target, h_frac, v_frac)
+                self.publish_pov_target(r_target, beta_target, z_off, yaw_off)
+                self.target_to_send=False
+                
+            if not self.peg_target_sent and self.task_started:
                 msg_peg_target = PoseStamped()
                 msg_peg_target.header.frame_id = 'world'
                 msg_peg_target.pose.position.x = float(self.contact_point[0])
@@ -354,7 +470,7 @@ class SupervisorNode(Node):
                 msg_peg_target.pose.position.z = float(self.contact_point[2])
                 
                 # Impostazione del target di yaw desiderato (in radianti)
-                target_yaw = self.mission_start_yaw # ENU
+                target_yaw = self.peg_mission_start_yaw # ENU
                 rot = Rotation.from_euler('xyz', [0.0, 0.0, target_yaw])
                 quat = rot.as_quat()
                 msg_peg_target.pose.orientation.x = float(quat[0])
@@ -363,15 +479,15 @@ class SupervisorNode(Node):
                 msg_peg_target.pose.orientation.w = float(quat[3])
                 
                 self.peg_target_pub.publish(msg_peg_target)
-                self.task_goal_pose_received = True
+                self.peg_target_sent = True
                 self.get_logger().info("Target di contatto inviato a Drone 2. Inizio fase di interazione a parete.")
 
-            if self.task_goal_pose_received:
+            if self.peg_target_sent:
                 if self._operator_confirmed:
                     self.get_logger().info("Conferma operatore ricevuta: Fine interazione a parete. Passo a DETACHMENT.")
                     self.state = 'DETACHMENT'
                     self._operator_confirmed = False
-                    self.detachment_sent = False
+                    self.peg_target_sent = False
                     self.msg_cnt = 0
                 elif self.msg_cnt == 0:
                     self.get_logger().info('In missione a parete. Digita "ok" per procedere al distacco (DETACHMENT) o "land" per atterrare.')
@@ -387,10 +503,10 @@ class SupervisorNode(Node):
                                d2_local_ENU[1] + self.peg_start_y,
                                d2_local_ENU[2] + self.peg_start_z])
 
-            if not self.detachment_sent:
+            if not self.peg_target_sent:
                 # Calcola il target arretrando di 1.5m nella direzione opposta alla parete (asse z negativo del contatto)
                 detach_distance = 0.5  # [m] arretramento dal punto di contatto
-                detach_direction = -np.array([math.cos(self.mission_start_yaw), math.sin(self.mission_start_yaw), 0.0])
+                detach_direction = -np.array([math.cos(self.peg_mission_start_yaw), math.sin(self.peg_mission_start_yaw), 0.0])
                 self.detach_target = d2_pos + detach_distance * detach_direction
 
                 peg_pose_target = PoseStamped()
@@ -398,14 +514,14 @@ class SupervisorNode(Node):
                 peg_pose_target.pose.position.x = float(self.detach_target[0])
                 peg_pose_target.pose.position.y = float(self.detach_target[1])
                 peg_pose_target.pose.position.z = float(self.detach_target[2])
-                rot = Rotation.from_euler('xyz', [0.0, 0.0, self.mission_start_yaw])
+                rot = Rotation.from_euler('xyz', [0.0, 0.0, self.peg_mission_start_yaw])
                 quat = rot.as_quat()
                 peg_pose_target.pose.orientation.x = float(quat[0])
                 peg_pose_target.pose.orientation.y = float(quat[1])
                 peg_pose_target.pose.orientation.z = float(quat[2])
                 peg_pose_target.pose.orientation.w = float(quat[3])
                 self.peg_target_pub.publish(peg_pose_target)
-                self.detachment_sent = True
+                self.peg_target_sent = True
                 self.get_logger().info(f"Target trapezoidale di distacco inviato al Drone 2: {self.detach_target}. Drone 1 continua a seguire in MPC.")
 
             # Verifica se Drone 2 ha raggiunto la posizione di distacco
@@ -414,7 +530,7 @@ class SupervisorNode(Node):
             if d2_dist < 0.1 and self._operator_confirmed:
                 self.get_logger().info("Distacco completato + conferma operatore! Passo a RETURN_HOME (posa desiderata iniziale di hovering).")
                 self.state = 'RETURN_HOME'
-                self.return_home_sent = False
+                self.peg_target_sent = False
                 self._operator_confirmed = False
                 self.msg_cnt = 0
             elif d2_dist < 0.2 and not self._operator_confirmed:
@@ -427,20 +543,20 @@ class SupervisorNode(Node):
                 return
 
             home_target = np.array([self.peg_start_x, self.peg_start_y, self.takeoff_alt_2])
-            if not self.return_home_sent:
+            if not self.peg_target_sent:
                 peg_pose_target = PoseStamped()
                 peg_pose_target.header.frame_id = 'world'
                 peg_pose_target.pose.position.x = float(home_target[0])
                 peg_pose_target.pose.position.y = float(home_target[1])
                 peg_pose_target.pose.position.z = float(home_target[2])
-                rot = Rotation.from_euler('xyz', [0.0, 0.0, self.mission_start_yaw])
+                rot = Rotation.from_euler('xyz', [0.0, 0.0, self.peg_mission_start_yaw])
                 quat = rot.as_quat()
                 peg_pose_target.pose.orientation.x = float(quat[0])
                 peg_pose_target.pose.orientation.y = float(quat[1])
                 peg_pose_target.pose.orientation.z = float(quat[2])
                 peg_pose_target.pose.orientation.w = float(quat[3])
                 self.peg_target_pub.publish(peg_pose_target)
-                self.return_home_sent = True
+                self.peg_target_sent = True
                 self.get_logger().info(f"Target di RITORNO inviato a Drone 2: {home_target}. Drone 1 continua a seguire in MPC.")
 
             d2_local_ENU = self._M_NED2ENU @ np.array([self.drone2_local_pos.x, self.drone2_local_pos.y, self.drone2_local_pos.z])
@@ -486,6 +602,9 @@ class SupervisorNode(Node):
             self.get_logger().error("EMERGENZA: Atterraggio forzato per entrambi i droni")
             self.publish_command(self.cmd_pub_1, 1, VehicleCommand.VEHICLE_CMD_NAV_LAND)
             self.publish_command(self.cmd_pub_2, 2, VehicleCommand.VEHICLE_CMD_NAV_LAND)
+
+        # Pubblica immediatamente ogni transizione avvenuta all'interno di loop()
+        self._publish_state_if_changed()
 
     def _check_emergency(self):
         """Controlla se uno dei droni ha perso l'offboard o si e disarmato improvvisamente."""

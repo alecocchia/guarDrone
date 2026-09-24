@@ -219,13 +219,19 @@ class OffboardTrajectoryPlanner(Node):
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.setpoint_pub.publish(msg)
 
-        # Pubblica posizione di riferimento nominale in ENU per il logger
+        # Pubblica posizione e orientamento di riferimento nominale in ENU per il logger
         ref_msg = PoseStamped()
         ref_msg.header.stamp = self.get_clock().now().to_msg()
         ref_msg.header.frame_id = 'world'
         ref_msg.pose.position.x = float(pos_enu[0])
         ref_msg.pose.position.y = float(pos_enu[1])
         ref_msg.pose.position.z = float(pos_enu[2])
+        rot = Rotation.from_euler('xyz', [0.0, 0.0, yaw_enu])
+        q_ref = rot.as_quat()  # [x, y, z, w]
+        ref_msg.pose.orientation.x = float(q_ref[0])
+        ref_msg.pose.orientation.y = float(q_ref[1])
+        ref_msg.pose.orientation.z = float(q_ref[2])
+        ref_msg.pose.orientation.w = float(q_ref[3])
         self.camera_ref_pub.publish(ref_msg)
 
         # Pubblica velocità di riferimento in ENU per il logger

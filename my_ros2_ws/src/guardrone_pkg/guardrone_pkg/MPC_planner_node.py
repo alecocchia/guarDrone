@@ -25,8 +25,8 @@ from casadi import pi as pi
 from scipy.spatial.transform import Rotation
 import time
 import threading
-from rclpy.callback_groups import ReentrantCallbackGroup
-from rclpy.executors import MultiThreadedExecutor
+#from rclpy.callback_groups import ReentrantCallbackGroup
+#from rclpy.executors import MultiThreadedExecutor
 
 
 from guardrone_pkg.drone_MPC_settings import (
@@ -42,11 +42,6 @@ import tf2_ros
 class MpcPlannerNode(Node):
     def __init__(self):
         super().__init__('mpc_planner_node')
-
-        # === Threading e Callback Groups ===
-        self.callback_group = ReentrantCallbackGroup()
-        self.state_lock = threading.Lock()
-        self.solver_is_running = False
 
         # === Modello e condizioni iniziali ===
         self.declare_parameter('controller', 1)  # 1: Controller (thrust/torque), 0: Planner (pos/vel setpoints)
@@ -83,6 +78,8 @@ class MpcPlannerNode(Node):
         self.declare_parameter('moment_const', 0.016)
         self.declare_parameter('rp_limit', 45.0)
 
+        self.declare_parameter('use_mbe', True)
+
 
         self.mass = self.get_parameter('mass').value
         self.ixx = self.get_parameter('ixx').value 
@@ -106,11 +103,13 @@ class MpcPlannerNode(Node):
         self.start_roll = self.get_parameter('start_roll').value
         self.start_pitch = self.get_parameter('start_pitch').value
         self.start_yaw = self.get_parameter('start_yaw').value
-        self.peg_offset = np.array([
+        self.peg_drone_spawn = np.array([
             self.get_parameter('peg_x').value,
             self.get_parameter('peg_y').value,
             self.get_parameter('peg_z').value
         ])
+        self.fov_h = self.get_parameter('fov_h').value
+        self.fov_v = self.get_parameter('fov_v').value
         cam_x = self.get_parameter('cam_x').value
         cam_y = self.get_parameter('cam_y').value
         cam_z = self.get_parameter('cam_z').value
@@ -122,7 +121,10 @@ class MpcPlannerNode(Node):
 
         self.camera_offset = np.array([cam_x, cam_y, cam_z])
         self.camera_rpy = np.array([cam_roll, cam_pitch, cam_yaw])
-
+        
+        """
+        Setup problema di ottimizzazione: modello, condizioni iniziali, ts, N_horiz
+        """
         self.model, self.model_rpy = setup_model(self.mass, self.ixx, self.iyy, self.izz)
         self.x0, self.x0_rpy = setup_initial_conditions(self.start_x,self.start_y,self.start_z,self.start_roll,self.start_pitch,self.start_yaw)
 
@@ -130,15 +132,24 @@ class MpcPlannerNode(Node):
         # === Tempo/Orizzonte ===
         self.Hz = 100.0
         self.ts = 1.0/self.Hz             # 10 ms
-        self.N_horiz = 30         # Orizzonte di predizione (numero di campioni) # SIMULAZIONE CONTROLLER
+        self.N_horiz = 15        # Orizzonte di predizione (numero di campioni) # SIMULAZIONE CONTROLLER
         self.Tp = self.N_horiz * self.ts  # Tempo totale dell'orizzonte 
 
         self.path_pub_counter = 0  # Contatore per limitare la frequenza di pubblicazione del path
 
         self.t_prev = 0.0
 
-        # === Momentum Based Estimator ===
-        self.declare_parameter('use_mbe', True)
+        # === Stato MPC / loop ===
+        self.acados_solver_ready = False    # true quando la configurazione dell'MPC è pronta 
+        self.obj_state_received = False     # true quando ricevuto lo stato del peg
+        self.start_received = False         # true quando ricevuto il comando di start dal supervisor
+        self.first_odom_received = False    # true quando ricevuto la prima odometria del drone
+        self.planner_ready_published = False    # true quando pubblicato il segnale di pronto al supervisor
+        self.startup_counter = 0                # contatore per limitare la frequenza di pubblicazione del path
+        
+        """
+            Inizializzazione MBE
+        """
         # In modalità planner (controller=0), l'MBE è disabilitato in quanto superfluo
         self.use_mbe = self.get_parameter('use_mbe').value and self.is_controller
         if self.use_mbe:
@@ -148,13 +159,6 @@ class MpcPlannerNode(Node):
             self.mbe = None
             self.get_logger().info("MBE DISABILITATO — F_ext e Tau_ext saranno zero.")
 
-        # === Stato MPC / loop ===
-        self.acados_solver_ready = False    # true quando la configurazione dell'MPC è pronta 
-        self.obj_state_received = False     # true quando ricevuto lo stato del peg
-        self.start_received = False         # true quando ricevuto il comando di start dal supervisor
-        self.first_odom_received = False    # true quando ricevuto la prima odometria del drone
-        self.planner_ready_published = False    # true quando pubblicato il segnale di pronto al supervisor
-        self.startup_counter = 0                # contatore per limitare la frequenza di pubblicazione del path
 
         # Matrici fisse di conversione frame
         self.M_ned2enu = np.array([[0.0, 1.0, 0.0], 
@@ -185,16 +189,13 @@ class MpcPlannerNode(Node):
         self.current_obj_rpy = np.zeros(3)
         self.e_int = np.zeros(3)  # Accumulatore errore integrale [e_int_r, e_int_beta, e_int_z]
 
-        self.fov_h = self.get_parameter('fov_h').value
-        self.fov_v = self.get_parameter('fov_v').value
-
 
         # Target PoV in coordinate cilindriche: [r_cyl_ref, beta_ref, z_rel_ref]
         # r_cyl = distanza 2D dall'oggetto nel piano XY [m]
         # beta  = azimut del vettore drone->obj nel piano XY [rad] (pan attorno all'oggetto)
         # z_rel     = quota relativa rispetto all'oggetto [m]
-        self.pov_target = np.array([3.0, np.pi-0.3, 0.0])  # default: 2m dietro, stessa quota
-        # Target autonomo pianificato (aggiornato SOLO da /pov_target)
+        self.pov_target = np.array([3.0, np.pi, 0.0])  # default: 3m dietro, stessa quota
+        self.pov_yaw_offset = 0.0  # 4° elemento: decentramento yaw nel FoV [rad]
 
         # --- PUBLISHERS COMANDI E PX4 INTEGRATION ---
         self.is_armed = False      
@@ -221,7 +222,7 @@ class MpcPlannerNode(Node):
         )
 
         self.control_mode_sub = self.create_subscription(
-            VehicleControlMode, '/fmu/out/vehicle_control_mode', self.control_mode_callback, px4_qos_profile, callback_group=self.callback_group
+            VehicleControlMode, '/fmu/out/vehicle_control_mode', self.control_mode_callback, px4_qos_profile
         )
         
         # PUBBLICATORI PER IL LOGGER
@@ -257,11 +258,11 @@ class MpcPlannerNode(Node):
         self.optimal_path_pub = self.create_publisher(Path, '/optimal_drone_path', qos_latched)
 
         self.peg_odom_subscription = self.create_subscription(
-            VehicleOdometry, '/px4_1/fmu/out/vehicle_odometry', self.peg_odom_callback, px4_qos_profile, callback_group=self.callback_group)
+            VehicleOdometry, '/px4_1/fmu/out/vehicle_odometry', self.peg_odom_callback, px4_qos_profile)
         
 
         self.odom_subscription = self.create_subscription(
-            VehicleOdometry, '/fmu/out/vehicle_odometry', self.odom_callback, px4_qos_profile, callback_group=self.callback_group
+            VehicleOdometry, '/fmu/out/vehicle_odometry', self.odom_callback, px4_qos_profile
         )
 
         self.single_pose_pub  = self.create_publisher(PoseStamped,  '/optimal_drone_pose',  1)
@@ -278,10 +279,10 @@ class MpcPlannerNode(Node):
         self.integral_action_pub = self.create_publisher(Vector3, '/integral_action', 1)
         self.solve_time_pub = self.create_publisher(Float64, '/mpc_solve_time', 1)
 
-        self.control_timer = self.create_timer(self.ts, self.control_step, callback_group=self.callback_group)
-        self.start_subscription = self.create_subscription(PoseStamped, '/peg_pose', self.start_callback, 10, callback_group=self.callback_group)
-        self.pov_target_sub = self.create_subscription(Float64MultiArray, '/pov_target', self.pov_target_callback, 10, callback_group=self.callback_group)
-        self.haptic_ref_sub = self.create_subscription(Float64MultiArray, '/haptic_ref', self.haptic_ref_callback, 10, callback_group=self.callback_group)
+        self.control_timer = self.create_timer(self.ts, self.control_step)
+        self.start_subscription = self.create_subscription(PoseStamped, '/peg_pose', self.start_callback, 10)
+        self.pov_target_sub = self.create_subscription(Float64MultiArray, '/pov_target', self.pov_target_callback, 10)
+        self.haptic_ref_sub = self.create_subscription(Float64MultiArray, '/haptic_ref', self.haptic_ref_callback, 10)
 
         # Haptic state
         self.haptic_pov = None
@@ -289,7 +290,7 @@ class MpcPlannerNode(Node):
         self.haptic_timestamp = None
 
         # Joy state
-        self.joy_ref_sub = self.create_subscription(Float64MultiArray, '/joy_ref', self.joy_ref_callback, 10, callback_group=self.callback_group)
+        self.joy_ref_sub = self.create_subscription(Float64MultiArray, '/joy_ref', self.joy_ref_callback, 10)
         self.joy_pov = None
         self.joy_pov_dot = None
         self.joy_timestamp = None
@@ -298,7 +299,7 @@ class MpcPlannerNode(Node):
         # === Integrazione con Supervisor ===
         self.supervisor_task_running = False
         self.supervisor_start_sub = self.create_subscription(
-            Bool, '/mpc_task/start', self.supervisor_start_callback, 10, callback_group=self.callback_group)
+            Bool, '/mpc_task/start', self.supervisor_start_callback, 10)
         self.supervisor_status_pub = self.create_publisher(String, '/mpc_task/status', 10)
 
         # Sottoscrizione comandi PX4 solo per modalità controller (necessari a safe switch e MBE pre-switch)
@@ -308,14 +309,12 @@ class MpcPlannerNode(Node):
                 '/fmu/out/vehicle_thrust_setpoint',
                 self.thrust_out_cb,
                 px4_qos_profile,
-                callback_group=self.callback_group
             )
             self.torque_out_sub = self.create_subscription(
                 VehicleTorqueSetpoint,
                 '/fmu/out/vehicle_torque_setpoint',
                 self.torque_out_cb,
                 px4_qos_profile,
-                callback_group=self.callback_group
             )
 
         self.current_px4_thrust = np.zeros(3)   # FLU
@@ -336,9 +335,8 @@ class MpcPlannerNode(Node):
             self.task_started = False
 
     def control_mode_callback(self, msg: VehicleControlMode):
-        with self.state_lock:
-            self.is_armed = msg.flag_armed
-            self.is_offboard = msg.flag_control_offboard_enabled
+        self.is_armed = msg.flag_armed
+        self.is_offboard = msg.flag_control_offboard_enabled
 
     def peg_odom_callback(self, msg: VehicleOdometry):
         # Quaternione PX4: rappresenta R_frd2ned (body FRD → world NED)
@@ -348,21 +346,21 @@ class MpcPlannerNode(Node):
         R_flu2enu = self.M_ned2enu @ R_frd2ned @ self.M_frd2flu
         rot_flu2enu = Rotation.from_matrix(R_flu2enu)
         
-        with self.state_lock:
-            # Posizione: NED → ENU con offset
-            pos_enu = self.M_ned2enu @ np.array([msg.position[0], msg.position[1], msg.position[2]])
-            self.current_obj_pos = pos_enu + self.peg_offset
-            
-            # Velocità: NED → ENU
-            self.current_obj_vel[:] = self.M_ned2enu @ np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]])
-            
-            # Velocità angolare: FRD → FLU
-            self.current_obj_ang_vel[:] = self.M_frd2flu @ np.array([msg.angular_velocity[0], msg.angular_velocity[1], msg.angular_velocity[2]])
-            
-            # Orientamento in RPY
-            self.current_obj_rpy[:] = rot_flu2enu.as_euler('xyz')
-            
-            self.obj_state_received = True
+        # Posizione: NED → ENU con offset
+        pos_enu = self.M_ned2enu @ np.array([msg.position[0], msg.position[1], msg.position[2]])
+        peg_offset = np.array([0.455, 0.0, 0.22])
+        self.current_obj_pos = pos_enu + self.peg_drone_spawn + peg_offset
+        
+        # Velocità: NED → ENU
+        self.current_obj_vel[:] = self.M_ned2enu @ np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]])
+        
+        # Velocità angolare: FRD → FLU
+        self.current_obj_ang_vel[:] = self.M_frd2flu @ np.array([msg.angular_velocity[0], msg.angular_velocity[1], msg.angular_velocity[2]])
+        
+        # Orientamento in RPY
+        self.current_obj_rpy[:] = rot_flu2enu.as_euler('xyz')
+        
+        self.obj_state_received = True
 
         # --- Pubblica /peg_pose per RViz ---
         peg_pose_msg = PoseStamped()
@@ -384,21 +382,18 @@ class MpcPlannerNode(Node):
 
 
     def planner_configure(self):
-        with self.state_lock:
-            if self.acados_solver_ready == True:
-                return
+        if self.acados_solver_ready == True:
+            return
+        
+        # prima configurazione dell' MPC
+        self.configure_mpc()
             
-            # prima configurazione dell' MPC
-            self.configure_mpc()
-            
-            if not self.planner_ready_published:
-                self.ready_publisher.publish(Bool(data=True))
-                self.planner_ready_published = True
+        if not self.planner_ready_published:
+            self.ready_publisher.publish(Bool(data=True))
+            self.planner_ready_published = True
 
-            if self.acados_solver_ready :
-                self.publish_predicted_path_from_buffers()
-            
-            self.acados_solver_ready=True
+        self.acados_solver_ready = True
+        self.publish_predicted_path_from_buffers()
 
     def start_callback(self, _msg: PoseStamped):
         if self.start_received:
@@ -442,64 +437,63 @@ class MpcPlannerNode(Node):
         rot_flu2enu = Rotation.from_matrix(R_flu2enu)
         q_flu2enu = rot_flu2enu.as_quat() # [x, y, z, w] (formato scipy)
 
-        with self.state_lock:
-            # Posizione: NED → ENU (M_ned2enu @ [N,E,D] = [E,N,-D])
-            self.current_position[:] = self.M_ned2enu @ np.array([msg.position[0], msg.position[1], msg.position[2]])
-            # Aggiungiamo lo spawn offset per posizionare il drone globalmente (fix RViz e Planner)
-            self.current_position[0] += self.start_x
-            self.current_position[1] += self.start_y
-            self.current_position[2] += self.start_z
+        # Posizione: NED → ENU (M_ned2enu @ [N,E,D] = [E,N,-D])
+        self.current_position[:] = self.M_ned2enu @ np.array([msg.position[0], msg.position[1], msg.position[2]])
+        # Aggiungiamo lo spawn offset per posizionare il drone globalmente (fix RViz e Planner)
+        self.current_position[0] += self.start_x
+        self.current_position[1] += self.start_y
+        self.current_position[2] += self.start_z
 
-            # Assegnazione all'MPC (che si aspetta [w, x, y, z])
-            q_w = q_flu2enu[3]
-            q_x = q_flu2enu[0]
-            q_y = q_flu2enu[1]
-            q_z = q_flu2enu[2]
+        # Assegnazione all'MPC (che si aspetta [w, x, y, z])
+        q_w = q_flu2enu[3]
+        q_x = q_flu2enu[0]
+        q_y = q_flu2enu[1]
+        q_z = q_flu2enu[2]
             
-            q = [q_w, q_x, q_y, q_z]
-            q = q / np.linalg.norm(q)    # norma quaternione ad 1
+        q = [q_w, q_x, q_y, q_z]
+        q = q / np.linalg.norm(q)    # norma quaternione ad 1
 
-            # Evitiamo salti discontinui del quaternione (q vs -q)
-            if self.last_quat is not None:
-                if np.dot(q, self.last_quat) < 0:
-                    q = -q
+        # Evitiamo salti discontinui del quaternione (q vs -q)
+        if self.last_quat is not None:
+            if np.dot(q, self.last_quat) < 0:
+                q = -q
 
-            self.current_quat = q
-            self.last_quat = q.copy()
+        self.current_quat = q
+        self.last_quat = q.copy()
 
-            self.current_rpy[:] = rot_flu2enu.as_euler('xyz')
+        self.current_rpy[:] = rot_flu2enu.as_euler('xyz')
 
-            # Velocità lineare: NED → ENU
-            self.current_vel[:] = self.M_ned2enu @ np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]]).T
+        # Velocità lineare: NED → ENU
+        self.current_vel[:] = self.M_ned2enu @ np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]]).T
             
-            self.current_ang_vel[:] = self.M_frd2flu @ np.array([msg.angular_velocity[0], msg.angular_velocity[1], msg.angular_velocity[2]]).T
+        self.current_ang_vel[:] = self.M_frd2flu @ np.array([msg.angular_velocity[0], msg.angular_velocity[1], msg.angular_velocity[2]]).T
             
-            self.px4_odom_timestamp_us = msg.timestamp  # Timestamp PX4 in microsecondi
+        self.px4_odom_timestamp_us = msg.timestamp  # Timestamp PX4 in microsecondi
             
-            # --- INIZIALIZZAZIONE DINAMICA X0 ---
-            if not self.first_odom_received:
-                self.e_int = np.zeros(3)
-                self.x0 = np.array([
-                    self.current_position[0], self.current_position[1], self.current_position[2],
-                    self.current_vel[0],  self.current_vel[1],  self.current_vel[2],
-                    q_w, q_x, q_y, q_z,
-                    self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
-                    0.0, 0.0, 0.0
+        # --- INIZIALIZZAZIONE DINAMICA X0 ---
+        if not self.first_odom_received:
+            self.e_int = np.zeros(3)
+            self.x0 = np.array([
+                self.current_position[0], self.current_position[1], self.current_position[2],
+                self.current_vel[0],  self.current_vel[1],  self.current_vel[2],
+                q_w, q_x, q_y, q_z,
+                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
+                0.0, 0.0, 0.0
                 ])
-                self.x0_rpy = np.array([
-                    self.current_position[0], self.current_position[1], self.current_position[2],
-                    self.current_vel[0],  self.current_vel[1],  self.current_vel[2],
-                    self.current_rpy[0],      self.current_rpy[1],      self.current_rpy[2],
-                    self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
-                    0.0, 0.0, 0.0
+            self.x0_rpy = np.array([
+                self.current_position[0], self.current_position[1], self.current_position[2],
+                self.current_vel[0],  self.current_vel[1],  self.current_vel[2],
+                self.current_rpy[0],      self.current_rpy[1],      self.current_rpy[2],
+                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
+                0.0, 0.0, 0.0
                 ])
 
-                # --- INITIALIZATION OF THE ESTIMATOR ---
-                if self.use_mbe:
-                    self.mbe.initialize(self.current_vel, self.current_ang_vel)
-                    self.get_logger().info(f"Estimator initialized with initial velocity: {self.current_vel}, initial angular velocity: {self.current_ang_vel}")
-                self.get_logger().info(f"Posa iniziale inizializzata da odometria: {self.current_position}")
-                self.first_odom_received = True 
+            # --- INITIALIZATION OF THE ESTIMATOR ---
+            if self.use_mbe:
+                self.mbe.initialize(self.current_vel, self.current_ang_vel)
+                self.get_logger().info(f"Estimator initialized with initial velocity: {self.current_vel}, initial angular velocity: {self.current_ang_vel}")
+            self.get_logger().info(f"Posa iniziale inizializzata da odometria: {self.current_position}")
+            self.first_odom_received = True 
 
         t = TransformStamped()
         t.header.stamp = self.get_clock().now().to_msg()
@@ -554,30 +548,54 @@ class MpcPlannerNode(Node):
         cam_pose_msg.pose.orientation = t.transform.rotation
         self.drone_cam_pose_pub.publish(cam_pose_msg)
 
+        # Calcola e pubblica il PoV attuale (coordinate cilindriche telecamera rispetto al peg)
+        # sempre, non appena lo stato del peg è disponibile, così che il logger abbia valori validi
+        # prima dello switch al task MPC
+        if self.obj_state_received:
+            p_rel = p_cam_odom - self.current_obj_pos
+            cyl_act = cartesian_to_cylindrical(p_rel)
+            r_cyl_act, beta_act, z_act = float(cyl_act[0]), float(cyl_act[1]), float(cyl_act[2])
+
+            yaw_actual = float(self.current_rpy[2])
+            p_cam_to_obj = self.current_obj_pos - p_cam_odom
+            yaw_desired = float(wrap_pi(np.arctan2(p_cam_to_obj[1], p_cam_to_obj[0])))
+            yaw_rel_act = float(min_angle(yaw_actual - yaw_desired))
+
+            actual_pov_msg = Float64MultiArray()
+            actual_pov_msg.data = [r_cyl_act, beta_act, z_act, yaw_rel_act]
+            self.actual_pov_pub.publish(actual_pov_msg)
+
+            if not self.task_started:
+                self.last_yaw_desired = yaw_desired
+                # Pubblica riferimento cilindrico attivo (/online_cylindrical_ref) anche pre-task
+                cyl_ref = self.get_current_ref(None)  # 4 elementi: [r, beta, z, yaw_offset]
+                self.ref_pub.publish(Float64MultiArray(data=[float(x) for x in cyl_ref]))
+
     """
     ===================== REFERENCE CALLBACKS ==============================
     """
     def pov_target_callback(self, msg: Float64MultiArray):
         if len(msg.data) >= 4:
-            with self.state_lock:
-                # Formato: [r_cyl_ref, beta_ref, z_rel_ref]
-                self.pov_target = np.array([msg.data[0], msg.data[1], msg.data[2]], dtype=float)
+            # Formato: [r_cyl_ref, beta_ref, z_rel_ref, yaw_offset]
+            self.pov_target = np.array([msg.data[0], msg.data[1], msg.data[2]], dtype=float)
+            self.pov_yaw_offset = float(msg.data[3])
+            self.ref_pub.publish(Float64MultiArray(data=[
+                float(self.pov_target[0]), float(self.pov_target[1]),
+                float(self.pov_target[2]), self.pov_yaw_offset]))
 
     def haptic_ref_callback(self, msg: Float64MultiArray):
         # Formato atteso: [r, beta, z_rel]
         if len(msg.data) >= 3:
-            with self.state_lock:
-                self.haptic_pov = np.array(msg.data[0:3], dtype=float)  # [r, beta, z_rel]
-                self.haptic_timestamp = self.get_clock().now()
-                self.pov_target = self.haptic_pov.copy()
+            self.haptic_pov = np.array(msg.data[0:3], dtype=float)  # [r, beta, z_rel]
+            self.haptic_timestamp = self.get_clock().now()
+            self.pov_target = self.haptic_pov.copy()
 
     def joy_ref_callback(self, msg: Float64MultiArray):
         # Formato atteso: [r, beta, z_rel]
         if len(msg.data) >= 3:
-            with self.state_lock:
-                self.joy_pov = np.array(msg.data[0:3], dtype=float)  # [r, beta, z_rel]
-                self.joy_timestamp = self.get_clock().now()
-                self.pov_target = self.joy_pov.copy()
+            self.joy_pov = np.array(msg.data[0:3], dtype=float)  # [r, beta, z_rel]
+            self.joy_timestamp = self.get_clock().now()
+            self.pov_target = self.joy_pov.copy()
 
     # ==================== Configurazione e Solve ====================
     def get_current_ref(self, xk):
@@ -620,177 +638,105 @@ class MpcPlannerNode(Node):
         beta_ref  = wrap_pi(ref[1])
         z_rel_ref = ref[2]
 
-        # Yaw offset (0 = oggetto al centro immagine, positivo = oggetto spostato in CCW)
-        yaw_offset = 0.0
+        # Yaw offset: oggetto decentrato nel FoV (0 = centro immagine)
+        yaw_offset = self.pov_yaw_offset
 
         return np.array([r_cyl_ref, beta_ref, z_rel_ref, yaw_offset])
 
     def configure_mpc(self):
 
-#        # Pesi normalizzati
-#        # [r_cyl_err, beta_err, z_err, yaw_rel_err]
-########################### GUADAGNI HARDWARE
-        #R_CYL  = 0.5      # range distanza [m]
-        #B_CYL  = np.pi/6  # range azimut [rad]
-        #Z_CYL  = 0.5      # range quota [m]
-        #Y_CYL  = np.pi/2  # range yaw [rad]
-        #E_INT_CART = np.array([1, 1, 1])
-#
-        #V       = np.array([0.3, 0.3, 0.3]) 
-        #ANG_DOT = np.array([0.15, 0.15, 0.5]) 
-        #ACC     = np.array([0.4, 0.4, 0.4]) ## OK ANCHE DIVIDENDO PER 2 (CON ESTIMATOR)
-        #ACC_ANG = np.array([2.0, 2.0, 3.0])
-        #JERK    = 20.0
-        #SNAP    = 200.0
-        ## MEDIA VOLO TAKEOFF HARDWARE
-        ##V = [0.05, 0.05, 0.08]
-        ##ANG_DOT = [0.05, 0.05, 0.03]
-        ##ACC = [0.12, 0.12, 0.11]
-        ##ACC_ANG = [1.5, 1.0, 0.5]
-#
-#
-        #PesoVis    = 10
-        #PesoRadius = PesoVis 
-        #PesoBeta   = PesoVis 
-        #PesoZ  = PesoVis 
-        #PesoYaw    = PesoVis 
-        #PesoInt    = PesoVis/50    # peso azione integrale cartesiana [ex, ey, ez]
-#
-        #PesoVel    = PesoVis / 50
-        #PesoAngVel = PesoVis / 10
-        #PesoAcc    = PesoVel / 5
-        #PesoAngAcc = PesoAngVel  
-        ##PesoJerk   = PesoAcc / 5
-        ##PesoSnap   = PesoJerk 
-        #PesoForce  = PesoVis / 100
-        #PesoTorque = PesoForce *2
-#
-        ## Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
-        #Q_cyl = np.diag([PesoRadius / R_CYL**2,
-        #                 PesoBeta  / B_CYL**2,
-        #                 PesoZ / Z_CYL**2, 
-        #                 PesoYaw   / Y_CYL**2])
-        ##Q_int     = np.diag([PesoInt]*3)    / np.array(E_INT_CART)**2
-        #Q_vel     = np.diag([PesoVel]*3)    / np.array(V)**2
-        #Q_ang_dot = np.diag([PesoAngVel]*3) / np.array(ANG_DOT)**2
-        #Q_acc     = np.diag([PesoAcc]*3)    / np.array(ACC)**2
-        #Q_acc_ang = np.diag([PesoAngAcc]*3) / np.array(ACC_ANG)**2
-        ##Q_jerk    = np.diag([PesoJerk]*3)   / JERK**2
-        ##Q_snap    = np.diag([PesoSnap]*3)   / SNAP**2
-        #R_f   = np.diag([PesoForce / self.U_F**2])
-        #R_tau = np.diag([PesoTorque / self.U_TAU_X**2,
-        #                   PesoTorque / self.U_TAU_Y**2,
-        #                   PesoTorque / self.U_TAU_Z**2])
-#
-        #R   = ca.diagcat(R_f, R_tau)
-        #Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
-        #Q_e = ca.diagcat(5 * Q_cyl, 5*Q_vel, 3*Q_ang_dot,1*Q_acc, 1*Q_acc_ang)
-###########################
-        # Guadagni simulazione
-        R_CYL  = 0.25      # range distanza [m]
-        B_CYL  = np.pi/6  # range azimut [rad]
-        Z_CYL  = 0.3      # range quota [m]
-        Y_CYL  = np.pi/2  # range yaw [rad]
-        E_INT_CART = np.array([1, 1, 1])
+        # =========================================================================
+        # 1. SCALE FISICHE (Denominatori Regola di Bryson)
+        # =========================================================================
+        X_CART     = 0.2                          # [m] tolleranza errore posizione piano XY
+        Y_CART     = 0.2                          # [m]
+        Z_CART     = 0.2                          # [m] tolleranza errore quota
+        Y_CYL      = np.pi / 3.0                  # [rad] tolleranza puntamento yaw (~60 deg)
+        E_INT_CART = np.array([0.1, 0.1, 0.1])    # [m*s] tolleranza errore integrale
+        V          = np.array([0.3, 0.3, 0.3])    # [m/s] velocità max attesa
+        ANG_DOT    = np.array([0.15, 0.15, 0.3])  # [rad/s] velocità angolare max
+        ACC        = np.array([0.4, 0.4, 0.4])    # [m/s^2] accelerazione max
+        ACC_ANG    = np.array([0.4, 0.4, 0.4])    # [rad/s^2] accelerazione angolare max
 
-        V       = np.array([0.6, 0.6, 0.3]) 
-        ANG_DOT = np.array([0.15, 0.15, 0.5]) 
-        ACC     = np.array([1.0, 1.0, 0.4]) 
-        ACC_ANG = np.array([1.0, 1.0, 1.5]) 
-        JERK    = 20.0
-        SNAP    = 200.0
+        # =========================================================================
+        # 2. SELEZIONE PARAMETRICA DEI PESI (Proporzioni relative su PesoVis)
+        # =========================================================================
+        PesoVis = 10.0
+        PesoX = PesoY = PesoZ = PesoYaw = PesoVis
 
-        PesoVis    = 10
-        PesoRadius = PesoVis    
-        PesoBeta   = PesoVis 
-        PesoZ  = PesoVis 
-        PesoYaw    = PesoVis 
-        PesoInt    = PesoVis/50    # peso azione integrale cartesiana [ex, ey, ez]
+        if not self.is_controller:
+            # ---------------------------------------------------------------------
+            # CASO 1:  PLANNER (setpoint pos/vel a PX4)
+            # ---------------------------------------------------------------------
+            self.get_logger().info("[MPC Tuning] Modalità: PLANNER (Integrale: OFF, Controllo PX4: Pos/Vel)")
+            PesoInt    = 0.0              # Integrale OFF: tracking di regime affidato ai PID di PX4
+            PesoVel    = PesoVis / 5.0   
+            PesoAngVel = PesoVis / 50.0
+            PesoAcc    = PesoVis / 30.0   
+            PesoAngAcc = PesoVis / 100.0
+            PesoForce  = PesoVis / 100.0  
+            PesoTorque = PesoVis / 100.0
+            scale_e = [10.0, 0.0, 10.0, 10.0, 2.0, 1.0] # Vis
 
-        PesoVel    = PesoVis / 20
-        PesoAngVel = PesoVis / 30 
-        PesoAcc    = PesoVis / 40 
-        PesoAngAcc = PesoVis / 50  
-        PesoJerk   = PesoAcc / 5
-        PesoSnap   = PesoJerk 
-        PesoForce  = PesoVis / 500
-        PesoTorque = PesoForce 
+        elif self.use_mbe:
+            # ---------------------------------------------------------------------
+            # CASO 2: CONTROLLER WRENCH CON MBE (disturbi compensati via feedforward)
+            # ---------------------------------------------------------------------
+            self.get_logger().info("[MPC Tuning] Modalità: CONTROLLER + MBE (Integrale: OFF, Feedforward: ON)")
+            PesoInt    = 0.0              # Integrale OFF: disturbo compensato direttamente da MBE
+            PesoVel    = PesoVis / 7.0   
+            PesoAngVel = PesoVis / 50.0
+            PesoAcc    = PesoVis / 50.0
+            PesoAngAcc = PesoVis / 100.0
+            PesoForce  = PesoVis / 10.0   
+            PesoTorque = PesoVis / 10.0
+            scale_e = [5.0, 0.0, 5.0, 5.0, 2.0, 1.0]
 
-        # Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
-        Q_cyl = np.diag([PesoRadius / R_CYL**2,
-                         PesoBeta  / B_CYL**2,
-                         PesoZ / Z_CYL**2, 
-                         PesoYaw   / Y_CYL**2])
-        #Q_int     = np.diag([PesoInt]*3)    / np.array(E_INT_CART)**2
-        Q_vel     = np.diag([PesoVel]*3)    / np.array(V)**2
-        Q_ang_dot = np.diag([PesoAngVel]*3) / np.array(ANG_DOT)**2
-        Q_acc     = np.diag([PesoAcc]*3)    / np.array(ACC)**2
-        Q_acc_ang = np.diag([PesoAngAcc]*3) / np.array(ACC_ANG)**2
-        #Q_jerk    = np.diag([PesoJerk]*3)   / JERK**2
-        #Q_snap    = np.diag([PesoSnap]*3)   / SNAP**2
+        else:
+            # ---------------------------------------------------------------------
+            # CASO 3: CONTROLLER WRENCH SENZA MBE (con Azione Integrale)
+            # ---------------------------------------------------------------------
+            self.get_logger().info("[MPC Tuning] Modalità: CONTROLLER (Integrale: ON, MBE: OFF)")
+            PesoInt    = PesoVis / 2   # Integrale ON: cancella errore a regime
+            PesoVel    = PesoVis / 5.0
+            PesoAngVel = PesoVis / 5.0
+            PesoAcc    = PesoVis / 20.0
+            PesoAngAcc = PesoVis / 20.0
+            PesoForce  = PesoVis / 10000.0
+            PesoTorque = PesoVis / 10000.0
+            scale_e = [10.0, 50.0, 10.0, 10.0, 2.0, 1.0]
 
-        R_f   = np.diag([PesoForce / self.U_F**2])
-        R_tau = ca.diagcat(PesoTorque / self.U_TAU_X**2,
-                           PesoTorque / self.U_TAU_Y**2,
-                           PesoTorque / self.U_TAU_Z**2)
+        # =========================================================================
+        # 3. COSTRUZIONE MATRICI Q, R, Q_e
+        # =========================================================================
+        Q_cart = np.diag([
+            PesoX   / X_CART**2,
+            PesoY   / Y_CART**2,
+            PesoZ   / Z_CART**2,
+            PesoYaw / Y_CYL**2
+        ])
+        Q_int     = np.diag([PesoInt]*3) / np.array(E_INT_CART)**2
+        Q_vel     = np.diag([PesoVel] * 3) / np.array(V)**2
+        Q_ang_dot = np.diag([PesoAngVel] * 3) / np.array(ANG_DOT)**2
+        Q_acc     = np.diag([PesoAcc] * 3) / np.array(ACC)**2
+        Q_acc_ang = np.diag([PesoAngAcc] * 3) / np.array(ACC_ANG)**2
 
+        R_f   = np.diag([PesoForce / 0.5**2])
+        R_tau = np.diag([
+            PesoTorque / 0.2**2,
+            PesoTorque / 0.2**2,
+            PesoTorque / 0.5**2
+        ])
         R   = ca.diagcat(R_f, R_tau)
-        Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
-        Q_e = ca.diagcat(5 * Q_cyl, 5*Q_vel, 5*Q_ang_dot,1*Q_acc, 1*Q_acc_ang)
-###########################
-
-        ### BUONO PER SIMULAZIONE CON PLANNER
-        #R_CYL  = 0.2      # range distanza [m]
-        #B_CYL  = 0.2  # range azimut [rad]
-        #Z_CYL  = 0.2      # range quota [m]
-        #Y_CYL  = np.pi/2  # range yaw [rad]
-        #E_INT_CART = np.array([1, 1, 1])
-#
-        #V       = np.array([0.5, 0.5, 0.5]) 
-        #ANG_DOT = np.array([0.2, 0.2, 0.4]) 
-        #ACC     = np.array([0.4, 0.4, 0.4]) 
-        #ACC_ANG = np.array([1.0, 1.0, 1.2]) 
-        #JERK    = 20.0
-        #SNAP    = 200.0
-#
-        #PesoVis    = 10
-        #PesoRadius = PesoVis    
-        #PesoBeta   = PesoVis  * 2
-        #PesoZ  = PesoVis 
-        #PesoYaw    = PesoVis 
-        #PesoInt    = PesoVis/50    # peso azione integrale cartesiana [ex, ey, ez]
-#
-        #PesoVel    = PesoVis / 5
-        #PesoAngVel = PesoVis / 25 
-        #PesoAcc    = PesoVis   / 20
-        #PesoAngAcc = PesoVis  / 100
-        #PesoJerk   = PesoAcc / 5
-        #PesoSnap   = PesoJerk 
-        #PesoForce  = PesoVis / 10
-        #PesoTorque = PesoForce 
-#
-        ## Q cilindrica: [r_cyl_err, beta_err, z_err, yaw_err]
-        #Q_cyl = np.diag([PesoRadius / R_CYL**2,
-        #                 PesoBeta  / B_CYL**2,
-        #                 PesoZ / Z_CYL**2, 
-        #                 PesoYaw   / Y_CYL**2])
-        ##Q_int     = np.diag([PesoInt]*3)    / np.array(E_INT_CART)**2
-        #Q_vel     = np.diag([PesoVel]*3)    / np.array(V)**2
-        #Q_ang_dot = np.diag([PesoAngVel]*3) / np.array(ANG_DOT)**2
-        #Q_acc     = np.diag([PesoAcc]*3)    / np.array(ACC)**2
-        #Q_acc_ang = np.diag([PesoAngAcc]*3) / np.array(ACC_ANG)**2
-        ##Q_jerk    = np.diag([PesoJerk]*3)   / JERK**2
-        ##Q_snap    = np.diag([PesoSnap]*3)   / SNAP**2
-#
-        #R_f   = np.diag([PesoForce / self.U_F**2])
-        #R_tau = ca.diagcat(PesoTorque / self.U_TAU_X**2,
-        #                   PesoTorque / self.U_TAU_Y**2,
-        #                   PesoTorque / self.U_TAU_Z**2)
-#
-        #R   = ca.diagcat(R_f, R_tau)
-        #Q   = ca.diagcat(Q_cyl, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
-        #Q_e = ca.diagcat(10 * Q_cyl, 10*Q_vel, 5*Q_ang_dot,1*Q_acc, 1*Q_acc_ang)
-
+        Q   = ca.diagcat(Q_cart, Q_int, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
+        Q_e = ca.diagcat(
+            scale_e[0] * Q_cart,
+            scale_e[1] * Q_int,
+            scale_e[2] * Q_vel,
+            scale_e[3] * Q_ang_dot,
+            scale_e[4] * Q_acc,
+            scale_e[5] * Q_acc_ang
+        )
 
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
         u_max = np.array([self.U_F,  self.U_TAU_X,  self.U_TAU_Y,  self.U_TAU_Z])
@@ -798,11 +744,15 @@ class MpcPlannerNode(Node):
         W   = ca.diagcat(Q, R).full()
         W_e = Q_e.full()
 
+        # Converte il riferimento cilindrico in target cartesiano per il solver
+        p_target_init = self.current_obj_pos + cylindrical_to_cartesian(self.pov_target)
+        yaw_des_init = float(wrap_pi(self.pov_target[1] + np.pi))
+
         (self.ocp_solver, self.N_horiz, self.nx, self.nu, self.y_idx, self.ny, self.ny_e) = configure_mpc(
             model=self.model, x0=self.x0,
-            p_obj=np.array([self.current_obj_pos]), Tf=self.Tp, ts=self.ts,
+            p_target=p_target_init, Tf=self.Tp, ts=self.ts,
             W=W, W_e=W_e, u_min=u_min, u_max=u_max,
-            cyl_ref=self.pov_target)
+            yaw_des=yaw_des_init)
         cond = np.linalg.cond(W)
         self.get_logger().info(f"Condition number di W: {cond:.2e}")
         w_diag = np.diag(W)
@@ -820,35 +770,40 @@ class MpcPlannerNode(Node):
 
         self.publish_predicted_path_from_buffers()
 
-    def solve_MPC(self, xk, cyl_ref, yaw_ref, vel_ref, F_ext=None, Tau_ext=None, p_obj_base=None):
-        """cyl_ref = [r_cyl_ref, beta_ref, z_rel_ref] — tutti riferimenti in coordinate del CoM del drone.
-        p_obj_base: posizione 'virtuale' dell'oggetto per il solver, già corretta per l'offset camera in world frame
-                    (= p_obj_reale - Rb @ cam_offset). Se None, usa current_obj_pos (nessuna camera).
+    def solve_MPC(self, xk, p_target, yaw_des, vel_ref, F_ext=None, Tau_ext=None, v_obj=None):
+        """p_target: posizione target cartesiana (CoM o camera) nel frame mondo, precalcolata esternamente.
+        yaw_des: yaw desiderato precalcolato esternamente (la telecamera punta all'oggetto).
+        v_obj: velocità dell'oggetto (ENU) per propagare p_target sull'orizzonte. Se None, usa self.current_obj_vel.
         """
         set_initial_state(self.ocp_solver, xk)
 
-        # Tutti gli errori cilindrici hanno riferimento 0 (sono già espressi come errore nel modello)
-        yref_val = build_yref_online(self.y_idx, vel_ref, u_ref=self.u_hover)
+        # Prendo il wrench esterno per creare un delta_u di riferimento per il controller
+        u_ref_dynamic = np.array([
+            self.mass * g0 - F_ext[2],  
+            -Tau_ext[0],                
+            -Tau_ext[1],                
+            -Tau_ext[2]                 
+        ])
+
+        yref_val = build_yref_online(self.y_idx, vel_ref, u_ref=u_ref_dynamic)
         yref_e   = yref_val[:self.ny_e]
 
         if F_ext is None:
             F_ext = np.zeros(3)
         if Tau_ext is None:
             Tau_ext = np.zeros(3)
+        if v_obj is None:
+            v_obj = self.current_obj_vel
 
-        # Parametri (13): [p_obj(3), r_cyl_ref, beta_ref, z_rel_ref, yaw_ref_sym, F_ext(3), Tau_ext(3)]
-        params = np.zeros(13)
-        params[3:6] = cyl_ref
-        params[6]   = yaw_ref
-        params[7:10] = F_ext
-        params[10:13] = Tau_ext
+        # Parametri (10): [p_target(3), yaw_des(1), F_ext(3), Tau_ext(3)]
+        params = np.zeros(10)
+        params[3]    = yaw_des
+        params[4:7]  = F_ext
+        params[7:10] = Tau_ext
 
-        # p_obj_base: posizione virtuale dell'oggetto corretta per offset camera (calcolata fuori dal solver)
-        # Al passo i dell'orizzonte viene propagata con la velocità dell'oggetto.
-        p_base = p_obj_base if p_obj_base is not None else self.current_obj_pos
-
+        # Propaga p_target sull'orizzonte con la velocità dell'oggetto
         for i in range(self.N_horiz + 1):
-            params[0:3] = p_base + self.current_obj_vel * (i * self.ts)
+            params[0:3] = p_target + v_obj * (i * self.ts)
             self.ocp_solver.set(i, "p", params)
 
         # Riferimenti yref: aggiorna nel solver solo se variati (risparmia N+1 chiamate ctypes a ciclo)
@@ -908,37 +863,35 @@ class MpcPlannerNode(Node):
         # === AGGIORNAMENTO MBE — attivo SEMPRE, anche prima della configurazione solver ===
         # Massimizza il tempo di pre-convergenza durante il decollo PX4:
         # al momento dello switch all'MPC, F_ext e Tau_ext sono già stabilizzati.
-        with self.state_lock:
-            F_ext = np.zeros(3)
-            Tau_ext = np.zeros(3)
-            if self.use_mbe and self.mbe is not None:
-                if self.task_started and self.last_u0_applied is not None:
-                    # MPC attivo: usa l'ultimo ingresso pianificato
-                    f_cmd = self.last_u0_applied[0]
-                    tau_cmd = self.last_u0_applied[1:4]
-                else:
-                    # MPC silente / decollo PX4: usa i comandi denormalizzati di PX4 e portati in FLU
-                    f_cmd = self.current_px4_thrust[2]
-                    tau_cmd = self.current_px4_torque
+        F_ext = np.zeros(3)
+        Tau_ext = np.zeros(3)
+        if self.use_mbe and self.mbe is not None:
+            if self.task_started and self.last_u0_applied is not None:
+                # MPC attivo: usa l'ultimo ingresso pianificato
+                f_cmd = self.last_u0_applied[0]
+                tau_cmd = self.last_u0_applied[1:4]
+            else:
+                # MPC silente / decollo PX4: usa i comandi denormalizzati di PX4 e portati in FLU
+                f_cmd = self.current_px4_thrust[2]
+                tau_cmd = self.current_px4_torque
 
-                F_ext, Tau_ext = self.mbe.update(
-                    self.current_vel,
-                    self.current_ang_vel,
-                    self.current_quat,
-                    f_cmd,
-                    tau_cmd
-                )
-                est_w = Wrench()
-                est_w.force.x, est_w.force.y, est_w.force.z = float(F_ext[0]), float(F_ext[1]), float(F_ext[2])
-                est_w.torque.x, est_w.torque.y, est_w.torque.z = float(Tau_ext[0]), float(Tau_ext[1]), float(Tau_ext[2])
-                self.estimated_wrench_pub.publish(est_w)
+            F_ext, Tau_ext = self.mbe.update(
+                self.current_vel,
+                self.current_ang_vel,
+                self.current_quat,
+                f_cmd,
+                tau_cmd
+            )
+            est_w = Wrench()
+            est_w.force.x, est_w.force.y, est_w.force.z = float(F_ext[0]), float(F_ext[1]), float(F_ext[2])
+            est_w.torque.x, est_w.torque.y, est_w.torque.z = float(Tau_ext[0]), float(Tau_ext[1]), float(Tau_ext[2])
+            self.estimated_wrench_pub.publish(est_w)
 
             self.current_F_ext = F_ext
             self.current_Tau_ext = Tau_ext
 
         # Solver non ancora pronto: MBE è già aggiornato, torna al prossimo tick
-        with self.state_lock:
-            ready = self.acados_solver_ready
+        ready = self.acados_solver_ready
 
         if not ready:
             self.get_logger().info("Compilazione MPC in corso...", throttle_duration_sec=5.0)
@@ -950,109 +903,82 @@ class MpcPlannerNode(Node):
         if not self.task_started:
             return
         
-        # --- LOGICA HOLD AND SHIFT ---
-        with self.state_lock:
-            if not self.safety_switch_passed:
-                # Eseguiamo un solve fittizio per calcolare u0 senza applicarlo
-                pass # prosegue sotto, ma lo intercettiamo prima del publish
+        # --- Calcolo stato, orientamento e riferimenti ---
+        self.R = Rotation.from_euler('xyz', self.current_rpy).as_matrix()
 
+        # Costruzione dello stato aumentato [p, v, q, w, e_int] (16 componenti)
+        # In modalità planner (is_controller=False), usiamo la predizione nominale al passo precedente
+        if not self.is_controller and self.x_plan is not None and not self._first_mpc_solve:
+            xk = self.x_plan[1].copy()
+            q_norm = np.linalg.norm(xk[6:10])
+            if q_norm > 1e-6:
+                xk[6:10] /= q_norm
+        else:
+            xk = np.array([
+                self.current_position[0], self.current_position[1], self.current_position[2],
+                self.current_vel[0], self.current_vel[1], self.current_vel[2],
+                self.current_quat[0], self.current_quat[1], self.current_quat[2], self.current_quat[3],
+                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
+                self.e_int[0], self.e_int[1], self.e_int[2]
+            ])
 
-            if self.solver_is_running:
-                if self.u_plan is not None and len(self.u_plan) > 1:
-                    self.u_plan = np.roll(self.u_plan, -1, axis=0)
-                    self.x_plan = np.roll(self.x_plan, -1, axis=0)
-                    
-                    u0 = self.u_plan[0]
-                    next_x = self.x_plan[1]
-                    
-                    if self.is_controller:
-                        self.publish_optimal_wrench(u0)
-                    else:
-                        self.publish_trajectory_setpoint(next_x, self.last_yaw_desired)
-                    self.publish_pose_and_twist(next_x)
-                return
+        F_ext = self.current_F_ext
+        Tau_ext = self.current_Tau_ext
 
-            self.solver_is_running = True
-            
-            self.R = Rotation.from_euler('xyz',self.current_rpy).as_matrix()
+        # Riferimento cilindrico → target cartesiano (fuori dal solver)
+        ref_array = self.get_current_ref(xk)
+        cyl_ref = ref_array[0:3]
+        yaw_ref = ref_array[3]
+        beta_ref = cyl_ref[1]
+        vel_ref = np.zeros(3)
 
-            # Costruzione dello stato aumentato [p, v, q, w, e_int] (16 componenti)
-            # In modalità planner (is_controller=False), usiamo la predizione nominale al passo precedente
-            if not self.is_controller and self.x_plan is not None and not self._first_mpc_solve:
-                xk = self.x_plan[1].copy()
-                q_norm = np.linalg.norm(xk[6:10])
-                if q_norm > 1e-6:
-                    xk[6:10] /= q_norm
-            else:
-                xk = np.array([
-                    self.current_position[0], self.current_position[1], self.current_position[2],
-                    self.current_vel[0], self.current_vel[1], self.current_vel[2],
-                    self.current_quat[0], self.current_quat[1], self.current_quat[2], self.current_quat[3],
-                    self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
-                    self.e_int[0], self.e_int[1], self.e_int[2]
-                ])
+        # Conversione cyl→cart: il target cartesiano include l'offset camera in world frame
+        # Rb corrente usato solo per la correzione camera al passo k;
+        # sull'orizzonte p_target si propaga con v_obj (errore O(N*ts*dRb/dt) ≈ 0)
+        cam_world_offset = self.R @ self.camera_offset
+        p_target = self.current_obj_pos + cylindrical_to_cartesian(cyl_ref) - cam_world_offset
 
-            F_ext = self.current_F_ext
-            Tau_ext = self.current_Tau_ext
+        # Pubblica riferimento cilindrico per monitoraggio (include yaw_offset)
+        self.ref_pub.publish(Float64MultiArray(data=[float(x) for x in ref_array]))
 
-            # Calcolo dei riferimenti cilindrici [r_cyl_ref, beta_ref, z_rel_ref] e yaw_ref
-            ref_array = self.get_current_ref(xk)
-            cyl_ref = ref_array[0:3]
-            yaw_ref = ref_array[3]
-            beta_ref = cyl_ref[1]
-            vel_ref = np.zeros(3)
+        # Calcola p_cam e p_rel per l'errore integrale cartesiano
+        p_drone = xk[0:3]
+        q_drone = xk[6:10]
+        # Scipy Rotation.from_quat usa [x, y, z, w], CasADi usa [w, x, y, z]
+        Rb = Rotation.from_quat([q_drone[1], q_drone[2], q_drone[3], q_drone[0]]).as_matrix()
+        p_cam = p_drone + Rb @ self.camera_offset
 
-            # Publish reference for monitoring
-            self.ref_pub.publish(Float64MultiArray(data=[float(x) for x in cyl_ref]))
+        p_obj_now = self.current_obj_pos
+        p_rel = p_cam - p_obj_now
 
-            # Calcola e pubblica il PoV attuale (cilindrico) basato sulla telecamera
-            p_drone = xk[0:3]
-            q_drone = xk[6:10]
-            # Scipy Rotation.from_quat usa [x, y, z, w], CasADi usa [w, x, y, z]
-            Rb = Rotation.from_quat([q_drone[1], q_drone[2], q_drone[3], q_drone[0]]).as_matrix()
-            p_cam = p_drone + Rb @ self.camera_offset
-            # Nota: /drone_cam_pose è ora pubblicato nella callback odometria (sempre, anche pre-task)
+        # yaw_desired: la telecamera punta verso l'oggetto (distanza ~ r_cyl > 0, mai singolarità)
+        p_cam_to_obj = self.current_obj_pos - p_cam
+        yaw_desired = float(wrap_pi(np.arctan2(
+            p_cam_to_obj[1],
+            p_cam_to_obj[0]
+        ) + yaw_ref))
+        self.last_yaw_desired = yaw_desired
 
-            p_obj_now = self.current_obj_pos
-            p_rel = p_cam - p_obj_now
-            cyl_act = cartesian_to_cylindrical(p_rel)
-            r_cyl_act, beta_act, z_act = cyl_act[0], cyl_act[1], cyl_act[2]
-            
-            if not self.is_controller and self.x_plan is not None and not self._first_mpc_solve:
-                # Yaw calcolato coerentemente dallo stato predetto xk
-                yaw_actual = Rotation.from_quat([q_drone[1], q_drone[2], q_drone[3], q_drone[0]]).as_euler('xyz')[2]
-            else:
-                yaw_actual = self.current_rpy[2]
-            # yaw_desired coerente con il costo MPC: beta_attuale + π + offset
-            yaw_desired = float(wrap_pi(beta_act + np.pi + yaw_ref))
-            self.last_yaw_desired = yaw_desired
-            yaw_rel_act = min_angle(yaw_actual - yaw_desired)
-                        
-            actual_pov_msg = Float64MultiArray()
-            actual_pov_msg.data = [r_cyl_act, beta_act, z_act, yaw_rel_act]
-            self.actual_pov_pub.publish(actual_pov_msg)
-
-            # Aggiornamento accumulatore errore integrale cartesiano [ex, ey, ez] con anti-windup
+        # Aggiornamento accumulatore errore integrale cartesiano [ex, ey, ez] con anti-windup
+        # Attivo solo in modalità controller senza MBE; altrimenti mantenuto a zero
+        if self.is_controller and not self.use_mbe:
             p_rel_target = cylindrical_to_cartesian(cyl_ref)
             err_cart_now = p_rel_target - p_rel
             self.e_int += err_cart_now * self.ts
             self.e_int = np.clip(self.e_int, -2.0, 2.0)
-            
-            # Pubblica l'azione integrale
-            int_msg = Vector3()
-            int_msg.x = float(self.e_int[0])
-            int_msg.y = float(self.e_int[1])
-            int_msg.z = float(self.e_int[2])
-            self.integral_action_pub.publish(int_msg)
+        else:
+            self.e_int = np.zeros(3)
+        
+        # Pubblica l'azione integrale
+        int_msg = Vector3()
+        int_msg.x = float(self.e_int[0])
+        int_msg.y = float(self.e_int[1])
+        int_msg.z = float(self.e_int[2])
+        self.integral_action_pub.publish(int_msg)
 
         try:
             t_start = time.perf_counter()
-            # Rb è già calcolato sopra dal quaternione corrente.
-            cam_world_offset = Rb @ self.camera_offset
-            p_obj_base = self.current_obj_pos - cam_world_offset
-
-            # --- WARM-START MIGLIORATO AL PRIMO SOLVE DOPO LO SWITCH ---
-            # Sostituisce il piano iniziale (cloni di x0) con lo stato corrente reale
+            # Warm-start al primo solve dopo lo switch
             if self._first_mpc_solve:
                 self._first_mpc_solve = False
                 for i in range(self.N_horiz + 1):
@@ -1063,7 +989,8 @@ class MpcPlannerNode(Node):
                     self.u_prev[i] = self.u_hover.copy()
                 self.get_logger().info("[MPC] Warm-start con stato corrente applicato.")
 
-            u0_new, x_seq_new, yref0, u_plan_new, x_plan_new = self.solve_MPC(xk, cyl_ref, yaw_ref, vel_ref, F_ext, Tau_ext, p_obj_base)
+            u0_new, x_seq_new, yref0, u_plan_new, x_plan_new = self.solve_MPC(
+                xk, p_target, yaw_desired, vel_ref, F_ext, Tau_ext)
             t_end = time.perf_counter()
             
             # Calcolo tempo di risoluzione dell'iterazione corrente dell'MPC 
@@ -1074,24 +1001,24 @@ class MpcPlannerNode(Node):
             st_msg.data = float(dt_solve * 1e3)
             self.solve_time_pub.publish(st_msg)
             
-            with self.state_lock:
-                self.u_plan = u_plan_new
-                self.x_plan = x_plan_new
+            self.u_plan = u_plan_new
+            self.x_plan = x_plan_new
+            u0 = u0_new
+            next_x = self.x_plan[1]
                 
-                n_skip = int(dt_solve / self.ts)
-                if n_skip > 0:
-                    self.get_logger().warn(
-                        f"Solver time ({dt_solve:.4f}s) exceeded sampling time ({self.ts}s)! Skipping {n_skip} steps.",
-                        throttle_duration_sec=1.0
-                    )
-                    # Se ci sono salti, shiftiamo gli array di u e x di n_skip posizioni per mantenere la predizione corretta
-                    if n_skip < self.N_horiz:
-                        self.u_plan = np.roll(self.u_plan, -n_skip, axis=0)
-                        self.x_plan = np.roll(self.x_plan, -n_skip, axis=0)
+            n_skip = int(dt_solve / self.ts)
+            if n_skip > 0:
+                self.get_logger().warn(
+                    f"Solver time ({dt_solve:.4f}s) exceeded sampling time ({self.ts}s)! Skipping {n_skip} steps.",
+                    throttle_duration_sec=1.0
+                )
+                # Se ci sono salti, shiftiamo gli array di u e x di n_skip posizioni per mantenere la predizione corretta
+                if n_skip < self.N_horiz:
+                    self.u_plan = np.roll(self.u_plan, -n_skip, axis=0)
+                    self.x_plan = np.roll(self.x_plan, -n_skip, axis=0)
                 
                 u0 = self.u_plan[0]
                 next_x = self.x_plan[1]
-                self.solver_is_running = False
 
             # Safe Switch Check
             if not self.safety_switch_passed:
@@ -1155,8 +1082,6 @@ class MpcPlannerNode(Node):
 
         except Exception as e:
             self.get_logger().error(f"Errore nel solver: {e}")
-            with self.state_lock:
-                self.solver_is_running = False
             return
 
 
@@ -1176,8 +1101,8 @@ class MpcPlannerNode(Node):
         msg.acceleration = False
         msg.attitude = False
         msg.body_rate = False
-        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
-        #msg.timestamp = 0  # PX4 auto-compila con hrt_absolute_time()
+        #msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        msg.timestamp = 0  # PX4 auto-compila con hrt_absolute_time()
         self.offboard_control_mode_publisher.publish(msg)
 
     def publish_trajectory_setpoint(self, next_x, yaw_desired_enu):
@@ -1312,10 +1237,11 @@ class MpcPlannerNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = MpcPlannerNode()
-    executor = MultiThreadedExecutor()
-    executor.add_node(node)
+    #executor = MultiThreadedExecutor()
+    #executor.add_node(node)
     try:
-        executor.spin()
+        #executor.spin()
+        rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     node.destroy_node()
