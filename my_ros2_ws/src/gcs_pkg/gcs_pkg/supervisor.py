@@ -92,8 +92,10 @@ class SupervisorNode(Node):
         self.declare_parameter('cam_z_offset', 0.0)
 
         # Parametri target PoV opzionali (se pov_r > 0 forza un valore fisso, altrimenti calcolato da hovering)
-        self.pov_r = -1.0
-        self.pov_beta = 0.0
+        #self.pov_r = -1.0
+        #self.pov_beta = 0.0
+        self.pov_r = 2.0
+        self.pov_beta = np.pi/2.0
         self.pov_z = 0.0
         self.pov_yaw = 0.0
 
