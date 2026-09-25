@@ -616,16 +616,6 @@ def main():
         if block:
             plt.show()
 
-    # --- FIGURE 18: Integral Action ---
-    if indata('integral_action'):
-        fig18_data = [
-            {'sim': data['integral_action'][:, 0], 'ref': 0.0},
-            {'sim': data['integral_action'][:, 1], 'ref': 0.0},
-            {'sim': data['integral_action'][:, 2], 'ref': 0.0}
-        ]
-        myPlot(t, fig18_data, 
-               ["Integral e_x [m*s]", "Integral e_y [m*s]", "Integral e_z [m*s]"], 
-               "Cartesian Integral Action (Anti-windup clipped)", ncols=3, use_tex=args.tex, block=block, fignum=18, task_start=task_start, task_end=task_end)
 
     # --- GENERAZIONE REPORT METRICHE COMPLETO (Benchmark, Jitter, Tracking) ---
     report_lines = []

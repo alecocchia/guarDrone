@@ -14,7 +14,6 @@ def build_yref_online(y_idx, vel_ref, u_ref=np.zeros(4)):
     """Costruisce il vettore di riferimento online per la formulazione cartesiana."""
     yref = np.zeros(y_idx["u"].stop)
     yref[y_idx["pos"]]     = np.array([0.0, 0.0, 0.0, 0.0])  # [ex, ey, ez, yaw_err] → tutti zero
-    yref[y_idx["int"]]     = np.array([0.0, 0.0, 0.0])        # [e_int_x, e_int_y, e_int_z] → tutti zero
     yref[y_idx["vel"]]     = vel_ref
     yref[y_idx["ang_vel"]] = np.array([0.0, 0.0, 0.0])
     yref[y_idx["acc"]]     = np.array([0.0, 0.0, 0.0])
@@ -55,12 +54,8 @@ def setup_initial_conditions(start_x,start_y,start_z,start_phi,start_theta,start
     wy=0
     wz=0
 
-    e_x = 0
-    e_y = 0
-    e_z = 0
-
-    x0 = np.array([xx,y,z,vx,vy,vz,qw,qx,qy,qz,wx,wy,wz, e_x, e_y, e_z])  # 16 stati totali
-    x0_rpy=np.array([xx,y,z,vx,vy,vz,roll,pitch,yaw,wx,wy,wz, e_x, e_y, e_z])
+    x0 = np.array([xx,y,z,vx,vy,vz,qw,qx,qy,qz,wx,wy,wz])  # 13 stati totali
+    x0_rpy=np.array([xx,y,z,vx,vy,vz,roll,pitch,yaw,wx,wy,wz])  # 12 stati totali
     return x0,x0_rpy
 
 def set_initial_state(ocp_solver, xk):
@@ -219,14 +214,11 @@ def configure_mpc(model : AcadosModel, x0, p_target, Tf, ts, W, W_e,
     '''
                                         COST FUNCTION — formulazione cartesiana
     '''
-    e_int_expr = model.x[13:16]
-
     # [ex, ey, ez, yaw_err, vel, ang_vel, acc, acc_ang, u]
     # Jacobiano posizionale = identità → condizionamento uniforme, nessuna dipendenza da r o beta
     y_expr = ca.vertcat(
         pos_err,                        # Errore posizione cartesiana [ex, ey, ez]
         yaw_err,                        # Errore yaw (punta verso il target)
-        e_int_expr,                     # Errori integrali cartesiani
         v_expr,                         # Velocità
         ang_vel,                        # Velocità angolari
         acc_expr,                       # Accelerazione
@@ -240,7 +232,6 @@ def configure_mpc(model : AcadosModel, x0, p_target, Tf, ts, W, W_e,
     y_expr_e = ca.vertcat(
         pos_err,
         yaw_err,
-        e_int_expr,
         v_expr,
         ang_vel,
         acc_hover,
@@ -274,9 +265,7 @@ def configure_mpc(model : AcadosModel, x0, p_target, Tf, ts, W, W_e,
 
     # Indici del vettore y (formulazione cartesiana)
     pos_ind     = slice(0, 4)                                    # [ex, ey, ez, yaw_err]
-    int_ind     = slice(pos_ind.stop,     pos_ind.stop + 3)      # [e_int_x, e_int_y, e_int_z]
-    vel_ind     = slice(int_ind.stop,     int_ind.stop + 3)   # CASO INTEGRATORE
-    #vel_ind     = slice(pos_ind.stop,     pos_ind.stop + 3)    # CASO NO INTEGRATORE
+    vel_ind     = slice(pos_ind.stop,     pos_ind.stop + 3)
     ang_vel_ind = slice(vel_ind.stop,     vel_ind.stop + 3)
     acc_ind     = slice(ang_vel_ind.stop, ang_vel_ind.stop + 3)
     acc_ang_ind = slice(acc_ind.stop,     acc_ind.stop + 3)
@@ -287,7 +276,6 @@ def configure_mpc(model : AcadosModel, x0, p_target, Tf, ts, W, W_e,
 
     y_idx = {
         "pos":     pos_ind,      # [ex, ey, ez, yaw_err]
-        "int":     int_ind,      # [e_int_x, e_int_y, e_int_z]  # COMMENTARE SE NO INTEGRATORE
         "vel":     vel_ind,
         "ang_vel": ang_vel_ind,
         "acc":     acc_ind,

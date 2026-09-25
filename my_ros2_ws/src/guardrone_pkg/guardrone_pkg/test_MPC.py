@@ -139,7 +139,6 @@ def run_standalone_test(sim_time=30.0, plot_save_path=None, save_gif=False):
     Y_CART = 0.2
     Z_CART = 0.2
     Y_CYL  = np.pi / 3   
-    E_INT_CART = np.array([0.1, 0.1, 0.1])
     
     V = np.array([0.3, 0.3, 0.3])
     ANG_DOT = np.array([0.15, 0.15, 0.3])
@@ -151,7 +150,6 @@ def run_standalone_test(sim_time=30.0, plot_save_path=None, save_gif=False):
     PesoY   = PesoVis
     PesoZ   = PesoVis
     PesoYaw = PesoVis
-    PesoInt = PesoVis/10
     PesoVel    = PesoVis / 10
     PesoAngVel = PesoVis / 50
     PesoAcc    = PesoVis / 20
@@ -165,7 +163,6 @@ def run_standalone_test(sim_time=30.0, plot_save_path=None, save_gif=False):
         PesoZ   / Z_CART**2,
         PesoYaw / Y_CYL**2
     ])
-    Q_int = np.diag([PesoInt]*3) / np.array(E_INT_CART)**2
     Q_vel     = np.diag([PesoVel] * 3) / np.array(V)**2
     Q_ang_dot = np.diag([PesoAngVel] * 3) / np.array(ANG_DOT)**2
     Q_acc     = np.diag([PesoAcc] * 3) / np.array(ACC)**2
@@ -177,8 +174,8 @@ def run_standalone_test(sim_time=30.0, plot_save_path=None, save_gif=False):
         PesoTorque / u_tau_z**2
     ])
     R   = ca.diagcat(R_f, R_tau)
-    Q   = ca.diagcat(Q_cart,Q_int, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
-    Q_e = ca.diagcat(10 * Q_cart, 10 * Q_int, 10 * Q_vel, 10 * Q_ang_dot, 1 * Q_acc, 1 * Q_acc_ang)
+    Q   = ca.diagcat(Q_cart, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
+    Q_e = ca.diagcat(10 * Q_cart, 10 * Q_vel, 10 * Q_ang_dot, 1 * Q_acc, 1 * Q_acc_ang)
 
         
     u_min = np.array([0.0, -u_tau_x, -u_tau_y, -u_tau_z])
@@ -206,7 +203,7 @@ def run_standalone_test(sim_time=30.0, plot_save_path=None, save_gif=False):
     print(f"[INFO] W min={w_diag.min():.2e} (idx {w_diag.argmin()}), max={w_diag.max():.2e} (idx {w_diag.argmax()})")
 
     # 5. Costruzione integratore RK4 della dinamica del drone
-    # f_expl_expr modella: p_dot = v, v_dot = 1/m*(R*Fz + F_ext) - g, q_dot, w_dot, e_int_dot
+    # f_expl_expr modella: p_dot = v, v_dot = 1/m*(R*Fz + F_ext) - g, q_dot, w_dot
     f_dyn = ca.Function('f_dyn', [model.x, model.u, model.p], [model.f_expl_expr])
 
     def rk4_step(x, u, p, dt):

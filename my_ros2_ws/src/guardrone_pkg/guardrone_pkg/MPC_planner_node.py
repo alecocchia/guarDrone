@@ -187,7 +187,6 @@ class MpcPlannerNode(Node):
         self.current_obj_vel = np.zeros(3)
         self.current_obj_ang_vel = np.zeros(3)
         self.current_obj_rpy = np.zeros(3)
-        self.e_int = np.zeros(3)  # Accumulatore errore integrale [e_int_r, e_int_beta, e_int_z]
 
 
         # Target PoV in coordinate cilindriche: [r_cyl_ref, beta_ref, z_rel_ref]
@@ -276,7 +275,6 @@ class MpcPlannerNode(Node):
         self.tf_broadcaster   = tf2_ros.TransformBroadcaster(self)
         self.ref_pub = self.create_publisher(Float64MultiArray, '/online_cylindrical_ref', 1)
         self.actual_pov_pub = self.create_publisher(Float64MultiArray, '/actual_pov', 1)
-        self.integral_action_pub = self.create_publisher(Vector3, '/integral_action', 1)
         self.solve_time_pub = self.create_publisher(Float64, '/mpc_solve_time', 1)
 
         self.control_timer = self.create_timer(self.ts, self.control_step)
@@ -472,20 +470,17 @@ class MpcPlannerNode(Node):
             
         # --- INIZIALIZZAZIONE DINAMICA X0 ---
         if not self.first_odom_received:
-            self.e_int = np.zeros(3)
             self.x0 = np.array([
                 self.current_position[0], self.current_position[1], self.current_position[2],
                 self.current_vel[0],  self.current_vel[1],  self.current_vel[2],
                 q_w, q_x, q_y, q_z,
-                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
-                0.0, 0.0, 0.0
+                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2]
                 ])
             self.x0_rpy = np.array([
                 self.current_position[0], self.current_position[1], self.current_position[2],
                 self.current_vel[0],  self.current_vel[1],  self.current_vel[2],
                 self.current_rpy[0],      self.current_rpy[1],      self.current_rpy[2],
-                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
-                0.0, 0.0, 0.0
+                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2]
                 ])
 
             # --- INITIALIZATION OF THE ESTIMATOR ---
@@ -652,7 +647,6 @@ class MpcPlannerNode(Node):
         Y_CART     = 0.2                          # [m]
         Z_CART     = 0.2                          # [m] tolleranza errore quota
         Y_CYL      = np.pi / 3.0                  # [rad] tolleranza puntamento yaw (~60 deg)
-        E_INT_CART = np.array([0.1, 0.1, 0.1])    # [m*s] tolleranza errore integrale
         V          = np.array([0.2, 0.2, 0.2])    # [m/s] velocità max attesa
         ANG_DOT    = np.array([0.15, 0.15, 0.3])  # [rad/s] velocità angolare max
         ACC        = np.array([0.3, 0.3, 0.3])    # [m/s^2] accelerazione max
@@ -668,43 +662,40 @@ class MpcPlannerNode(Node):
             # ---------------------------------------------------------------------
             # CASO 1:  PLANNER (setpoint pos/vel a PX4)
             # ---------------------------------------------------------------------
-            self.get_logger().info("[MPC Tuning] Modalità: PLANNER (Integrale: OFF, Controllo PX4: Pos/Vel)")
-            PesoInt    = 0.0              # Integrale OFF: tracking di regime affidato ai PID di PX4
+            self.get_logger().info("[MPC Tuning] Modalità: PLANNER (Controllo PX4: Pos/Vel)")
             PesoVel    = PesoVis / 5.0   
             PesoAngVel = PesoVis / 50.0
             PesoAcc    = PesoVis / 30.0   
             PesoAngAcc = PesoVis / 100.0
             PesoForce  = PesoVis / 100.0  
             PesoTorque = PesoVis / 100.0
-            scale_e = [10.0, 0.0, 10.0, 10.0, 2.0, 1.0] # Vis
+            scale_e = [10.0, 10.0, 10.0, 2.0, 1.0] # Vis, Vel, AngVel, Acc, AngAcc
 
         elif self.use_mbe:
             # ---------------------------------------------------------------------
             # CASO 2: CONTROLLER WRENCH CON MBE (disturbi compensati via feedforward)
             # ---------------------------------------------------------------------
-            self.get_logger().info("[MPC Tuning] Modalità: CONTROLLER + MBE (Integrale: OFF, Feedforward: ON)")
-            PesoInt    = 0.0              # Integrale OFF: disturbo compensato direttamente da MBE
+            self.get_logger().info("[MPC Tuning] Modalità: CONTROLLER + MBE (Feedforward: ON)")
             PesoVel    = PesoVis / 7.0   
             PesoAngVel = PesoVis / 10.0
             PesoAcc    = PesoVis / 20.0
             PesoAngAcc = PesoVis / 50.0
             PesoForce  = PesoVis / 10.0   
             PesoTorque = PesoVis / 10.0
-            scale_e = [5.0, 0.0, 5.0, 5.0, 2.0, 1.0]
+            scale_e = [5.0, 5.0, 5.0, 2.0, 1.0]
 
         else:
             # ---------------------------------------------------------------------
-            # CASO 3: CONTROLLER WRENCH SENZA MBE (con Azione Integrale) ------------NON USARE
+            # CASO 3: CONTROLLER WRENCH SENZA MBE 
             # ---------------------------------------------------------------------
-            self.get_logger().info("[MPC Tuning] Modalità: CONTROLLER (Integrale: ON, MBE: OFF)")
-            PesoInt    = PesoVis / 2   # Integrale ON: cancella errore a regime
+            self.get_logger().info("[MPC Tuning] Modalità: CONTROLLER (MBE: OFF)")
             PesoVel    = PesoVis / 5.0
-            PesoAngVel = PesoVis / 5.0
-            PesoAcc    = PesoVis / 20.0
-            PesoAngAcc = PesoVis / 20.0
-            PesoForce  = PesoVis / 10000.0
-            PesoTorque = PesoVis / 10000.0
-            scale_e = [10.0, 50.0, 10.0, 10.0, 2.0, 1.0]
+            PesoAngVel = PesoVis / 10.0
+            PesoAcc    = PesoVis / 10.0
+            PesoAngAcc = PesoVis / 100.0
+            PesoForce  = PesoVis / 10.0
+            PesoTorque = PesoVis / 10.0
+            scale_e = [5.0, 5.0, 5.0, 2.0, 1.0]
 
         # =========================================================================
         # 3. COSTRUZIONE MATRICI Q, R, Q_e
@@ -715,7 +706,6 @@ class MpcPlannerNode(Node):
             PesoZ   / Z_CART**2,
             PesoYaw / Y_CYL**2
         ])
-        Q_int     = np.diag([PesoInt]*3) / np.array(E_INT_CART)**2
         Q_vel     = np.diag([PesoVel] * 3) / np.array(V)**2
         Q_ang_dot = np.diag([PesoAngVel] * 3) / np.array(ANG_DOT)**2
         Q_acc     = np.diag([PesoAcc] * 3) / np.array(ACC)**2
@@ -728,14 +718,13 @@ class MpcPlannerNode(Node):
             PesoTorque / 0.5**2
         ])
         R   = ca.diagcat(R_f, R_tau)
-        Q   = ca.diagcat(Q_cart, Q_int, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
+        Q   = ca.diagcat(Q_cart, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
         Q_e = ca.diagcat(
             scale_e[0] * Q_cart,
-            scale_e[1] * Q_int,
-            scale_e[2] * Q_vel,
-            scale_e[3] * Q_ang_dot,
-            scale_e[4] * Q_acc,
-            scale_e[5] * Q_acc_ang
+            scale_e[1] * Q_vel,
+            scale_e[2] * Q_ang_dot,
+            scale_e[3] * Q_acc,
+            scale_e[4] * Q_acc_ang
         )
 
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
@@ -906,7 +895,7 @@ class MpcPlannerNode(Node):
         # --- Calcolo stato, orientamento e riferimenti ---
         self.R = Rotation.from_euler('xyz', self.current_rpy).as_matrix()
 
-        # Costruzione dello stato aumentato [p, v, q, w, e_int] (16 componenti)
+        # Costruzione dello stato [p, v, q, w] (13 componenti)
         # In modalità planner (is_controller=False), usiamo la predizione nominale al passo precedente
         if not self.is_controller and self.x_plan is not None and not self._first_mpc_solve:
             xk = self.x_plan[1].copy()
@@ -918,8 +907,7 @@ class MpcPlannerNode(Node):
                 self.current_position[0], self.current_position[1], self.current_position[2],
                 self.current_vel[0], self.current_vel[1], self.current_vel[2],
                 self.current_quat[0], self.current_quat[1], self.current_quat[2], self.current_quat[3],
-                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2],
-                self.e_int[0], self.e_int[1], self.e_int[2]
+                self.current_ang_vel[0],  self.current_ang_vel[1],  self.current_ang_vel[2]
             ])
 
         F_ext = self.current_F_ext
@@ -941,15 +929,12 @@ class MpcPlannerNode(Node):
         # Pubblica riferimento cilindrico per monitoraggio (include yaw_offset)
         self.ref_pub.publish(Float64MultiArray(data=[float(x) for x in ref_array]))
 
-        # Calcola p_cam e p_rel per l'errore integrale cartesiano
+        # Calcola p_cam per l'orientamento yaw della camera
         p_drone = xk[0:3]
         q_drone = xk[6:10]
         # Scipy Rotation.from_quat usa [x, y, z, w], CasADi usa [w, x, y, z]
         Rb = Rotation.from_quat([q_drone[1], q_drone[2], q_drone[3], q_drone[0]]).as_matrix()
         p_cam = p_drone + Rb @ self.camera_offset
-
-        p_obj_now = self.current_obj_pos
-        p_rel = p_cam - p_obj_now
 
         # yaw_desired: la telecamera punta verso l'oggetto (distanza ~ r_cyl > 0, mai singolarità)
         p_cam_to_obj = self.current_obj_pos - p_cam
@@ -958,23 +943,6 @@ class MpcPlannerNode(Node):
             p_cam_to_obj[0]
         ) + yaw_ref))
         self.last_yaw_desired = yaw_desired
-
-        # Aggiornamento accumulatore errore integrale cartesiano [ex, ey, ez] con anti-windup
-        # Attivo solo in modalità controller senza MBE; altrimenti mantenuto a zero
-        if self.is_controller and not self.use_mbe:
-            p_rel_target = cylindrical_to_cartesian(cyl_ref)
-            err_cart_now = p_rel_target - p_rel
-            self.e_int += err_cart_now * self.ts
-            self.e_int = np.clip(self.e_int, -2.0, 2.0)
-        else:
-            self.e_int = np.zeros(3)
-        
-        # Pubblica l'azione integrale
-        int_msg = Vector3()
-        int_msg.x = float(self.e_int[0])
-        int_msg.y = float(self.e_int[1])
-        int_msg.z = float(self.e_int[2])
-        self.integral_action_pub.publish(int_msg)
 
         try:
             t_start = time.perf_counter()
@@ -1037,7 +1005,7 @@ class MpcPlannerNode(Node):
                     err_torque = np.linalg.norm(u0[1:4] - u_px4[1:4])
                     
                     # Thresholds
-                    thrust_thresh = 2  # Newton (circa 10% della spinta di hovering)
+                    thrust_thresh = 5  # Newton (circa 10% della spinta di hovering)
                     torque_thresh = 0.2  # Nm (margine sufficiente per evitare scatti angolari)
                     
                     if err_thrust < thrust_thresh and err_torque < torque_thresh:

@@ -55,12 +55,6 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz) -> AcadosModel:
     Tau_ext = model_params[7:10]
     # (i simboli vengono usati direttamente in drone_MPC_settings.py tramite model.p[...])
 
-    # Integral errors states [e_int_x, e_int_y, e_int_z]
-    e_int = ca.SX.sym('e_int', 3)
-
-    # Errore cartesiano: p_target - p_drone
-    e_int_dot = p_target_sym - p
-
     # Equations of motion (ODEs)
     p_dot = v
     # v_dot: nominal thrust + gravity
@@ -68,11 +62,11 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz) -> AcadosModel:
     q_dot = 0.5 * ca.mtimes(omega_matrix(w), q)
     J_inv = ca.inv(J)
     w_dot = ca.mtimes(J_inv, (ca.vertcat(tau_x, tau_y, tau_z) - ca.cross(w, ca.mtimes(J, w)) + Tau_ext))
-    # Compose augmented state [p, v, q, w, e_int] (16 states)
-    x = ca.vertcat(p, v, q, w, e_int)
+    # Compose state [p, v, q, w] (13 states)
+    x = ca.vertcat(p, v, q, w)
     xdot = ca.SX.sym('xdot', x.shape)
 
-    f_expl = ca.vertcat(p_dot, v_dot, q_dot, w_dot, e_int_dot)
+    f_expl = ca.vertcat(p_dot, v_dot, q_dot, w_dot)
     f_impl = xdot - f_expl
 
     # Define model
@@ -94,8 +88,7 @@ def export_quadrotor_ode_model(m, Ixx, Iyy, Izz) -> AcadosModel:
         r'$x$', r'$y$', r'$z$',
         r'$v_x$', r'$v_y$', r'$v_z$',
         r'$q_w$', r'$q_x$', r'$q_y$', r'$q_z$',
-        r'$\omega_x$', r'$\omega_y$', r'$\omega_z$',
-        r'$e_{int,x}$', r'$e_{int,y}$', r'$e_{int,z}$'
+        r'$\omega_x$', r'$\omega_y$', r'$\omega_z$'
     ]
     model.u_labels = [r'$F_z$', r'$\tau_x$', r'$\tau_y$', r'$\tau_z$']
     model.t_label = '$t$ [s]'
