@@ -44,6 +44,10 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
     phase_style_map = {
         'ARM_OFFBOARD':        {'color': '#64748b', 'linestyle': ':',  'label': 'Arm & Offboard'},
         'TAKEOFF_MONITOR':     {'color': '#0284c7', 'linestyle': '--', 'label': 'Takeoff'},
+        'HOME':                {'color': '#2563eb', 'linestyle': '--', 'label': 'Home'},
+        'MISSION_START':       {'color': '#f59e0b', 'linestyle': '--', 'label': 'Mission Start'},
+        'INSPECTION_START':    {'color': '#16a34a', 'linestyle': '-',  'label': 'Inspection Start'},
+        'INSPECTION_END':      {'color': '#9333ea', 'linestyle': '--', 'label': 'Inspection End'},
         'MISSION_PREPARATION': {'color': '#f59e0b', 'linestyle': '--', 'label': 'Mission Prep'},
         'MISSION':             {'color': '#16a34a', 'linestyle': '-',  'label': 'Mission'},
         'DETACHMENT':          {'color': '#9333ea', 'linestyle': '--', 'label': 'Detachment'},
@@ -55,31 +59,48 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
     }
     fallback_colors = ['#0284c7', '#f59e0b', '#16a34a', '#9333ea', '#2563eb', '#dc2626', '#64748b']
 
-    # Identifica l'intervallo temporale della fase MISSION per l'evidenziazione con ombreggiatura
-    mission_t_start = None
-    mission_t_end = None
+    # Identifica gli intervalli temporali in cui l'MPC è attivo per l'ombreggiatura gialla
+    # (escluse le fasi preparatorie/decollo e atterraggio/emergenza)
+    NON_MPC_PHASES = {'WAIT_EKF', 'WAIT_START', 'ARM_OFFBOARD', 'TAKEOFF_MONITOR',
+                      'LANDING', 'DISARM_WAIT', 'MISSION_COMPLETE', 'EMERGENCY'}
+    mpc_intervals = []
     if phases:
+        in_mpc = False
+        t_start_mpc = None
         for idx_p, (pt, pname) in enumerate(phases):
-            if pname == 'MISSION' and mission_t_start is None:
-                mission_t_start = pt
-                if idx_p + 1 < len(phases):
-                    mission_t_end = phases[idx_p + 1][0]
+            is_mpc = (pname not in NON_MPC_PHASES)
+            if is_mpc and not in_mpc:
+                in_mpc = True
+                t_start_mpc = pt
+            elif not is_mpc and in_mpc:
+                in_mpc = False
+                mpc_intervals.append((t_start_mpc, pt))
+        if in_mpc:
+            mpc_intervals.append((t_start_mpc, float(time[-1])))
+    elif task_start > 0:
+        t_end_val = task_end if (task_end > task_start) else float(time[-1])
+        mpc_intervals.append((task_start, t_end_val))
 
     for i in range(n):
         ax = axes[i]
         time_plot = time[:len(data_list[i]['sim'])]
 
-        # Ombreggiatura leggera per evidenziare la durata della missione attiva
-        if mission_t_start is not None and mission_t_end is not None:
-            ax.axvspan(mission_t_start, mission_t_end, color='#16a34a', alpha=0.04, zorder=0)
-        elif task_start > 0 and task_end > task_start:
-            ax.axvspan(task_start, task_end, color='#2ca02c', alpha=0.04, zorder=0)
+        # Ombreggiatura gialla per evidenziare quando l'MPC è attivo
+        for idx_m, (t_m_s, t_m_e) in enumerate(mpc_intervals):
+            ax.axvspan(t_m_s, t_m_e, color='#facc15', alpha=0.10,
+                       label='MPC Active' if idx_m == 0 else None, zorder=0)
 
-        # Ombreggiatura intervalli di utilizzo dell'haptic device (rosso chiaro)
+        # Ombreggiatura intervalli di utilizzo dell'haptic device (rosso per GuaDrone, viola per Interaction)
         if haptic_intervals:
-            for idx_h, (t_h_start, t_h_end) in enumerate(haptic_intervals):
-                ax.axvspan(t_h_start, t_h_end, color='#ef4444', alpha=0.15,
-                           label='Haptic Active' if idx_h == 0 else None, zorder=0)
+            for idx_h, item in enumerate(haptic_intervals):
+                if len(item) >= 4:
+                    t_h_start, t_h_end, h_color, h_label = item[:4]
+                else:
+                    t_h_start, t_h_end = item[:2]
+                    h_color = '#ef4444'
+                    h_label = 'Haptic Active'
+                ax.axvspan(t_h_start, t_h_end, color=h_color, alpha=0.15,
+                           label=h_label if idx_h == 0 else None, zorder=0)
 
         # Plot segnale effettivo
         ax.plot(time_plot, data_list[i]['sim'], color=c_actual, label='Actual', linewidth=1.7, zorder=3)
@@ -208,8 +229,8 @@ def main():
         p_names = np.atleast_1d(data['phase_names'])
         for pt, pn in zip(p_times, p_names):
             name_str = str(pn).strip()
-            # Escludiamo gli stati preparatori pre-volo non significativi per i grafici temporali
-            if name_str not in ('WAIT_EKF', 'WAIT_START'):
+            # Mostriamo solo le fasi operative significative nei plot, escludendo preparatori e disarmo
+            if name_str not in ('WAIT_EKF', 'WAIT_START', 'ARM_OFFBOARD', 'DISARM_WAIT', 'MISSION_COMPLETE'):
                 phases.append((float(pt), name_str))
         print(f"[DEBUG] Fasi FSM caricate dal log ({len(phases)}): {phases}")
     myPlot.default_phases = phases
@@ -217,14 +238,15 @@ def main():
     # Se task_start non era esplicito ma abbiamo le fasi, allinea task_start alla preparazione/missione
     if task_start <= 0 and phases:
         for pt, pn in phases:
-            if pn in ('MISSION_PREPARATION', 'MISSION'):
+            if pn in ('HOME', 'MISSION_START', 'INSPECTION_START', 'MISSION_PREPARATION', 'MISSION'):
                 task_start = pt
                 break
 
-    # --- Rilevamento intervalli di attività dell'haptic device ---
-    haptic_intervals = []
-    if indata('haptic_active'):
-        h_act = np.asarray(data['haptic_active']).flat
+    # --- Rilevamento intervalli di attività dell'haptic device (GuaDrone vs Interaction) ---
+    haptic_gd_intervals = []
+    h_gd_key = 'haptic_guardrone_active' if indata('haptic_guardrone_active') else 'haptic_active'
+    if indata(h_gd_key):
+        h_act = np.asarray(data[h_gd_key]).flat
         t_arr = np.asarray(t)
         in_haptic = False
         t_h_start = 0.0
@@ -234,12 +256,34 @@ def main():
                 t_h_start = float(t_arr[idx_h])
             elif val <= 0.5 and in_haptic:
                 in_haptic = False
-                haptic_intervals.append((t_h_start, float(t_arr[idx_h])))
+                haptic_gd_intervals.append((t_h_start, float(t_arr[idx_h]), '#ef4444', 'Haptic GuaDrone'))
         if in_haptic:
-            haptic_intervals.append((t_h_start, float(t_arr[-1])))
-        if haptic_intervals:
-            print(f"[DEBUG] Intervalli Haptic attivi rilevati ({len(haptic_intervals)}): {haptic_intervals}")
-    myPlot.default_haptic_intervals = haptic_intervals
+            haptic_gd_intervals.append((t_h_start, float(t_arr[-1]), '#ef4444', 'Haptic GuaDrone'))
+        if haptic_gd_intervals:
+            print(f"[DEBUG] Intervalli Haptic GuaDrone ({len(haptic_gd_intervals)}): {haptic_gd_intervals}")
+
+    haptic_peg_intervals = []
+    if indata('haptic_peg_active'):
+        h_peg = np.asarray(data['haptic_peg_active']).flat
+        t_arr = np.asarray(t)
+        in_haptic_peg = False
+        t_hp_start = 0.0
+        for idx_h, val in enumerate(h_peg):
+            if val > 0.5 and not in_haptic_peg:
+                in_haptic_peg = True
+                t_hp_start = float(t_arr[idx_h])
+            elif val <= 0.5 and in_haptic_peg:
+                in_haptic_peg = False
+                haptic_peg_intervals.append((t_hp_start, float(t_arr[idx_h]), '#a855f7', 'Haptic Interaction'))
+        if in_haptic_peg:
+            haptic_peg_intervals.append((t_hp_start, float(t_arr[-1]), '#a855f7', 'Haptic Interaction'))
+        if haptic_peg_intervals:
+            print(f"[DEBUG] Intervalli Haptic Interaction ({len(haptic_peg_intervals)}): {haptic_peg_intervals}")
+
+    # Default per figure GuaDrone (fig 1-10, 17-19)
+    myPlot.default_haptic_intervals = haptic_gd_intervals
+    myPlot.haptic_gd_intervals = haptic_gd_intervals
+    myPlot.haptic_peg_intervals = haptic_peg_intervals
 
     # --- Mascheramento riferimenti pre-task con NaN ---
     # Prima dello switch/task_start i riferimenti dell'MPC non sono attivi.
@@ -457,7 +501,7 @@ def main():
         ]
         myPlot(t, fig11_data, 
                ["Force X (Sensor) [N]", "Force Y (Sensor) [N]", "Force Z (Sensor) [N]"], 
-               "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=12, task_start=task_start, task_end=task_end)
+               "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=12, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
 
     # --- FIGURE 12: Admittance delta_p (spostamento di ammettenza in ENU) ---
     if indata('delta_p'):
@@ -473,7 +517,7 @@ def main():
                [r"$\Delta p_x$ [m] (ENU)", r"$\Delta p_y$ [m] (ENU)", r"$\Delta p_z$ [m] (ENU)",
                 r"$\|\Delta p\|$ [m]"],
                "Admittance Displacement $\\Delta p$ (ENU frame)",
-               ncols=2, use_tex=args.tex, block=block, fignum=13, task_start=task_start, task_end=task_end)
+               ncols=2, use_tex=args.tex, block=block, fignum=13, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
 
     # --- FIGURE 12b: delta_p in terna SENSORE ---
     if indata('delta_p_sensor'):
@@ -489,7 +533,7 @@ def main():
                [r"$\Delta p_{sx}$ [m] (Sensor X)", r"$\Delta p_{sy}$ [m] (Sensor Y)",
                 r"$\Delta p_{sz}$ [m] (Sensor Z)", r"$\|\Delta p_s\|$ [m]"],
                "Admittance Displacement in Sensor Frame",
-               ncols=2, use_tex=args.tex, block=block, fignum=131, task_start=task_start, task_end=task_end)
+               ncols=2, use_tex=args.tex, block=block, fignum=131, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
 
     # --- FIGURE 13: Confronto ||delta_p|| vs ||F_ext|| ---
     if indata('delta_p') and indata('peg_ext_force'):
@@ -501,6 +545,11 @@ def main():
             fig13.canvas.manager.set_window_title("Figure 13: Admittance vs Contact Force")
         except Exception:
             pass
+        if haptic_peg_intervals:
+            for idx_h, item in enumerate(haptic_peg_intervals):
+                t_h_s, t_h_e = item[0], item[1]
+                ax13[0].axvspan(t_h_s, t_h_e, color='#a855f7', alpha=0.15, label='Haptic Interaction' if idx_h == 0 else None, zorder=0)
+                ax13[1].axvspan(t_h_s, t_h_e, color='#a855f7', alpha=0.15, label='Haptic Interaction' if idx_h == 0 else None, zorder=0)
         ax13[0].plot(t, fext_norm, 'r-', linewidth=1.5, label=r'$\|F_{ext}\|$ [N]')
         ax13[0].set_ylabel(r'$\|F_{ext}\|$ [N]')
         ax13[0].legend(loc='upper right')
@@ -536,7 +585,7 @@ def main():
         myPlot(t, fig14_data,
                ["Peg X [m]", "Peg Y [m]", "Peg Z [m]"] + (["Peg Yaw [rad]"] if has_peg_yaw else []),
                "Interaction Drone Position ENU (Actual vs Planner Reference)",
-               ncols=2, use_tex=args.tex, block=block, fignum=14, task_start=task_start, task_end=task_end)
+               ncols=2, use_tex=args.tex, block=block, fignum=14, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
 
     # --- FIGURE 15: Interaction Drone Velocities (ENU) + Yaw Rate ---
     has_peg_vel      = indata('peg_actual_vel')
@@ -558,7 +607,7 @@ def main():
             labels15.append("Yaw Rate [rad/s]")
         myPlot(t, fig15_data, labels15,
                "Interaction Drone Velocities (ENU) and Yaw Rate",
-               ncols=2, use_tex=args.tex, block=block, fignum=15, task_start=task_start, task_end=task_end)
+               ncols=2, use_tex=args.tex, block=block, fignum=15, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
 
     # --- FIGURE 16: Estimated Wrench (Momentum Based Estimator) ---
     if indata('estimated_wrench'):
@@ -573,7 +622,7 @@ def main():
         myPlot(t, fig16_data, 
                ["Force X [N]", "Force Y [N]", "Force Z [N]", 
                 "Torque X [Nm]", "Torque Y [Nm]", "Torque Z [Nm]"], 
-               "Estimated Wrench (Momentum-Based Estimator)", ncols=3, use_tex=args.tex, block=block, fignum=16, task_start=task_start, task_end=task_end)
+                "Estimated Wrench (Momentum-Based Estimator)", ncols=3, use_tex=args.tex, block=block, fignum=16, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
 
     # --- FIGURE 17: Violazione geometrica vincolo soft r_min ---
     if indata('r_cyl'):

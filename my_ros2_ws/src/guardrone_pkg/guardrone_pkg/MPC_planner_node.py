@@ -650,7 +650,7 @@ class MpcPlannerNode(Node):
         V          = np.array([0.2, 0.2, 0.2])    # [m/s] velocità max attesa
         ANG_DOT    = np.array([0.15, 0.15, 0.3])  # [rad/s] velocità angolare max
         ACC        = np.array([0.3, 0.3, 0.3])    # [m/s^2] accelerazione max
-        ACC_ANG    = np.array([0.4, 0.4, 0.4])    # [rad/s^2] accelerazione angolare max
+        ACC_ANG    = np.array([0.4, 0.4, 0.6])    # [rad/s^2] accelerazione angolare max
 
         # =========================================================================
         # 2. SELEZIONE PARAMETRICA DEI PESI (Proporzioni relative su PesoVis)
@@ -682,7 +682,7 @@ class MpcPlannerNode(Node):
             PesoAngAcc = PesoVis / 50.0
             PesoForce  = PesoVis / 10.0   
             PesoTorque = PesoVis / 10.0
-            scale_e = [5.0, 5.0, 5.0, 2.0, 1.0]
+            scale_e = [5.0, 5.0, 5.0, 1.5, 1.0]
 
         else:
             # ---------------------------------------------------------------------
@@ -1006,7 +1006,7 @@ class MpcPlannerNode(Node):
                     
                     # Thresholds
                     thrust_thresh = 5  # Newton (circa 10% della spinta di hovering)
-                    torque_thresh = 0.2  # Nm (margine sufficiente per evitare scatti angolari)
+                    torque_thresh = 0.4  # Nm (margine sufficiente per evitare scatti angolari)
                     
                     if err_thrust < thrust_thresh and err_torque < torque_thresh:
                         self.get_logger().info(f"Safe Switch OK! (err_thrust={err_thrust:.2f}N, err_torque={err_torque:.3f}Nm). L'MPC prende il controllo di PX4!")

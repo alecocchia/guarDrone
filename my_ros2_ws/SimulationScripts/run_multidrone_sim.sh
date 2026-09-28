@@ -1,10 +1,10 @@
 #!/bin/bash
 # =============================================================================
-# run_multidrone_sim.sh — Simulazione Multi-Drone (GuaDrone + Interaction)
+# run_multidrone_sim.sh — Simulazione Multi-Drone (GuarDrone + Interaction)
 #
 # Layout tmux a 3 finestre:
 #   Finestra 0 — gcs              : MicroAgent | GCS Launch   | Spare/Kill
-#   Finestra 1 — guardrone        : PX4 Drone1 | GuaDrone Launch | Spare
+#   Finestra 1 — guardrone        : PX4 Drone1 | GuarDrone Launch | Spare
 #   Finestra 2 — drone_interaction: PX4 Drone2 | Interaction Launch | Spare
 #
 # Uso:
@@ -24,16 +24,16 @@ fi
 # CONFIGURAZIONE POSE E MODELLI
 # =============================================================================
 
-# Drone 1 — GuaDrone (MPC + Camera): avvia Gazebo
-DRONE1_X=${DRONE1_X:--1.0}
-DRONE1_Y=${DRONE1_Y:--48.0}
-DRONE1_Z=${DRONE1_Z:-4.52}
+# Drone 1 — GuarDrone (MPC + Camera): avvia Gazebo
+DRONE1_X=${DRONE1_X:--3.0}
+DRONE1_Y=${DRONE1_Y:--49.0}
+DRONE1_Z=${DRONE1_Z:-4.55}
 DRONE1_YAW=${DRONE1_YAW:-0.0}
 DRONE1_MODEL_NAME=${DRONE1_MODEL_NAME:-"x500_depth"}
 
 # Drone 2 — Interaction Drone (ammettenza): standalone, si aggancia a Gazebo
-DRONE2_X=${DRONE2_X:--1.0}
-DRONE2_Y=${DRONE2_Y:--51.0}
+DRONE2_X=${DRONE2_X:--2.0}
+DRONE2_Y=${DRONE2_Y:--50.0}
 DRONE2_Z=${DRONE2_Z:-4.55}
 DRONE2_YAW=${DRONE2_YAW:-0.0}
 DRONE2_MODEL_NAME=${DRONE2_MODEL_NAME:-"x500_interaction"}
@@ -48,6 +48,7 @@ SOURCE_CMD="source /opt/ros/humble/setup.bash && [ -f /root/my_ros2_ws/install/s
 # Comando di chiusura sessione (alias 'aaa'): invia C-c a tutti i pane tranne quello corrente,
 # aspetta 5 secondi per la chiusura pulita di Gazebo e ROS, poi termina il server tmux.
 KILL_ALIAS="alias aaa='tmux list-panes -s -F \"#{pane_id}\" | grep -v \$(tmux display-message -p \"#{pane_id}\") | xargs -I {} tmux send-keys -t {} C-c && echo \"Attendendo 5s per chiusura pulita...\" && sleep 5 && tmux kill-server'"
+SPHERE_ALIASES="alias create_sphere='/root/my_ros2_ws/SimulationScripts/spawn_sphere.sh' && alias delete_sphere='/root/my_ros2_ws/SimulationScripts/delete_sphere.sh'"
 
 # =============================================================================
 # 1. CREA SESSIONE TMUX
@@ -144,14 +145,15 @@ tmux send-keys -t $SESSION_NAME:gcs.3 "sleep 16 && ros2 run gcs_pkg keyboard_cli
 
 # --- Pane 4: Spare / Kill ---
 tmux select-pane -T '4: Spare' -t $SESSION_NAME:gcs.4
-tmux send-keys -t $SESSION_NAME:gcs.4 "cd /root/my_ros2_ws && $SOURCE_CMD && $KILL_ALIAS && clear" C-m
+tmux send-keys -t $SESSION_NAME:gcs.4 "cd /root/my_ros2_ws && $SOURCE_CMD && $KILL_ALIAS && $SPHERE_ALIASES && clear" C-m
+tmux send-keys -t $SESSION_NAME:gcs.4 "echo '=== Comandi disponibili in questo pane ===' && echo '  create_sphere [X Y Z raggio colore]' && echo '  create_sphere front [dist raggio colore] (davanti al GuarDrone)' && echo '  delete_sphere [all | nome]' && echo '  aaa (termina simulazione)'" C-m
 
 # =============================================================================
 # 5. FINESTRA 1 — GUARDRONE (Drone 1 — MPC + Camera)
 # =============================================================================
 
 # --- Pane 0: PX4 SITL Drone 1 — avvia anche il mondo Gazebo ---
-tmux select-pane -T '0: PX4 GuaDrone' -t $SESSION_NAME:guardrone.0
+tmux select-pane -T '0: PX4 GuarDrone' -t $SESSION_NAME:guardrone.0
 tmux send-keys -t $SESSION_NAME:guardrone.0 "cd /root/PX4-Autopilot" C-m
 tmux send-keys -t $SESSION_NAME:guardrone.0 "$SOURCE_CMD" C-m
 tmux send-keys -t $SESSION_NAME:guardrone.0 \
@@ -159,8 +161,8 @@ tmux send-keys -t $SESSION_NAME:guardrone.0 \
     PX4_GZ_MODEL_POSE='${DRONE1_X},${DRONE1_Y},${DRONE1_Z},0,0,${DRONE1_YAW}' \
     ${HEADLESS_PREFIX}make px4_sitl gz_${DRONE1_MODEL_NAME}" C-m
 
-# --- Pane 1: GuaDrone Launch (MPC planner + bridge + rviz) ---
-tmux select-pane -T '1: GuaDrone Launch' -t $SESSION_NAME:guardrone.1
+# --- Pane 1: GuarDrone Launch (MPC planner + bridge + rviz) ---
+tmux select-pane -T '1: GuarDrone Launch' -t $SESSION_NAME:guardrone.1
 tmux send-keys -t $SESSION_NAME:guardrone.1 "cd /root/my_ros2_ws" C-m
 tmux send-keys -t $SESSION_NAME:guardrone.1 "$SOURCE_CMD" C-m
 tmux send-keys -t $SESSION_NAME:guardrone.1 "sleep 15 && ros2 launch guardrone_pkg guardrone_sim.launch.py \

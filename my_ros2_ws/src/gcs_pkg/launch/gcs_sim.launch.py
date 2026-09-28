@@ -23,7 +23,7 @@ def launch_setup(context, *args, **kwargs):
     # Recupero parametri camera dal modello PX4 (come in guardrone_sim.launch.py)
     model_name = LaunchConfiguration('model').perform(context)
     parser = PX4ModelParser()
-    _, _, auto_cam, _, _, _, _, _, _, _ = parser.get_px4_model_info(model_name)
+    _, _, auto_cam, _, fov_h_deg, fov_v_deg, _, _, _, _ = parser.get_px4_model_info(model_name)
 
     drone_x = LaunchConfiguration('drone_x')
     drone_y = LaunchConfiguration('drone_y')
@@ -55,8 +55,8 @@ def launch_setup(context, *args, **kwargs):
             'cam_offset_x': auto_cam[0],
             'cam_offset_y': auto_cam[1],
             'cam_z_offset': auto_cam[2],
-            'fov_h_deg': 80.0,
-            'fov_v_deg': 60.0
+            'fov_h_deg': fov_h_deg,
+            'fov_v_deg': fov_v_deg
         }],
     )
 

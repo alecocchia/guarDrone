@@ -23,16 +23,22 @@ class KeyboardClientNode(Node):
 
         self.get_logger().info('Keyboard Client avviato.')
         self.get_logger().info('Comandi disponibili:')
-        self.get_logger().info('  ok   → conferma passaggio fase')
-        self.get_logger().info('  stop → atterraggio d\'emergenza')
-        self.get_logger().info('─' * 40)
+        self.get_logger().info('  ok               → conferma passaggio fase (sequenziale)')
+        self.get_logger().info('  takeoff          → avvia decollo (dopo convergenza EKF)')
+        self.get_logger().info('  home             → transizione a HOME (hovering di partenza)')
+        self.get_logger().info('  mission_start    → transizione a MISSION_START (2m dal muro)')
+        self.get_logger().info('  inspection_start → transizione a INSPECTION_START (ispezione a parete)')
+        self.get_logger().info('  inspection_end   → transizione a INSPECTION_END (distacco 1m)')
+        self.get_logger().info('  landing          → atterraggio immediato (NAV_LAND PX4)')
+        self.get_logger().info('  stop             → atterraggio d\'emergenza')
+        self.get_logger().info('─' * 55)
 
     def run(self):
         """Loop bloccante che legge da stdin e pubblica su /keyboard_input."""
         try:
             while rclpy.ok():
                 try:
-                    user_input = input('\n⏳ In attesa di comando (ok / stop): ').strip().lower()
+                    user_input = input('\n⏳ In attesa di comando (ok / takeoff / home / mission_start / inspection_start / inspection_end / landing / stop): ').strip().lower()
                 except EOFError:
                     break
 
@@ -45,8 +51,12 @@ class KeyboardClientNode(Node):
 
                 if user_input == 'ok':
                     self.get_logger().info('✅ Conferma inviata al supervisor.')
+                elif user_input == 'takeoff':
+                    self.get_logger().info('🛫 Comando TAKEOFF inviato al supervisor.')
                 elif user_input == 'stop':
                     self.get_logger().warn('🛑 Comando STOP inviato al supervisor!')
+                elif user_input in ('home', 'mission_start', 'inspection_start', 'inspection_end', 'landing', 'land'):
+                    self.get_logger().info(f'🚀 Richiesta transizione diretta a fase: "{user_input}"')
                 else:
                     self.get_logger().info(f'📤 Inviato: "{user_input}"')
 

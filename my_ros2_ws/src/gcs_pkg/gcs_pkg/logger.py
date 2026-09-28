@@ -82,7 +82,8 @@ class Logger(Node):
         self.last_log_time   = None
         self.task_start_time = None
         self.phase_events    = []      # [(timestamp_sec, state_name)]
-        self.last_haptic_time = None   # Timestamp ultimo messaggio da /haptic_ref
+        self.last_haptic_time     = None   # Timestamp ultimo messaggio da /haptic_ref (GuaDrone)
+        self.last_haptic_peg_time = None   # Timestamp ultimo messaggio da /peg_live_pose (Peg Drone)
         self._saved          = False   # Flag anti-doppio-salvataggio
         self._d1_was_armed   = False   # Tracciamento arm Drone 1
         self._d2_was_armed   = False   # Tracciamento arm Drone 2
@@ -119,7 +120,9 @@ class Logger(Node):
         self.online_ref      = []
         self.online_cyl_ref  = []
         self.haptic_force    = []
-        self.haptic_active   = []      # 1.0 se haptic attivo (tasto premuto), 0.0 altrimenti
+        self.haptic_active           = []  # Retrocompatibilità (GuaDrone)
+        self.haptic_guardrone_active = []  # 1.0 se haptic attivo su GuaDrone, 0.0 altrimenti
+        self.haptic_peg_active       = []  # 1.0 se haptic attivo su Peg Drone, 0.0 altrimenti
         self.peg_ext_force   = []
         self.estimated_wrench = []
         self.delta_p         = []
@@ -230,6 +233,8 @@ class Logger(Node):
                                  self.cb_haptic_force, 10)
         self.create_subscription(Float64MultiArray, '/haptic_ref',
                                  self.cb_haptic_ref, 10)
+        self.create_subscription(PoseStamped, '/peg_live_pose',
+                                 self.cb_haptic_peg_ref, 10)
         self.create_subscription(Wrench,        self.ft_topic,       self.cb_peg_ft,           10)
         self.create_subscription(Wrench,        '/estimated_wrench', self.cb_estimated_wrench, 10)
         self.create_subscription(Vector3Stamped,'/delta_p',          self.cb_delta_p,          10)
@@ -300,8 +305,12 @@ class Logger(Node):
             self.last_haptic_force = [msg.data[0], msg.data[1], msg.data[2]]
 
     def cb_haptic_ref(self, _msg: Float64MultiArray):
-        """Registra l'istante di ricezione di comandi dall'haptic device."""
+        """Registra l'istante di ricezione di comandi haptic per GuaDrone."""
         self.last_haptic_time = self.now_sec()
+
+    def cb_haptic_peg_ref(self, _msg: PoseStamped):
+        """Registra l'istante di ricezione di comandi haptic per Interaction Drone."""
+        self.last_haptic_peg_time = self.now_sec()
 
     def cb_peg_ft(self, msg: Wrench):
         self.last_peg_ext_force = [msg.force.x, msg.force.y, msg.force.z]
@@ -456,9 +465,11 @@ class Logger(Node):
         self.peg_pos.append(list(self.last_peg_pos))
         self.online_ref.append(list(self.last_online_ref))
         self.online_cyl_ref.append(list(self.last_online_ref))   # alias
-        self.haptic_force.append(list(self.last_haptic_force))
-        is_haptic = 1.0 if (self.last_haptic_time is not None and (t_now - self.last_haptic_time < 0.25)) else 0.0
-        self.haptic_active.append(is_haptic)
+        is_haptic_gd = 1.0 if (self.last_haptic_time is not None and (t_now - self.last_haptic_time < 0.25)) else 0.0
+        is_haptic_peg = 1.0 if (self.last_haptic_peg_time is not None and (t_now - self.last_haptic_peg_time < 0.25)) else 0.0
+        self.haptic_active.append(is_haptic_gd)
+        self.haptic_guardrone_active.append(is_haptic_gd)
+        self.haptic_peg_active.append(is_haptic_peg)
         self.peg_ext_force.append(list(self.last_peg_ext_force))
         self.estimated_wrench.append(list(self.last_estimated_wrench))
         self.delta_p.append(list(self.last_delta_p))
@@ -545,6 +556,8 @@ class Logger(Node):
             wrench_target=np.asarray(self.wrench_target),
             haptic_force=np.asarray(self.haptic_force),
             haptic_active=np.asarray(self.haptic_active),
+            haptic_guardrone_active=np.asarray(self.haptic_guardrone_active),
+            haptic_peg_active=np.asarray(self.haptic_peg_active),
             peg_pos=peg_pos_arr,
             online_ref=np.asarray(self.online_ref),
             online_cyl_ref=online_cyl_ref,

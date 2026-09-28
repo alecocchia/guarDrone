@@ -40,7 +40,7 @@ Parametri configurabili (launch / ros2 param):
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-from std_msgs.msg import Bool, Float64
+from std_msgs.msg import Bool, Float64, String
 from geometry_msgs.msg import PoseStamped, Wrench, Vector3Stamped, TwistStamped
 from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint, VehicleOdometry
 import numpy as np
@@ -88,8 +88,10 @@ class OffboardAdmittancePlanner(Node):
         self.declare_parameter('start_x', 0.0)
         self.declare_parameter('start_y', 0.0)
         self.declare_parameter('start_z', 0.0)
+        self.declare_parameter('v_takeoff_max', 0.1)
+        self.declare_parameter('a_takeoff_max', 0.2)
         self.declare_parameter('v_max', 0.2)
-        self.declare_parameter('a_max', 0.2)
+        self.declare_parameter('a_max', 0.3)
         self.declare_parameter('dt', 0.01)   # 100 Hz
 
         # -- Parametri ammettenza --
@@ -112,6 +114,8 @@ class OffboardAdmittancePlanner(Node):
 
         # -- Lettura parametri --
         ns = self.get_parameter('px4_ns').get_parameter_value().string_value
+        self.v_takeoff_max = self.get_parameter('v_takeoff_max').get_parameter_value().double_value
+        self.a_takeoff_max = self.get_parameter('a_takeoff_max').get_parameter_value().double_value
         self.v_max = self.get_parameter('v_max').get_parameter_value().double_value
         self.a_max = self.get_parameter('a_max').get_parameter_value().double_value
         self.dt = self.get_parameter('dt').get_parameter_value().double_value
@@ -220,12 +224,24 @@ class OffboardAdmittancePlanner(Node):
         self.live_pose_sub = self.create_subscription(
             PoseStamped, '/peg_live_pose', self.live_target_cb, 10)
 
+        # Subscriber stato FSM supervisore per rilevare fase di takeoff
+        qos_latched = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+        self.supervisor_state_sub = self.create_subscription(
+            String, '/supervisor/state', self.supervisor_state_cb, qos_latched)
+
         # -- Stato interno (traiettoria) --
         self.current_pos = np.zeros(3)   # ENU + spawn offset
         self.current_rpy = np.zeros(3)
         self.R_flu2enu = np.eye(3)       # rotazione corrente body FLU --> ENU
         self.has_odom = False
         self.offboard_traj_enabled = True
+        self.current_phase = 'TAKEOFF_MONITOR'
+        self._received_supervisor_state = False
 
         self.traj_p = None
         self.traj_rpy = None
@@ -394,6 +410,10 @@ class OffboardAdmittancePlanner(Node):
             )
         self.Fz_prev = self.F_ext_sens
 
+    def supervisor_state_cb(self, msg: String):
+        self.current_phase = msg.data
+        self._received_supervisor_state = True
+
     def enabled_cb(self, msg: Bool):
         self.offboard_traj_enabled = msg.data
         if not self.offboard_traj_enabled:
@@ -443,13 +463,22 @@ class OffboardAdmittancePlanner(Node):
                0.0, 0.0, self.current_rpy[2]]
         x_ref = [t_x, t_y, t_z, 0.0, 0.0, t_yaw]
 
+        is_takeoff = (self.current_phase in ['WAIT_START', 'ARM_OFFBOARD', 'TAKEOFF_MONITOR', 'WAIT_EKF', 'TAKEOFF']
+                      or 'TAKEOFF' in self.current_phase.upper())
+        v_limit = self.v_takeoff_max if is_takeoff else self.v_max
+        a_limit = self.a_takeoff_max if is_takeoff else self.a_max
+
         self.get_logger().info(
-            f"[AdmittancePlanner] Nuova traiettoria da {x0[:3]} a {x_ref[:3]}"
+            f"[AdmittancePlanner] Nuova traiettoria da {x0[:3]} a {x_ref[:3]} "
+            f"(fase={self.current_phase}, v_limit={v_limit}, a_limit={a_limit})"
         )
 
         t_vec, p_vals, rpy_vals = generate_trapezoidal_trajectory(
-            x0, x_ref, dt=self.dt, v_max=self.v_max, a_max=self.a_max
+            x0, x_ref, dt=self.dt, v_max=v_limit, a_max=a_limit
         )
+
+        if not self._received_supervisor_state:
+            self.current_phase = 'MISSION'
 
         self.traj_p = p_vals
         self.traj_rpy = rpy_vals

@@ -24,6 +24,16 @@ def generate_launch_description():
                               default_value='/world/interaction/model/x500_interaction/joint/end_eff_sens_joint/force_torque',
                               description='Topic Gazebo del sensore FT sull\'end-effector'),
 
+        # Parametri cinematica traiettoria
+        DeclareLaunchArgument('v_takeoff_max',     default_value='0.2',
+                              description='[m/s] Velocità massima durante takeoff'),
+        DeclareLaunchArgument('a_takeoff_max',     default_value='0.3',
+                              description='[m/s^2] Accelerazione massima durante takeoff'),
+        DeclareLaunchArgument('v_max',             default_value='0.1',
+                              description='[m/s] Velocità massima durante missione'),
+        DeclareLaunchArgument('a_max',             default_value='0.2',
+                              description='[m/s^2] Accelerazione massima durante missione'),
+
         Node(
             package='interaction_drone_pkg',
             executable='offboard_admittance_planner.py',
@@ -35,8 +45,10 @@ def generate_launch_description():
                 'start_x': LaunchConfiguration('peg_x'),
                 'start_y': LaunchConfiguration('peg_y'),
                 'start_z': LaunchConfiguration('peg_z'),
-                'v_max': 0.1,
-                'a_max': 0.2,
+                'v_takeoff_max':     LaunchConfiguration('v_takeoff_max'),
+                'a_takeoff_max':     LaunchConfiguration('a_takeoff_max'),
+                'v_max':             LaunchConfiguration('v_max'),
+                'a_max':             LaunchConfiguration('a_max'),
                 'dt': 0.01,         # 100 Hz
                 'px4_ns': 'px4_1',  # Namespace DDS del Drone 2 (UXRCE_DDS_NS=px4_1)
                 'F_threshold':       LaunchConfiguration('F_threshold'),
