@@ -82,7 +82,7 @@ class Logger(Node):
         self.last_log_time   = None
         self.task_start_time = None
         self.phase_events    = []      # [(timestamp_sec, state_name)]
-        self.last_haptic_time     = None   # Timestamp ultimo messaggio da /haptic_ref (GuaDrone)
+        self.last_haptic_time     = None   # Timestamp ultimo messaggio da /haptic_ref (GuarDrone)
         self.last_haptic_peg_time = None   # Timestamp ultimo messaggio da /peg_live_pose (Peg Drone)
         self._saved          = False   # Flag anti-doppio-salvataggio
         self._d1_was_armed   = False   # Tracciamento arm Drone 1
@@ -120,8 +120,8 @@ class Logger(Node):
         self.online_ref      = []
         self.online_cyl_ref  = []
         self.haptic_force    = []
-        self.haptic_active           = []  # Retrocompatibilità (GuaDrone)
-        self.haptic_guardrone_active = []  # 1.0 se haptic attivo su GuaDrone, 0.0 altrimenti
+        self.haptic_active           = []  # Retrocompatibilità (GuarDrone)
+        self.haptic_guardrone_active = []  # 1.0 se haptic attivo su GuarDrone, 0.0 altrimenti
         self.haptic_peg_active       = []  # 1.0 se haptic attivo su Peg Drone, 0.0 altrimenti
         self.peg_ext_force   = []
         self.estimated_wrench = []
@@ -249,7 +249,7 @@ class Logger(Node):
         # Monitoraggio Kill Switch / Disarm da radiocomando per entrambi i droni
         self.create_subscription(
             VehicleStatus, '/fmu/out/vehicle_status',
-            lambda msg: self.cb_vehicle_status(msg, 'GuaDrone (D1)', '_d1_was_armed'), px4_qos
+            lambda msg: self.cb_vehicle_status(msg, 'GuarDrone (D1)', '_d1_was_armed'), px4_qos
         )
         peg_status_topic = f"/{peg_px4_ns}/fmu/out/vehicle_status" if peg_px4_ns else "/px4_1/fmu/out/vehicle_status"
         self.create_subscription(
@@ -305,7 +305,7 @@ class Logger(Node):
             self.last_haptic_force = [msg.data[0], msg.data[1], msg.data[2]]
 
     def cb_haptic_ref(self, _msg: Float64MultiArray):
-        """Registra l'istante di ricezione di comandi haptic per GuaDrone."""
+        """Registra l'istante di ricezione di comandi haptic per GuarDrone."""
         self.last_haptic_time = self.now_sec()
 
     def cb_haptic_peg_ref(self, _msg: PoseStamped):
@@ -465,6 +465,7 @@ class Logger(Node):
         self.peg_pos.append(list(self.last_peg_pos))
         self.online_ref.append(list(self.last_online_ref))
         self.online_cyl_ref.append(list(self.last_online_ref))   # alias
+        self.haptic_force.append(list(self.last_haptic_force))
         is_haptic_gd = 1.0 if (self.last_haptic_time is not None and (t_now - self.last_haptic_time < 0.25)) else 0.0
         is_haptic_peg = 1.0 if (self.last_haptic_peg_time is not None and (t_now - self.last_haptic_peg_time < 0.25)) else 0.0
         self.haptic_active.append(is_haptic_gd)

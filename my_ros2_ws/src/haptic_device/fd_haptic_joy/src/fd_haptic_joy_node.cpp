@@ -168,7 +168,6 @@ private:
     for (size_t i = 0; i < msg->data.size() && i < button_states_.size(); ++i) {
       button_states_[i] = msg->data[i];
     }
-    // Log alla pressione/rilascio di bottoni non-centrali
     RCLCPP_DEBUG(this->get_logger(), "Button states: [%d, %d, %d, %d]",
                  button_states_[0], button_states_[1], button_states_[2],
                  button_states_[3]);
@@ -238,6 +237,41 @@ private:
     return std::min(force, max_rep);
   }
 
+  // =========================================================================
+  // TRASFORMAZIONE CINEMATICA FALCON -> DRONE BODY (FLU)
+  // Standard ROS REP 103: Forward (+X), Left (+Y), Up (+Z)
+  //
+  // Geometria Delta Hardware Falcon (DHD SDK):
+  // - Falcon X punta all'indietro (verso l'operatore) -> FLU X (avanti) = -Falcon X
+  // - Falcon Y punta a destra                         -> FLU Y (sinistra) = -Falcon Y
+  // - Falcon Z punta in basso (verso il piano)        -> FLU Z (alto) = -Falcon Z
+  //
+  // R_falcon_to_flu = diag(-1, -1, -1) = -I_3x3
+  // Essendo ortonormale e diagonale: R^(-1) = R^T = R
+  // =========================================================================
+  static double apply_deadband(double val, double deadband) {
+    if (std::abs(val) < deadband)
+      return 0.0;
+    return (val > 0) ? (val - deadband) : (val + deadband);
+  }
+
+  static Eigen::Matrix3d R_falcon_to_flu() {
+    Eigen::Matrix3d R;
+    R << -1.0,  0.0,  0.0,
+          0.0, -1.0,  0.0,
+          0.0,  0.0, 1.0;
+    return R;
+  }
+
+  // Restituisce la posizione/comando normalizzato in terna Body FLU [x_fwd, y_left, z_up]
+  Eigen::Vector3d get_falcon_flu(double deadband, double joy_scale) const {
+    Eigen::Vector3d raw(
+        apply_deadband(falcon_pos_[0], deadband) * joy_scale,
+        apply_deadband(falcon_pos_[1], deadband) * joy_scale,
+        apply_deadband(falcon_pos_[2], deadband) * joy_scale);
+    return R_falcon_to_flu() * raw;
+  }
+
   void control_loop() {
     double k = this->get_parameter("k_spring").as_double();
     double alpha = this->get_parameter("alpha").as_double();
@@ -247,22 +281,17 @@ private:
     double dt = this->get_parameter("dt").as_double();
     double alpha_filter = 0.4;
 
-    // Calcola velocità istantanea filtrata dell' haptic per lo smorzamento
-    // viscoso
+    // Calcola velocità istantanea filtrata dell'haptic per lo smorzamento viscoso
     if (first_pose_received_) {
       for (int i = 0; i < 3; ++i) {
         double raw_vel = (falcon_pos_[i] - prev_falcon_pos_[i]) / dt;
         falcon_vel_[i] = alpha_filter * falcon_vel_[i] +
-                         (1.0 - alpha_filter) * raw_vel; // Filtro passa-basso di 1° ordine
-        // falcon_vel_[i] = raw_vel;
+                         (1.0 - alpha_filter) * raw_vel;
         prev_falcon_pos_[i] = falcon_pos_[i];
       }
     }
 
     // Parametri campo potenziale
-    // =====================================================
-    // CAMPO POTENZIALE: forza repulsiva basata su distanza radiale r
-    // =====================================================
     double r_min = this->get_parameter("r_min_safety").as_double();
     double k_rep = this->get_parameter("k_repulsive").as_double();
     double act_ratio = this->get_parameter("activation_ratio").as_double();
@@ -276,64 +305,71 @@ private:
     double fov_v_half_rad = (fov_v / 2.0) * (M_PI / 180.0);
     double fov_h_half_rad = (fov_h / 2.0) * (M_PI / 180.0);
 
-    // 1. Asse X: Forza repulsiva basata su distanza radiale r_cyl
+    // 1. Asse radiale r_cyl: forza repulsiva se ci si avvicina troppo al target (r < r_min)
     double r_actual = actual_pov_[0]; // r_cyl [m]
-    double dist_r_min =
-        r_actual - r_min; // distanza attuale dal bordo del vincolo, >0 se
-                          // sicuro, <0 se violato
-    double f_rep_x = +repulsive_force(dist_r_min, r_min, act_ratio, k_rep,
-                                      alpha / 2, max_rep);
+    double dist_r_min = r_actual - r_min; // >0 se sicuro, <0 se violato
+    double f_rep_r = repulsive_force(dist_r_min, r_min, act_ratio, k_rep,
+                                     alpha / 2, max_rep);
 
-    // 2. Asse Z: Forza repulsiva basata sui limiti Z derivati dal FoV verticale
+    // 2. Asse verticale z_cyl: forza repulsiva se ci si avvicina ai limiti verticali del FoV
     double z_act = actual_pov_[2];
-    double yaw_dev_act = actual_pov_[3]; // Estraggo lo yaw deviation dal centro per la proiezione prospettica
+    double yaw_dev_act = actual_pov_[3];
     double z_max = r_actual * std::cos(yaw_dev_act) * std::tan(fov_v_half_rad);
-    
+
     double dist_z_top = z_max - z_act;
     double dist_z_bot = z_act - (-z_max);
 
+    // Se vicino al limite superiore (dist_z_top piccolo) -> forza verso il basso (negativa in FLU Z)
     double f_rep_z_top = -repulsive_force(dist_z_top, z_max,
                                           act_ratio_cam, k_rep, alpha, max_rep);
+    // Se vicino al limite inferiore (dist_z_bot piccolo) -> forza verso l'alto (positiva in FLU Z)
     double f_rep_z_bot = +repulsive_force(dist_z_bot, z_max,
                                           act_ratio_cam, k_rep, alpha, max_rep);
     double f_rep_z = f_rep_z_top + f_rep_z_bot;
 
-    // 3. Asse Y: Forza repulsiva basata su yaw_dev (limite FoV orizzontale)
+    // 3. Asse azimutale beta: forza repulsiva basata sul limite orizzontale FoV
     double dist_yaw = fov_h_half_rad - std::abs(yaw_dev_act);
     double f_rep_yaw_mag = repulsive_force(
         dist_yaw, fov_h_half_rad, act_ratio_cam, k_rep, alpha, max_rep);
-    // Se yaw_err > 0, opponiamo una forza per spingere l'utente a correggere
-    double f_rep_y = (yaw_dev_act > 0) ? -f_rep_yaw_mag : f_rep_yaw_mag;
+    // Se camera ruotata a destra (yaw_dev_act > 0), spinge a sinistra (+Y FLU)
+    double f_rep_y = (yaw_dev_act > 0) ? +f_rep_yaw_mag : -f_rep_yaw_mag;
 
+    // Forza elastica e viscosa calcolata in terna nativa hardware (per garantire centratura e stabilità)
     std::vector<double> forces(3, 0.0);
     for (int i = 0; i < 3; ++i) {
-      // Forza elastica ammortizzata: F = -k * x - b * v
       forces[i] = -k * falcon_pos_[i] - b * falcon_vel_[i];
     }
 
-    // Somma le forze repulsive (solo quando il pulsante è premuto)
+    // Somma forze repulsive proiettate dallo spazio FLU all'hardware Falcon (solo con pulsante attivo)
     if (button_pressed_) {
-      forces[0] += f_rep_x;
-      forces[1] += f_rep_y;
-      forces[2] += f_rep_z;
+      // Vettore di forza repulsiva espresso in terna FLU:
+      // - Quando r -> r_min (troppo vicino), spinge all'indietro (-X_fwd)
+      // - FoV orizzontale: f_rep_y lungo Y_left
+      // - FoV verticale: f_rep_z lungo Z_up
+      Eigen::Vector3d F_rep_flu(-f_rep_r, f_rep_y, f_rep_z);
+      Eigen::Vector3d F_rep_falcon = R_falcon_to_flu().transpose() * F_rep_flu;
+
+      forces[0] += F_rep_falcon.x();
+      forces[1] += F_rep_falcon.y();
+      forces[2] += F_rep_falcon.z();
     }
 
-    // Saturazione di sicurezza
+    // Saturazione di sicurezza hardware
     for (int i = 0; i < 3; ++i) {
       forces[i] = std::max(-max_f, std::min(max_f, forces[i]));
     }
 
-    // Pubblica forza
+    // Pubblica comandi di forza al driver del Falcon
     auto force_msg = std_msgs::msg::Float64MultiArray();
     force_msg.data = forces;
     force_pub_->publish(force_msg);
 
     // =====================================================
-    // INTEGRAZIONE PoV cilindrico se il pulsante è premuto
-    // Mapping assi Falcon -> Coordinate Cilindriche:
-    //   Falcon X (Avanti/Dietro)   -> dr_cyl   (zoom: avvicina/allontana)
-    //   Falcon Y (Destra/Sinistra) -> d_beta (orbita orizzontale)
-    //   Falcon Z (Su/Giù)          -> d_z      (quota relativa)
+    // INTEGRAZIONE PoV cilindrico (GUARDRONE) se il pulsante 0 è premuto
+    // Mapping da terna FLU a Coordinate Cilindriche:
+    //   p_flu.x() (Avanti)   -> dr_cmd    (spinta avanti = si avvicina: dr = -x_fwd * v_r_max)
+    //   p_flu.y() (Sinistra) -> dbeta_cmd (spinta destra = senso antiorario: dbeta = -y_left * v_beta_max)
+    //   p_flu.z() (Alto)     -> dz_cmd    (spinta in alto = sale in quota: dz = +z_up * v_z_max)
     // =====================================================
     if (button_pressed_) {
       double joy_scale = this->get_parameter("joy_scale").as_double();
@@ -341,23 +377,22 @@ private:
       double v_beta_max = this->get_parameter("v_beta_max").as_double();
       double v_z_max = this->get_parameter("v_z_max").as_double();
 
-      double dr_cmd =
-          apply_deadband(falcon_pos_[0], deadband) * joy_scale * v_r_max;
-      double dbeta_cmd =
-          apply_deadband(falcon_pos_[1], deadband) * joy_scale * v_beta_max;
-      double dz_cmd =
-          apply_deadband(falcon_pos_[2], deadband) * joy_scale * v_z_max;
+      Eigen::Vector3d p_flu = get_falcon_flu(deadband, joy_scale);
+
+      double dr_cmd    = -p_flu.x() * v_r_max;
+      double dbeta_cmd = -p_flu.y() * v_beta_max;
+      double dz_cmd    = +p_flu.z() * v_z_max;
 
       current_pov_vel_[0] = dr_cmd;
       current_pov_vel_[1] = dbeta_cmd;
       current_pov_vel_[2] = dz_cmd;
 
-      // Integrazione
+      // Integrazione PoV
       current_pov_ref_[0] += current_pov_vel_[0] * dt;          // r_cyl
       current_pov_ref_[0] = std::max(0.5, current_pov_ref_[0]); // r_cyl >= 0.5 m
       current_pov_ref_[1] += current_pov_vel_[1] * dt;          // beta
       current_pov_ref_[1] =
-          std::fmod(current_pov_ref_[1] + M_PI, 2.0 * M_PI); // wrap
+          std::fmod(current_pov_ref_[1] + M_PI, 2.0 * M_PI); // wrap [-pi, pi]
       if (current_pov_ref_[1] < 0)
         current_pov_ref_[1] += 2.0 * M_PI;
       current_pov_ref_[1] -= M_PI;
@@ -374,8 +409,8 @@ private:
     }
 
     // =====================================================
-    // MODO PEG (bottone 2 = sopra): teleop drone peg nel frame camera MPC
-    // Falcon X → profondità, Falcon Y → laterale, Falcon Z → quota
+    // MODO PEG (INTERACTION DRONE, bottone 2 = sopra): teleop in frame Body FLU
+    // Usa la stessa trasformazione get_falcon_flu()
     // Bottone 1 → yaw CCW, Bottone 3 → yaw CW
     // =====================================================
     bool peg_btn = (button_states_[2] == 1);
@@ -397,30 +432,24 @@ private:
       double psi_body =
           peg_target_yaw_; // Usa lo yaw del peg drone (body frame)
 
-      // L'hardware Falcon ha la X e la Y invertite rispetto al FLU
-      // (avanti/sinistra). Matematicamente, questo equivale a una rotazione di
-      // 180 gradi attorno all'asse Z
-      Eigen::Matrix3d R_falcon_to_body;
-      R_falcon_to_body << -1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0;
+      // Comando normalizzato in terna Body FLU
+      Eigen::Vector3d p_flu = get_falcon_flu(deadband, joy_scale);
 
       // Matrice dal Body del drone (FLU) al Mondo (ENU)
       Eigen::Matrix3d R_body_to_world;
       R_body_to_world << std::cos(psi_body), -std::sin(psi_body), 0.0,
-          std::sin(psi_body), std::cos(psi_body), 0.0, 0.0, 0.0, 1.0;
+                         std::sin(psi_body),  std::cos(psi_body), 0.0,
+                         0.0,                 0.0,                1.0;
 
-      // Vettore comandi grezzi (hardware frame)
-      Eigen::Vector3d f_raw(
-          apply_deadband(falcon_pos_[0], deadband) * joy_scale,
-          apply_deadband(falcon_pos_[1], deadband) * joy_scale,
-          apply_deadband(falcon_pos_[2], deadband) * joy_scale);
+      // Vettore velocità in terna Body FLU
+      Eigen::Vector3d v_body(p_flu.x() * v_t, p_flu.y() * v_t, p_flu.z() * v_z);
 
-      // Catena cinematica completa: World = R_body_to_world * R_falcon_to_body
-      // * Falcon
-      Eigen::Vector3d v_cmd = R_body_to_world * R_falcon_to_body * f_raw;
+      // Catena cinematica completa: World ENU = R_body_to_world * v_body
+      Eigen::Vector3d v_cmd = R_body_to_world * v_body;
 
-      peg_target_pos_[0] += v_cmd.x() * v_t * dt;
-      peg_target_pos_[1] += v_cmd.y() * v_t * dt;
-      peg_target_pos_[2] += v_cmd.z() * v_z * dt;
+      peg_target_pos_[0] += v_cmd.x() * dt;
+      peg_target_pos_[1] += v_cmd.y() * dt;
+      peg_target_pos_[2] += v_cmd.z() * dt;
 
       if (button_states_[1] == 1)
         peg_target_yaw_ += v_yr * dt; // CCW
@@ -440,12 +469,6 @@ private:
       peg_msg.pose.orientation = rpy_to_quaternion(0.0, 0.0, peg_target_yaw_);
       peg_live_pub_->publish(peg_msg);
     }
-  }
-
-  double apply_deadband(double val, double deadband) {
-    if (std::abs(val) < deadband)
-      return 0.0;
-    return (val > 0) ? (val - deadband) : (val + deadband);
   }
 
   // ROS 2 objects

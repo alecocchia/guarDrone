@@ -95,7 +95,7 @@ class SupervisorNode(Node):
         #self.pov_r = -1.0
         #self.pov_beta = 0.0
         self.pov_r = 3.0
-        self.pov_beta = np.pi/4
+        self.pov_beta = np.pi/2
         self.pov_z = 0.0
         self.pov_yaw = 0.0
 

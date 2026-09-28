@@ -81,7 +81,7 @@ def launch_setup(context, *args, **kwargs):
         }],
     )
 
-    # NODO: FAKE PUBLISHER (usato per testare solo il GuaDrone, simula l'interaction drone e il supervisor)
+    # NODO: FAKE PUBLISHER (usato per testare solo il GuarDrone, simula l'interaction drone e il supervisor)
     fake_publisher_node = Node(
         package='gcs_pkg',
         executable='fake_publisher.py',
@@ -120,7 +120,7 @@ def launch_setup(context, *args, **kwargs):
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('model', default_value='x500_depth',
-                              description='Modello Gazebo del GuaDrone (per ricavare offset camera)'),
+                              description='Modello Gazebo del GuarDrone (per ricavare offset camera)'),
         DeclareLaunchArgument('use_fake', default_value='false',
                               description='Usa fake_publisher invece del supervisor e drone2'),
         DeclareLaunchArgument('enable_rviz', default_value='true',

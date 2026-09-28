@@ -648,7 +648,7 @@ class MpcPlannerNode(Node):
         Z_CART     = 0.2                          # [m] tolleranza errore quota
         Y_CYL      = np.pi / 3.0                  # [rad] tolleranza puntamento yaw (~60 deg)
         V          = np.array([0.2, 0.2, 0.2])    # [m/s] velocità max attesa
-        ANG_DOT    = np.array([0.15, 0.15, 0.3])  # [rad/s] velocità angolare max
+        ANG_DOT    = np.array([0.2, 0.2, 0.3])  # [rad/s] velocità angolare max
         ACC        = np.array([0.3, 0.3, 0.3])    # [m/s^2] accelerazione max
         ACC_ANG    = np.array([0.4, 0.4, 0.6])    # [rad/s^2] accelerazione angolare max
 
@@ -676,13 +676,13 @@ class MpcPlannerNode(Node):
             # CASO 2: CONTROLLER WRENCH CON MBE (disturbi compensati via feedforward)
             # ---------------------------------------------------------------------
             self.get_logger().info("[MPC Tuning] Modalità: CONTROLLER + MBE (Feedforward: ON)")
-            PesoVel    = PesoVis / 7.0   
-            PesoAngVel = PesoVis / 10.0
-            PesoAcc    = PesoVis / 20.0
+            PesoVel    = PesoVis / 10.0   
+            PesoAngVel = PesoVis / 20.0
+            PesoAcc    = PesoVis / 30.0
             PesoAngAcc = PesoVis / 50.0
             PesoForce  = PesoVis / 10.0   
             PesoTorque = PesoVis / 10.0
-            scale_e = [5.0, 5.0, 5.0, 1.5, 1.0]
+            scale_e = [5.0, 5.0, 5.0, 1.0, 1.0]
 
         else:
             # ---------------------------------------------------------------------
@@ -1006,7 +1006,7 @@ class MpcPlannerNode(Node):
                     
                     # Thresholds
                     thrust_thresh = 5  # Newton (circa 10% della spinta di hovering)
-                    torque_thresh = 0.4  # Nm (margine sufficiente per evitare scatti angolari)
+                    torque_thresh = 0.5  # Nm (margine sufficiente per evitare scatti angolari)
                     
                     if err_thrust < thrust_thresh and err_torque < torque_thresh:
                         self.get_logger().info(f"Safe Switch OK! (err_thrust={err_thrust:.2f}N, err_torque={err_torque:.3f}Nm). L'MPC prende il controllo di PX4!")

@@ -33,8 +33,8 @@ def generate_launch_description():
         parameters=[{
             'k_spring':   50.0,
             'b_damping':  10.0,
-            'v_beta_max':  0.1,   # <-- Velocità di orbita del GuarDrone (rad/s)
-            'v_r_max':     0.2,    # <-- Velocità radiale avvicinamento/allontanamento
+            'v_beta_max':  0.3,   # <-- Velocità di orbita del GuarDrone (rad/s)
+            'v_r_max':     0.5,    # <-- Velocità radiale avvicinamento/allontanamento
             'v_z_max':     0.2,    # <-- Velocità quota
             'deadband':    0.008,
             'v_pan_max':   0.5,    # (parametri Peg Drone)
