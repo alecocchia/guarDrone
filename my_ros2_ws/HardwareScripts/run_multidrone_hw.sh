@@ -84,7 +84,7 @@ tmux send-keys -t $SESSION_NAME:gcs.0 "ros2 launch gcs_pkg gcs_hw.launch.py use_
 # Pane 1: Haptic
 tmux select-pane -T '1: Haptic' -t $SESSION_NAME:gcs.1
 tmux send-keys -t $SESSION_NAME:gcs.1 "cd ${WS_DIR} && ${LOCAL_SOURCE}" C-m
-tmux send-keys -t $SESSION_NAME:gcs.1 "ros2 launch fd_haptic_joy haptic_sim.launch.py" C-m
+tmux send-keys -t $SESSION_NAME:gcs.1 "ros2 launch fd_haptic_joy haptic_hw.launch.py" C-m
 
 # Pane 2: Keyboard Client
 tmux select-pane -T '2: Keyboard Client' -t $SESSION_NAME:gcs.2
