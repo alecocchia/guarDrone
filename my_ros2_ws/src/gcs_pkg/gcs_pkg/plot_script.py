@@ -417,31 +417,27 @@ def main():
            "Yaw Tracking: Drone Pointing Target",
            ncols=2, use_tex=args.tex, block=block, fignum=6, task_start=task_start, task_end=task_end)
 
-    # --- FIGURE 6: Errori di Tracking Primari (cilindrici + posizione + orientamento) ---
-    # Errore XY reale di missione: camera vs target assoluto (non previsione MPC)
-    err_pos = np.linalg.norm(data['p_cam'][:, :2] - data['p_cam_target'][:, :2], axis=1)
+    # --- FIGURE 6 (fignum=7): Errori di Tracking Primari (Cilindrici & Yaw) ---
     err_r   = np.abs(data['r_cyl']    - data['online_cyl_ref'][:, 0])
     err_beta  = np.abs(np.arctan2(
         np.sin(data['beta_cyl']  - data['online_cyl_ref'][:, 1]),
         np.cos(data['beta_cyl']  - data['online_cyl_ref'][:, 1])))
     err_z = np.abs(data['z_cyl'] - data['online_cyl_ref'][:, 2])
     err_yaw = np.abs(data['yaw_err_cyl'] - yaw_offset_ref)
-    err_rp = np.linalg.norm(data['q'][:, 1:3], axis=1)  # qx, qy
 
     fig6_data = [
-        {'sim': err_pos,   'ref': 0},
-        {'sim': err_r,     'ref': 0},
-        {'sim': err_beta,  'ref': 0},
-        {'sim': err_z, 'ref': 0},
-        {'sim': err_yaw,   'ref': 0},
-        {'sim': err_rp,    'ref': 0},
+        {'sim': err_r,     'ref': 0.0},
+        {'sim': err_beta,  'ref': 0.0},
+        {'sim': err_z,     'ref': 0.0},
+        {'sim': err_yaw,   'ref': 0.0},
     ]
     myPlot(t, fig6_data,
-           ["Cam XY Error [m]", "Distance Error |r_cyl_err| [m]",
-            "Azimuth Error |beta_err| [rad]", "Elevation Error |z_err| [m]",
-            "Yaw Error |yaw_err| [rad]", "Norm Roll/Pitch Error"],
-           "Primary Tracking Errors (Cylindrical)",
-           ncols=3, use_tex=args.tex, block=block, fignum=7, task_start=task_start, task_end=task_end)
+           ["Distance Error |r_cyl_err| [m]",
+            "Azimuth Error |beta_err| [rad]", 
+            "Elevation Error |z_err| [m]",
+            "Yaw Error |yaw_err| [rad]"],
+           "Primary Tracking Errors (Cylindrical & Yaw)",
+           ncols=2, use_tex=args.tex, block=block, fignum=7, task_start=task_start, task_end=task_end)
 
     # --- FIGURE 7: Dynamic States Errors & Derivatives ---
     err_vel = np.linalg.norm(data['v'] - data['vref'], axis=1)
@@ -468,8 +464,21 @@ def main():
     myPlot(t, fig8_data, ["Force Z (Thrust) [N]", "Torque X [Nm]", "Torque Y [Nm]", "Torque Z [Nm]"], 
            f"Control Wrench (Hover Force = {mass*g:.2f}N)", ncols=2, use_tex=args.tex, block=block, fignum=9, task_start=task_start, task_end=task_end)
 
-    # --- FIGURE 9: Haptic Forces ---
-    if indata('haptic_force'):
+    # --- FIGURE 9 (fignum=10): Haptic Repulsive Forces / Feedback ---
+    if indata('haptic_rep_force'):
+        fig9_data = [
+            {'sim': data['haptic_rep_force'][:, 0], 'ref': 0.0},
+            {'sim': data['haptic_rep_force'][:, 1], 'ref': 0.0},
+            {'sim': data['haptic_rep_force'][:, 2], 'ref': 0.0}
+        ]
+        myPlot(t, fig9_data, 
+               ["Repulsive Force X (Distance limit $r_{min}$) [N]", 
+                "Repulsive Force Y (Horiz. FoV) [N]", 
+                "Repulsive Force Z (Vert. FoV) [N]"], 
+               "Haptic APF Repulsive Forces (Safety Constraints)", 
+               ncols=3, use_tex=args.tex, block=block, fignum=10, 
+               task_start=task_start, task_end=task_end)
+    elif indata('haptic_force'):
         fig9_data = [
             {'sim': data['haptic_force'][:, 0], 'ref': 0.0},
             {'sim': data['haptic_force'][:, 1], 'ref': 0.0},
@@ -503,6 +512,17 @@ def main():
                ["Force X (Sensor) [N]", "Force Y (Sensor) [N]", "Force Z (Sensor) [N]"], 
                "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=12, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
 
+    # --- FIGURE 11b: Peg External Torques ---
+    if indata('peg_ext_torque'):
+        fig11b_data = [
+            {'sim': data['peg_ext_torque'][:, 0], 'ref': 0.0},
+            {'sim': data['peg_ext_torque'][:, 1], 'ref': 0.0},
+            {'sim': data['peg_ext_torque'][:, 2], 'ref': 0.0}
+        ]
+        myPlot(t, fig11b_data, 
+               ["Torque X (Sensor) [Nm]", "Torque Y (Sensor) [Nm]", "Torque Z (Sensor) [Nm]"], 
+               "Peg External Contact Torques (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=121, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
+
     # --- FIGURE 12: Admittance delta_p (spostamento di ammettenza in ENU) ---
     if indata('delta_p'):
         dp = data['delta_p']
@@ -535,6 +555,19 @@ def main():
                "Admittance Displacement in Sensor Frame",
                ncols=2, use_tex=args.tex, block=block, fignum=131, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
 
+    # --- FIGURE 12c: Admittance delta_yaw (rotazione di ammettenza) ---
+    if indata('delta_yaw'):
+        dyaw_rad = data['delta_yaw']
+        dyaw_deg = np.degrees(dyaw_rad)
+        fig12c_data = [
+            {'sim': dyaw_rad, 'ref': 0.0},
+            {'sim': dyaw_deg, 'ref': 0.0}
+        ]
+        myPlot(t, fig12c_data,
+               [r"$\Delta\psi$ [rad]", r"$\Delta\psi$ [deg]"],
+               "Admittance Yaw Displacement $\\Delta\\psi$",
+               ncols=2, use_tex=args.tex, block=block, fignum=132, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
+
     # --- FIGURE 13: Confronto ||delta_p|| vs ||F_ext|| ---
     if indata('delta_p') and indata('peg_ext_force'):
         dp_norm  = np.linalg.norm(data['delta_p'], axis=1)
@@ -562,6 +595,36 @@ def main():
         ax13[1].grid(True, alpha=0.3)
         ax13[1].set_title("Admittance Displacement Norm")
         fig13.suptitle("Admittance Effect: Contact Force vs Position Deviation", fontsize=14)
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        if block:
+            plt.show()
+
+    # --- FIGURE 13b: Confronto delta_yaw vs tau_yaw (Sensor X) ---
+    if indata('delta_yaw') and indata('peg_ext_torque'):
+        tau_x = data['peg_ext_torque'][:, 0]
+        dyaw_deg = np.degrees(data['delta_yaw'])
+        fig13b, ax13b = plt.subplots(2, 1, figsize=(12, 6), sharex=True, num=133)
+        try:
+            fig13b.canvas.manager.set_window_title("Figure 13b: Admittance Yaw vs Contact Torque")
+        except Exception:
+            pass
+        if haptic_peg_intervals:
+            for idx_h, item in enumerate(haptic_peg_intervals):
+                t_h_s, t_h_e = item[0], item[1]
+                ax13b[0].axvspan(t_h_s, t_h_e, color='#a855f7', alpha=0.15, label='Haptic Interaction' if idx_h == 0 else None, zorder=0)
+                ax13b[1].axvspan(t_h_s, t_h_e, color='#a855f7', alpha=0.15, label='Haptic Interaction' if idx_h == 0 else None, zorder=0)
+        ax13b[0].plot(t, tau_x, 'm-', linewidth=1.5, label=r'$\tau_x$ [Nm]')
+        ax13b[0].set_ylabel(r'$\tau_x$ (Sensor X / Yaw) [Nm]')
+        ax13b[0].legend(loc='upper right')
+        ax13b[0].grid(True, alpha=0.3)
+        ax13b[0].set_title(r"Contact Torque $\tau_x$ (Sensor X / Drone Yaw axis)")
+        ax13b[1].plot(t, dyaw_deg, 'c-', linewidth=1.5, label=r'$\Delta\psi$ [deg]')
+        ax13b[1].set_xlabel('Time [s]')
+        ax13b[1].set_ylabel(r'$\Delta\psi$ [deg]')
+        ax13b[1].legend(loc='upper right')
+        ax13b[1].grid(True, alpha=0.3)
+        ax13b[1].set_title(r"Admittance Yaw Deviation $\Delta\psi$")
+        fig13b.suptitle(r"Rotational Admittance Effect: Contact Torque $\tau_x$ vs $\Delta\psi$", fontsize=14)
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         if block:
             plt.show()
@@ -624,46 +687,43 @@ def main():
                 "Torque X [Nm]", "Torque Y [Nm]", "Torque Z [Nm]"], 
                 "Estimated Wrench (Momentum-Based Estimator)", ncols=3, use_tex=args.tex, block=block, fignum=16, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
 
-    # --- FIGURE 17: Violazione geometrica vincolo soft r_min ---
+    # --- FIGURE 17: Violazioni dei vincoli di sicurezza (Distanza Minima e FoV Camera) ---
     if indata('r_cyl'):
-        r_min = 1.0      # [m] — deve corrispondere a drone_MPC_settings.py
-        Z_pen = 1e3      # L2 penalty — aggiornare se modificato in configure_mpc
-        z_pen = 1e2      # L1 penalty — aggiornare se modificato in configure_mpc
-        s_geom  = np.maximum(0.0, r_min - data['r_cyl'])   # violazione geometrica reale
-        J_slack = 0.5 * Z_pen * s_geom**2 + z_pen * s_geom
+        r_min = 1.0      # [m] distanza minima di sicurezza da target
+        s_r = np.maximum(0.0, r_min - data['r_cyl'])
 
-        fig17, axes17 = plt.subplots(1, 2, figsize=(12, 4), num=17)
-        try:
-            fig17.canvas.manager.set_window_title("Figure 17: Violazione Vincolo Soft r_min")
-        except Exception:
-            pass
+        # Parametri FoV camera (default standard OakD-Lite: 68.98° H, 51.74° V)
+        fov_h_deg = float(data['fov_h']) if indata('fov_h') else 68.98
+        fov_v_deg = float(data['fov_v']) if indata('fov_v') else 51.74
+        fov_h_half_deg = fov_h_deg / 2.0
+        fov_v_half_deg = fov_v_deg / 2.0
 
-        # --- Subplot sx: violazione s(t) ---
-        ax_s = axes17[0]
-        ax_s.plot(t, s_geom, 'r-', linewidth=1.5, label=r'$s = \max(0,\,r_{min} - r_{cyl})$')
-        if task_start > 0:
-            ax_s.axvline(x=task_start, color='k', linestyle='--', linewidth=1.5, label='Mission Start')
-        ax_s.set_title(r'Violazione geometrica $s(t)$ [$r_{min}$=' + f'{r_min} m]')
-        ax_s.set_xlabel('Time [s]')
-        ax_s.set_ylabel('s [m]')
-        ax_s.legend(fontsize='small')
-        ax_s.grid(True, alpha=0.3)
+        # 1. Violazione FoV Orizzontale: deviazione angolare yaw oltre la semi-apertura orizzontale
+        yaw_err_deg = np.degrees(np.abs(data['yaw_err_cyl'])) if indata('yaw_err_cyl') else np.zeros_like(s_r)
+        s_fov_h = np.maximum(0.0, yaw_err_deg - fov_h_half_deg)
 
-        # --- Subplot dx: costo slack J(t) ---
-        ax_j = axes17[1]
-        ax_j.plot(t, J_slack, 'm-', linewidth=1.5, label=r'$J_{slack} = \frac{1}{2} Z s^2 + z_p s$')
-        if task_start > 0:
-            ax_j.axvline(x=task_start, color='k', linestyle='--', linewidth=1.5, label='Mission Start')
-        ax_j.set_title(f'Costo slack $J_{{slack}}(t)$  [Z={Z_pen:.0e}, $z_p$={z_pen:.0e}]')
-        ax_j.set_xlabel('Time [s]')
-        ax_j.set_ylabel('J [adim.]')
-        ax_j.legend(fontsize='small')
-        ax_j.grid(True, alpha=0.3)
+        # 2. Violazione FoV Verticale: elevazione theta_v oltre la semi-apertura verticale
+        if indata('z_cyl'):
+            r_safe = np.where(data['r_cyl'] > 1e-4, data['r_cyl'], 1e-4)
+            theta_v_deg = np.degrees(np.arctan2(np.abs(data['z_cyl']), r_safe))
+            s_fov_v = np.maximum(0.0, theta_v_deg - fov_v_half_deg)
+        else:
+            s_fov_v = np.zeros_like(s_r)
 
-        fig17.suptitle('Soft Constraint — Distanza Minima da Oggetto', fontsize=14)
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        if block:
-            plt.show()
+        fig17_data = [
+            {'sim': s_r,     'ref': 0.0},
+            {'sim': s_fov_h, 'ref': 0.0},
+            {'sim': s_fov_v, 'ref': 0.0},
+        ]
+        labels17 = [
+            f"Distance Violation $s_r$ [m] ($r_{{min}}$={r_min:.1f} m)",
+            f"Horiz. FoV Violation $s_{{fov,h}}$ [deg] (half-FoV={fov_h_half_deg:.0f}°)",
+            f"Vert. FoV Violation $s_{{fov,v}}$ [deg] (half-FoV={fov_v_half_deg:.0f}°)"
+        ]
+        myPlot(t, fig17_data, labels17,
+               "Safety Distance and Camera FoV Constraint Violations",
+               ncols=3, use_tex=args.tex, block=block, fignum=17,
+               task_start=task_start, task_end=task_end)
 
 
     # --- GENERAZIONE REPORT METRICHE COMPLETO (Benchmark, Jitter, Tracking) ---
@@ -766,6 +826,26 @@ def main():
             report_lines.append(f"Errore Azimut (beta)     : RMS = {rms_beta:.4f} rad ({np.degrees(rms_beta):.2f} deg) | Max = {max_beta:.4f} rad")
             report_lines.append(f"Errore Quota (z_cyl)     : RMS = {rms_z:.4f} m | Max = {max_z:.4f} m")
             report_lines.append(f"Errore Yaw               : RMS = {rms_yaw:.4f} rad ({np.degrees(rms_yaw):.2f} deg) | Max = {max_yaw:.4f} rad")
+
+    # 4. CONSTRAINT VIOLATIONS SUMMARY (Distance & FoV)
+    if indata('r_cyl'):
+        mask_c = np.ones(len(t), dtype=bool)
+        if task_start > 0:
+            mask_c &= (t >= task_start)
+        if task_end > 0:
+            mask_c &= (t <= task_end)
+
+        if np.any(mask_c):
+            max_s_r = float(np.nanmax(s_r[mask_c]))
+            max_s_h = float(np.nanmax(s_fov_h[mask_c]))
+            max_s_v = float(np.nanmax(s_fov_v[mask_c]))
+
+            report_lines.append("\n" + "-" * 70)
+            report_lines.append(" 4. CONSTRAINT VIOLATIONS SUMMARY (in Mission)")
+            report_lines.append("-" * 70)
+            report_lines.append(f"Violazione Distanza Minima (r_min={r_min:.1f}m)  : Max = {max_s_r:.4f} m" + (" (NESSUNA)" if max_s_r <= 1e-4 else " (VIOLATO!)"))
+            report_lines.append(f"Violazione FoV Orizzontale (lim={fov_h_half_deg:.0f}°) : Max = {max_s_h:.2f} deg" + (" (NESSUNA)" if max_s_h <= 1e-2 else " (VIOLATO!)"))
+            report_lines.append(f"Violazione FoV Verticale   (lim={fov_v_half_deg:.0f}°) : Max = {max_s_v:.2f} deg" + (" (NESSUNA)" if max_s_v <= 1e-2 else " (VIOLATO!)"))
     report_lines.append("=" * 70 + "\n")
 
     report_text = "\n".join(report_lines)
@@ -793,17 +873,22 @@ def main():
         fig_nums = plt.get_fignums()
         for i in fig_nums:
             for fmt in args.formats:
-                out_path = os.path.join(args.out_dir, f"plot_fig_{i}.{fmt}")
+                sub_dir = os.path.join(args.out_dir, fmt)
+                os.makedirs(sub_dir, exist_ok=True)
+                out_path = os.path.join(sub_dir, f"plot_fig_{i}.{fmt}")
                 plt.figure(i).savefig(out_path, **fmt_opts[fmt])
 
-        # --- PDF multi-pagina: tutti i grafici in un unico file scrollabile ---
+        # --- PDF multi-pagina: tutti i grafici in un unico file scrollabile nella cartella madre ---
         from matplotlib.backends.backend_pdf import PdfPages
         multipage_path = os.path.join(args.out_dir, "all_figures.pdf")
         with PdfPages(multipage_path) as pdf:
             for i in fig_nums:
                 pdf.savefig(plt.figure(i), bbox_inches="tight")
         print(f"Grafici salvati in: {os.path.abspath(args.out_dir)} | Formati: {args.formats}")
-        print(f"PDF scrollabile multi-pagina generato in: {multipage_path}")
+        for fmt in args.formats:
+            print(f"  - Sottocartella '{fmt}/': {os.path.join(os.path.abspath(args.out_dir), fmt)}")
+        print(f"  - PDF multi-pagina (cartella madre): {multipage_path}")
+        print(f"  - Report metriche  (cartella madre): {report_txt_path}")
     elif args.all:
         plt.show()
 

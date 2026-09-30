@@ -95,11 +95,10 @@ class OffboardAdmittancePlanner(Node):
         self.declare_parameter('dt', 0.01)   # 100 Hz
 
         # -- Parametri ammettenza --
-        self.declare_parameter('F_threshold', 0.2)    # [N] soglia attivazione
-        #self.declare_parameter('adm_mass', 1.0)       # [kg] massa virtuale
-        #self.declare_parameter('adm_damping', 8.0)    # smorzamento virtuale
-        #self.declare_parameter('adm_stiffness', 0.0)  # rigidezza virtuale (0 = ammortizzatore puro)
-        self.declare_parameter('adm_max_delta', 10.0)  # [m] saturazione spostamento
+        self.declare_parameter('F_threshold', 0.2)        # [N] soglia attivazione forza
+        self.declare_parameter('adm_max_delta', 10.0)      # [m] saturazione spostamento traslazionale
+        self.declare_parameter('tau_threshold', 0.002)    # [Nm] soglia attivazione coppia yaw
+        self.declare_parameter('adm_max_delta_yaw', 0.35) # [rad] saturazione rotazione (~20 deg)
 
         self.start_x = self.get_parameter('start_x').value
         self.start_y = self.get_parameter('start_y').value
@@ -120,16 +119,9 @@ class OffboardAdmittancePlanner(Node):
         self.a_max = self.get_parameter('a_max').get_parameter_value().double_value
         self.dt = self.get_parameter('dt').get_parameter_value().double_value
 
-        # Parametri sensore di forza
+        # Parametri sensore di forza e coppia
         self.F_threshold = self.get_parameter('F_threshold').get_parameter_value().double_value
-
-        # -- Stato filtro a mediana --
-        # Dimensione della finestra (deve essere un numero dispari)
-        #self.filter_window = 7 
-        # Inizializza il buffer circolare. Quando raggiunge maxlen, 
-        # ogni nuovo .append() elimina in automatico il dato più vecchio.
-        #self.f_sensor_buffer = deque(maxlen=self.filter_window)
-
+        self.tau_threshold = self.get_parameter('tau_threshold').get_parameter_value().double_value
 
         # -- Dimensionamento ammettenza in frame SENSOR --
         #
@@ -145,35 +137,47 @@ class OffboardAdmittancePlanner(Node):
         #   M = K / wn^2                         (massa virtuale)
         #   D = 2 * zeta * sqrt(K*M)             (smorzamento)
         #
-        # Risposta stazionaria a forza costante: delta_static = F / K
-        #
-        # --- ASSE Z (perpendicolare alla parete) 
-        # Forza tipica: 3 N (contatto leggero con la parete)
-        # Cedevolezza desiderata: 3 N --> 8 cm di rimbalzo
-        # Tempo di assestamento: 0.5 s (risposta reattiva ma stabile)
-        # Smorzamento critico: niente rimbalzi sul muro
-        F_typ_z    = 3     # [N]  forza di contatto
+        # --- ASSE Z TRASLAZIONALE (perpendicolare alla parete) 
+        F_typ_z    = 3.0    # [N]  forza di contatto
         delta_typ_z= 0.08   # [m]  rimbalzo desiderato a F_typ_z (--> rigidezza K)
-        Ta_z       = 1     # [s]  tempo assestamento al 5%
-        zeta_z     = 1    # [-]  smorzamento
+        Ta_z       = 0.5    # [s]  tempo assestamento al 5%
+        zeta_z     = 1.0    # [-]  smorzamento
 
-
-        # -- M e D derivati wn e zeta
         K = F_typ_z / delta_typ_z
         Ta   = Ta_z
         zeta = zeta_z
         wn   = 3.0 / (zeta * Ta)        # wn tale che assestamento 5% = Ta
         M    = K / (wn**2)                # M = K/wn²
-        D    = 2.0 * zeta * K / wn      # D = 2*zeta*K/wn  (equivalente a 2*zeta*sqrt(K*M))
+        D    = 2.0 * zeta * K / wn      # D = 2*zeta*K/wn
 
         self.adm_K = K
         self.adm_M = M
         self.adm_D = D
         self.adm_max_delta = self.get_parameter('adm_max_delta').get_parameter_value().double_value
 
+        # --- ASSE ROTAZIONALE YAW (K_psi > 0 per ritorno a perpendicolare alla parete) ---
+        tau_typ_yaw   = 0.05              # [Nm] coppia tipica attesa a contatto
+        delta_typ_yaw = float(np.radians(3.0))  # [rad] deflessione tipica a tau_typ_yaw (~5 deg)
+        Ta_yaw        = 0.5              # [s] tempo assestamento al 5%
+        zeta_yaw      = 1              # [-] smorzamento critico
+
+        K_psi  = tau_typ_yaw / delta_typ_yaw
+        wn_psi = 3.0 / (zeta_yaw * Ta_yaw)
+        J_psi  = K_psi / (wn_psi ** 2)
+        D_psi  = 2.0 * zeta_yaw * K_psi / wn_psi
+
+        self.adm_K_psi = K_psi
+        self.adm_J_psi = J_psi
+        self.adm_D_psi = D_psi
+        self.adm_max_delta_yaw = self.get_parameter('adm_max_delta_yaw').get_parameter_value().double_value
+
         self.get_logger().info(
-            f"[Admittance] K={self.adm_K}, M={self.adm_M}, D={self.adm_D}, "
-            f"wn={wn} rad/s, Ta={Ta}, zeta={zeta}"
+            f"[Admittance Trans] K={self.adm_K:.2f}, M={self.adm_M:.3f}, D={self.adm_D:.2f}, "
+            f"wn={wn:.2f} rad/s, Ta={Ta}s, zeta={zeta}"
+        )
+        self.get_logger().info(
+            f"[Admittance Yaw] K_psi={self.adm_K_psi:.4f} Nm/rad, J_psi={self.adm_J_psi:.4f} kg*m^2, "
+            f"D_psi={self.adm_D_psi:.4f} Nms/rad, wn={wn_psi:.2f} rad/s, Ta={Ta_yaw}s, zeta={zeta_yaw}"
         )
 
         ft_topic = self.get_parameter('ft_topic').get_parameter_value().string_value
@@ -199,8 +203,9 @@ class OffboardAdmittancePlanner(Node):
             OffboardControlMode, f'{prefix}/fmu/in/offboard_control_mode', 1)
         self.setpoint_pub = self.create_publisher(
             TrajectorySetpoint, f'{prefix}/fmu/in/trajectory_setpoint', 1)
-        self.delta_p_pub        = self.create_publisher(Vector3Stamped, '/delta_p', 10)
-        self.delta_p_sensor_pub  = self.create_publisher(Vector3Stamped, '/delta_p_sensor', 10)
+        self.delta_p_pub         = self.create_publisher(Vector3Stamped, '/delta_p', 10)
+        self.delta_p_sensor_pub   = self.create_publisher(Vector3Stamped, '/delta_p_sensor', 10)
+        self.delta_yaw_pub        = self.create_publisher(Float64,        '/delta_yaw', 10)
         self.peg_ref_pub = self.create_publisher(PoseStamped, '/peg_ref_pose', 10)
         self.peg_ref_twist_pub = self.create_publisher(TwistStamped, '/peg_ref_twist', 10)
 
@@ -247,10 +252,7 @@ class OffboardAdmittancePlanner(Node):
         self.traj_rpy = None
         self.current_index = 0
 
-        # -- Stato ammettenza --
-        # Integrazione in terna SENSORE (assi disaccoppiati, nessun coupling da rotazione)
-        # delta_p_s, delta_v_s: spostamento/velocità in terna sensore [m, m/s]
-        # delta_p, delta_v:     idem in terna ENU (output per il setpoint PX4)
+        # -- Stato ammettenza traslazionale (terna SENSORE) --
         self.delta_p_s = 0.0   # [m]    in sensor frame
         self.delta_v_s = 0.0   # [m/s]  in sensor frame
         self.delta_p   = np.zeros(3)   # [m]    in ENU  (= R_s2e[:,2].T * delta_p_s)
@@ -262,6 +264,13 @@ class OffboardAdmittancePlanner(Node):
         self.F_adm_input = 0.0
         self.admittance_active = False
         self.Fz_prev = 0.0
+
+        # -- Stato ammettenza rotazionale yaw --
+        self.delta_p_yaw = 0.0    # [rad] deviazione yaw dall'ammettenza
+        self.delta_v_yaw = 0.0    # [rad/s] velocità angolare di ammettenza
+        self.tau_ext_sens = 0.0   # [Nm] coppia filtrata (attorno a X sensore = Z drone)
+        self.tau_adm_input = 0.0  # [Nm] ingresso ammettenza yaw
+        self.tau_x_prev = 0.0     # [Nm] precedente lettura per filtro IIR
 
         self.p_contact   = None  # Posizione congelata al momento del contatto
         self.yaw_contact = None  # Yaw perpendicolare alla parete, congelato al primo contatto
@@ -355,36 +364,37 @@ class OffboardAdmittancePlanner(Node):
 
         """
         F_sensor = msg.force.z
-        alpha = 0.2 # 0.4 prima
-        # Inserisco la nuova lettura grezza nel buffer temporale (FIFO)
-        #self.f_sensor_buffer.append(F_sensor)
-        
-        # Creo una lista temporanea e la ordina per grandezza
-        # (Questo non altera l'ordine cronologico dentro la deque originale)
-        #sorted_buffer = sorted(self.f_sensor_buffer)
-        
-        # Estraggo il valore esattamente al centro (la mediana)
-        # // = floor division (divisione intera)
-        #mid_index = len(sorted_buffer) // 2
-        self.F_ext_sens = alpha * F_sensor + (1-alpha)*self.Fz_prev
-        
-        # Calcolo il modulo per la soglia
+        alpha = 0.4
+        self.F_ext_sens = alpha * F_sensor + (1 - alpha) * self.Fz_prev
+        self.Fz_prev = self.F_ext_sens
         F_norm = np.abs(self.F_ext_sens)
 
-        was_active = self.admittance_active
-        # Attiviamo l'ammettenza solo se superiamo la soglia E siamo sopra i 30 cm
-        self.admittance_active = (F_norm >= self.F_threshold and self.current_pos[2] >= 0.3)
+        # Lettura e filtraggio coppia attorno all'asse X del sensore (= asse Z verticale / yaw del drone)
+        tau_raw = msg.torque.x
+        alpha_tau = 0.2
+        self.tau_ext_sens = alpha_tau * tau_raw + (1.0 - alpha_tau) * self.tau_x_prev
+        self.tau_x_prev = self.tau_ext_sens
+        tau_norm = np.abs(self.tau_ext_sens)
 
-        # Se l'ammettenza NON deve agire (es. siamo a terra o forza debole), azzeriamo l'input.
+        was_active = self.admittance_active
+        # Attiviamo l'ammettenza traslazionale solo se superiamo la soglia E siamo sopra i 30 cm dalla quota di spawn
+        alt_rel = self.current_pos[2] - self.start_z
+        self.admittance_active = (F_norm >= self.F_threshold and alt_rel >= 0.3)
+
+        # Se l'ammettenza traslazionale NON deve agire, azzeriamo l'input di forza
         if self.admittance_active:
             self.F_adm_input = self.F_ext_sens
         else:
             self.F_adm_input = 0.0
 
+        # Input ammettenza rotazionale yaw: attivo durante contatto o se la coppia supera la soglia in volo
+        if (self.admittance_active or tau_norm >= self.tau_threshold) and alt_rel >= 0.3:
+            self.tau_adm_input = self.tau_ext_sens
+        else:
+            self.tau_adm_input = 0.0
+
         if self.admittance_active and not was_active:
             # Memorizza la posizione corrente al primo contatto dopo free-flight (fronte di salita).
-            # NON resettiamo delta_p_s / delta_v_s: in free-flight decadono naturalmente
-            # a zero (F_adm_input=0), quindi non servono condizioni iniziali forzate.
             self.p_contact = self.current_pos.copy()
 
             # Yaw perpendicolare alla parete: n = R_sensor2enu[:,2] è il vettore che 
@@ -402,17 +412,19 @@ class OffboardAdmittancePlanner(Node):
 
             self.get_logger().info(
                 f"[AdmittancePlanner] CONTATTO rilevato: |F|={F_norm:.3f}N >= {self.F_threshold:.2f}N"
-                f" | p_contact={self.p_contact} | yaw_contact={np.degrees(self.yaw_contact):.1f}°"
+                f" | |tau_yaw|={tau_norm:.4f}Nm | p_contact={self.p_contact} | yaw_contact={np.degrees(self.yaw_contact):.1f}°"
             )
         elif not self.admittance_active and was_active:
             self.get_logger().info(
                 "[AdmittancePlanner] Contatto perso. Ritorno a free-flight lungo la normale al contatto."
             )
-        self.Fz_prev = self.F_ext_sens
 
     def supervisor_state_cb(self, msg: String):
         self.current_phase = msg.data
         self._received_supervisor_state = True
+        if msg.data in ('LANDING', 'DISARM_WAIT', 'EMERGENCY', 'MISSION_COMPLETE'):
+            self.offboard_traj_enabled = False
+            self.get_logger().info(f"[AdmittancePlanner] Ricevuto stato '{msg.data}': disabilito setpoint offboard.")
 
     def enabled_cb(self, msg: Bool):
         self.offboard_traj_enabled = msg.data
@@ -527,15 +539,18 @@ class OffboardAdmittancePlanner(Node):
                 self.current_index = 0
                 self.get_logger().info("[AdmittancePlanner] Live mode TERMINATO - mantengo posizione haptic")
             else:
-                # Setpoint diretto senza traiettoria
+                # Setpoint diretto senza traiettoria (con ammettenza traslazionale + rotazionale)
                 p_cmd = self.live_target_pos + delta_p_enu
-                self.publish_setpoint(p_cmd, self.live_target_yaw, delta_v_enu)
+                yaw_cmd = self.live_target_yaw + self.delta_p_yaw
+                self.publish_setpoint(p_cmd, yaw_cmd, delta_v_enu)
+                self._publish_deltas()
                 return
 
         # -- Posizione e velocità nominali dalla traiettoria --
         if self.traj_p is None:
             if self.has_odom:
                 self.publish_setpoint(self.current_pos, self.current_rpy[2])
+            self._publish_deltas()
             return
 
         idx = min(self.current_index, len(self.traj_p) - 1)
@@ -565,27 +580,12 @@ class OffboardAdmittancePlanner(Node):
             p_cmd = p_nom + delta_p_enu
             v_cmd = v_nom + delta_v_enu
 
-        # Yaw: perpendicolare alla parete se il contatto è avvenuto, nominale altrimenti
-        yaw_cmd = self.yaw_contact if self.yaw_contact is not None else yaw_nom
+        # Yaw: nominale + deviazione di ammettenza rotazionale (K_psi > 0 riporta a 0 a coppia nulla)
+        yaw_cmd = yaw_nom + self.delta_p_yaw
         self.publish_setpoint(p_cmd, yaw_cmd, v_cmd)
 
-        # -- Pubblica delta_p in ENU (per logging e RViz) --
-        stamp = self.get_clock().now().to_msg()
-        dp_msg = Vector3Stamped()
-        dp_msg.header.stamp = stamp
-        dp_msg.vector.x = float(self.delta_p[0])
-        dp_msg.vector.y = float(self.delta_p[1])
-        dp_msg.vector.z = float(self.delta_p[2])
-        self.delta_p_pub.publish(dp_msg)
-
-        # -- Pubblica delta_p in terna SENSORE (per plot) --
-        dp_s = self._delta_p_sensor
-        dp_s_msg = Vector3Stamped()
-        dp_s_msg.header.stamp = stamp
-        dp_s_msg.vector.x = 0.0
-        dp_s_msg.vector.y = 0.0
-        dp_s_msg.vector.z = float(dp_s)
-        self.delta_p_sensor_pub.publish(dp_s_msg)
+        # -- Pubblica delta topics (per logging e RViz) --
+        self._publish_deltas()
 
         # -- Pubblica posizione + yaw di riferimento nominale peg in ENU (per logger) --
         ref_msg = PoseStamped()
@@ -616,37 +616,70 @@ class OffboardAdmittancePlanner(Node):
         if self.current_index < len(self.traj_p):
             self.current_index += 1
 
+    def _publish_deltas(self):
+        """Pubblica i dislocamenti di ammettenza traslazionali e rotazionali per il logger."""
+        stamp = self.get_clock().now().to_msg()
+
+        # delta_p in ENU
+        dp_msg = Vector3Stamped()
+        dp_msg.header.stamp = stamp
+        dp_msg.vector.x = float(self.delta_p[0])
+        dp_msg.vector.y = float(self.delta_p[1])
+        dp_msg.vector.z = float(self.delta_p[2])
+        self.delta_p_pub.publish(dp_msg)
+
+        # delta_p in terna SENSORE
+        dp_s_msg = Vector3Stamped()
+        dp_s_msg.header.stamp = stamp
+        dp_s_msg.vector.x = 0.0
+        dp_s_msg.vector.y = 0.0
+        dp_s_msg.vector.z = float(self._delta_p_sensor)
+        self.delta_p_sensor_pub.publish(dp_s_msg)
+
+        # delta_yaw
+        dy_msg = Float64()
+        dy_msg.data = float(self.delta_p_yaw)
+        self.delta_yaw_pub.publish(dy_msg)
+
     # -- Integrazione ammettenza --
 
     def _integrate_admittance(self, R_sensor2enu: np.ndarray):
         """
         Integra la dinamica virtuale di ammettenza in TERNA SENSORE.
 
-        Le matrici M, D, K sono diagonali per costruzione nel frame sensore.
-        Integro in sensor frame per avere disaccoppiamento tra gli assi.
+        - Traslazionale (asse Z sensore): M * ddot(dp) + D * dot(dp) + K * dp = F_adm_input
+        - Rotazionale (yaw):             J * ddot(dyaw) + D_psi * dot(dyaw) + K_psi * dyaw = tau_adm_input
 
-        Output: self.delta_p e self.delta_v vengono aggiornati in ENU
-                (= R_sensor2enu @ delta_p_s) per essere usati direttamente nel setpoint.
+        Output: self.delta_p e self.delta_v in ENU per il setpoint PX4,
+                self.delta_p_yaw per lo yaw setpoint.
         """
-        # -- Forza di ingresso in terna sensore --
-
+        # -- 1. Ammettenza traslazionale (asse Z sensore) --
         F_s = float(self.F_adm_input)
-
-        # -- ODE in sensor frame
         a_s = (F_s - self.adm_D * self.delta_v_s - self.adm_K * self.delta_p_s) / self.adm_M
 
-        # -- Integrazione Eulero esplicita (forward Euler) --
         v_s_k = float(self.delta_v_s)    # salva v(k)
         self.delta_v_s += a_s * self.dt  # v(k+1)
         self.delta_p_s += v_s_k * self.dt  # p(k+1) con v(k)
 
-        # -- Saturazione in terna sensore --
+        # Saturazione traslazionale
         if abs(self.delta_p_s) > self.adm_max_delta:
-            self.delta_p_s = np.sign(self.delta_p_s) * self.adm_max_delta
+            self.delta_p_s = float(np.sign(self.delta_p_s) * self.adm_max_delta)
 
-        # -- Output in ENU (per setpoint PX4) -- # asse z del sensore
+        # Output in ENU (lungo l'asse Z del sensore espresso in ENU)
         self.delta_p = R_sensor2enu[:, 2] * self.delta_p_s
         self.delta_v = R_sensor2enu[:, 2] * self.delta_v_s
+
+        # -- 2. Ammettenza rotazionale yaw --
+        tau_s = float(self.tau_adm_input)
+        alpha_psi = (tau_s - self.adm_D_psi * self.delta_v_yaw - self.adm_K_psi * self.delta_p_yaw) / self.adm_J_psi
+
+        v_psi_k = float(self.delta_v_yaw)
+        self.delta_v_yaw += alpha_psi * self.dt
+        self.delta_p_yaw += v_psi_k * self.dt
+
+        # Saturazione rotazionale yaw
+        if abs(self.delta_p_yaw) > self.adm_max_delta_yaw:
+            self.delta_p_yaw = float(np.sign(self.delta_p_yaw) * self.adm_max_delta_yaw)
 
 
     # -- Pubblicazione setpoint ---------------------------

@@ -73,6 +73,8 @@ def launch_setup(context, *args, **kwargs):
             'start_z': drone_z,
             'cam_x': auto_cam[0], 'cam_y': auto_cam[1], 'cam_z': auto_cam[2],
             'ft_topic': LaunchConfiguration('peg_ft_topic'),
+            'fov_h': fov_h_deg,
+            'fov_v': fov_v_deg,
             # Drone di interazione: namespace PX4 e offset spawn
             'peg_px4_ns':  'px4_1',
             'peg_start_x': peg_x,

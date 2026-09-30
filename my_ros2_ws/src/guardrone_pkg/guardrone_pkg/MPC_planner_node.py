@@ -647,7 +647,7 @@ class MpcPlannerNode(Node):
         Y_CART     = 0.2                          # [m]
         Z_CART     = 0.2                          # [m] tolleranza errore quota
         Y_CYL      = np.pi / 3.0                  # [rad] tolleranza puntamento yaw (~60 deg)
-        V          = np.array([0.2, 0.2, 0.2])    # [m/s] velocità max attesa
+        V          = np.array([0.3, 0.3, 0.3])    # [m/s] velocità max attesa
         ANG_DOT    = np.array([0.2, 0.2, 0.3])  # [rad/s] velocità angolare max
         ACC        = np.array([0.3, 0.3, 0.3])    # [m/s^2] accelerazione max
         ACC_ANG    = np.array([0.4, 0.4, 0.6])    # [rad/s^2] accelerazione angolare max
@@ -676,7 +676,7 @@ class MpcPlannerNode(Node):
             # CASO 2: CONTROLLER WRENCH CON MBE (disturbi compensati via feedforward)
             # ---------------------------------------------------------------------
             self.get_logger().info("[MPC Tuning] Modalità: CONTROLLER + MBE (Feedforward: ON)")
-            PesoVel    = PesoVis / 10.0   
+            PesoVel    = PesoVis / 5.0   
             PesoAngVel = PesoVis / 20.0
             PesoAcc    = PesoVis / 30.0
             PesoAngAcc = PesoVis / 50.0

@@ -85,14 +85,15 @@ NAME="floating_sphere_$(date +%s%N | cut -b14-18)"
 
 case "$COLOR" in
     yellow) RGBA="1.0 0.8 0.0 1.0" ;;
-    green)  RGBA="0.0 0.85 0.15 1.0" ;;
+    red)    RGBA="0.95 0.15 0.15 1.0" ;;
     blue)   RGBA="0.15 0.5 1.0 1.0" ;;
     white)  RGBA="0.95 0.95 0.95 1.0" ;;
     orange) RGBA="1.0 0.5 0.0 1.0" ;;
-    *)      RGBA="0.95 0.15 0.15 1.0" ;; # default red
+    *)      RGBA="0.0 0.85 0.15 1.0" ;; # default: green
+
 esac
 
-SDF="<?xml version=\"1.0\" ?><sdf version=\"1.8\"><model name=\"${NAME}\"><static>true</static><pose>${X} ${Y} ${Z} 0 0 0</pose><link name=\"link\"><visual name=\"v\"><geometry><sphere><radius>${RADIUS}</radius></sphere></geometry><material><ambient>${RGBA}</ambient><diffuse>${RGBA}</diffuse><specular>0.4 0.4 0.4 1.0</specular></material></visual><collision name=\"c\"><geometry><sphere><radius>${RADIUS}</radius></sphere></geometry></collision></link></model></sdf>"
+SDF="<?xml version=\"1.0\" ?><sdf version=\"1.8\"><model name=\"${NAME}\"><static>true</static><pose>${X} ${Y} ${Z} 0 0 0</pose><link name=\"link\"><visual name=\"v\"><geometry><sphere><radius>${RADIUS}</radius></sphere></geometry><material><ambient>${RGBA}</ambient><diffuse>${RGBA}</diffuse><specular>0.4 0.4 0.4 1.0</specular></material></visual></link></model></sdf>"
 
 # Esegui il service call Gazebo
 RESPONSE=$(gz service -s /world/bridge_inspection_gazebo/create \

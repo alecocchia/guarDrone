@@ -28,6 +28,8 @@ def generate_launch_description():
                               description='[N] Soglia forza per attivare ammettenza'),
         DeclareLaunchArgument('peg_adm_max_delta', default_value='10.0',
                               description='[m] Saturazione spostamento di ammettenza'),
+        DeclareLaunchArgument('tau_threshold', default_value='0.002',
+                              description='[Nm] Soglia coppia per attivare ammettenza yaw'),
         DeclareLaunchArgument('peg_ft_topic',
                               default_value='/interaction_drone/force_torque',
                               description='Topic FT del sensore hardware'),
@@ -61,6 +63,7 @@ def generate_launch_description():
                 'px4_ns': 'px4_1',  # Namespace DDS del Drone 2 (UXRCE_DDS_NS=px4_1)
                 'F_threshold': LaunchConfiguration('F_threshold'),
                 'adm_max_delta': LaunchConfiguration('peg_adm_max_delta'),
+                'tau_threshold': LaunchConfiguration('tau_threshold'),
                 'ft_topic': LaunchConfiguration('peg_ft_topic'),
             }],
             remappings=[

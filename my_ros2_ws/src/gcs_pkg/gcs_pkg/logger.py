@@ -61,6 +61,12 @@ class Logger(Node):
         start_y = self.get_parameter('start_y').value
         start_z = self.get_parameter('start_z').value
 
+        # Parametri FoV camera
+        self.declare_parameter('fov_h', 68.98)
+        self.declare_parameter('fov_v', 51.74)
+        self.fov_h = float(self.get_parameter('fov_h').value)
+        self.fov_v = float(self.get_parameter('fov_v').value)
+
         # Setup Static TF Broadcaster
         from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
         from geometry_msgs.msg import TransformStamped
@@ -120,13 +126,16 @@ class Logger(Node):
         self.online_ref      = []
         self.online_cyl_ref  = []
         self.haptic_force    = []
+        self.haptic_rep_force = []
         self.haptic_active           = []  # Retrocompatibilità (GuarDrone)
         self.haptic_guardrone_active = []  # 1.0 se haptic attivo su GuarDrone, 0.0 altrimenti
         self.haptic_peg_active       = []  # 1.0 se haptic attivo su Peg Drone, 0.0 altrimenti
         self.peg_ext_force   = []
+        self.peg_ext_torque  = []
         self.estimated_wrench = []
         self.delta_p         = []
         self.delta_p_sensor  = []
+        self.delta_yaw       = []
         self.solve_time      = []
 
         # Stato drone peg (ENU) — da fake_publisher (sim) / admittance_planner (real)
@@ -161,10 +170,13 @@ class Logger(Node):
         self.last_peg_pos      = [0.0, 0.0, 0.0]
         self.last_online_ref   = [0.0, 0.0, 0.0, 0.0]  # [r, beta, z, yaw_offset]
         self.last_haptic_force      = [0.0, 0.0, 0.0]
+        self.last_haptic_rep_force  = [0.0, 0.0, 0.0]
         self.last_peg_ext_force     = [0.0, 0.0, 0.0]
+        self.last_peg_ext_torque    = [0.0, 0.0, 0.0]
         self.last_estimated_wrench  = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         self.last_delta_p           = [0.0, 0.0, 0.0]
         self.last_delta_p_sensor    = [0.0, 0.0, 0.0]
+        self.last_delta_yaw         = 0.0
         self.last_peg_actual_pos      = [0.0, 0.0, 0.0]
         self.last_peg_actual_vel      = [0.0, 0.0, 0.0]
         self.last_peg_actual_yaw      = 0.0
@@ -231,6 +243,8 @@ class Logger(Node):
         # Altro
         self.create_subscription(Float64MultiArray, '/fd/fd_controller/commands',
                                  self.cb_haptic_force, 10)
+        self.create_subscription(Float64MultiArray, '/haptic_repulsive_force',
+                                 self.cb_haptic_rep_force, 10)
         self.create_subscription(Float64MultiArray, '/haptic_ref',
                                  self.cb_haptic_ref, 10)
         self.create_subscription(PoseStamped, '/peg_live_pose',
@@ -239,6 +253,7 @@ class Logger(Node):
         self.create_subscription(Wrench,        '/estimated_wrench', self.cb_estimated_wrench, 10)
         self.create_subscription(Vector3Stamped,'/delta_p',          self.cb_delta_p,          10)
         self.create_subscription(Vector3Stamped,'/delta_p_sensor',   self.cb_delta_p_sensor,   10)
+        self.create_subscription(Float64,       '/delta_yaw',        self.cb_delta_yaw,        10)
 
         # Trigger
         self.create_subscription(Bool, '/logging/start', self.cb_logging_start, qos_latched)
@@ -304,6 +319,10 @@ class Logger(Node):
         if len(msg.data) >= 3:
             self.last_haptic_force = [msg.data[0], msg.data[1], msg.data[2]]
 
+    def cb_haptic_rep_force(self, msg: Float64MultiArray):
+        if len(msg.data) >= 3:
+            self.last_haptic_rep_force = [msg.data[0], msg.data[1], msg.data[2]]
+
     def cb_haptic_ref(self, _msg: Float64MultiArray):
         """Registra l'istante di ricezione di comandi haptic per GuarDrone."""
         self.last_haptic_time = self.now_sec()
@@ -313,7 +332,8 @@ class Logger(Node):
         self.last_haptic_peg_time = self.now_sec()
 
     def cb_peg_ft(self, msg: Wrench):
-        self.last_peg_ext_force = [msg.force.x, msg.force.y, msg.force.z]
+        self.last_peg_ext_force  = [msg.force.x, msg.force.y, msg.force.z]
+        self.last_peg_ext_torque = [msg.torque.x, msg.torque.y, msg.torque.z]
 
     def cb_estimated_wrench(self, msg: Wrench):
         self.last_estimated_wrench = [
@@ -326,6 +346,9 @@ class Logger(Node):
 
     def cb_delta_p_sensor(self, msg: Vector3Stamped):
         self.last_delta_p_sensor = [msg.vector.x, msg.vector.y, msg.vector.z]
+
+    def cb_delta_yaw(self, msg: Float64):
+        self.last_delta_yaw = float(msg.data)
 
     def cb_ref_pose(self, msg: PoseStamped):
         p = msg.pose.position
@@ -466,15 +489,18 @@ class Logger(Node):
         self.online_ref.append(list(self.last_online_ref))
         self.online_cyl_ref.append(list(self.last_online_ref))   # alias
         self.haptic_force.append(list(self.last_haptic_force))
+        self.haptic_rep_force.append(list(self.last_haptic_rep_force))
         is_haptic_gd = 1.0 if (self.last_haptic_time is not None and (t_now - self.last_haptic_time < 0.25)) else 0.0
         is_haptic_peg = 1.0 if (self.last_haptic_peg_time is not None and (t_now - self.last_haptic_peg_time < 0.25)) else 0.0
         self.haptic_active.append(is_haptic_gd)
         self.haptic_guardrone_active.append(is_haptic_gd)
         self.haptic_peg_active.append(is_haptic_peg)
         self.peg_ext_force.append(list(self.last_peg_ext_force))
+        self.peg_ext_torque.append(list(self.last_peg_ext_torque))
         self.estimated_wrench.append(list(self.last_estimated_wrench))
         self.delta_p.append(list(self.last_delta_p))
         self.delta_p_sensor.append(list(self.last_delta_p_sensor))
+        self.delta_yaw.append(self.last_delta_yaw)
         self.peg_actual_pos.append(list(self.last_peg_actual_pos))
         self.peg_actual_vel.append(list(self.last_peg_actual_vel))
         self.peg_actual_yaw.append(self.last_peg_actual_yaw)
@@ -556,6 +582,9 @@ class Logger(Node):
             optimal_wrench=np.asarray(self.optimal_wrench),
             wrench_target=np.asarray(self.wrench_target),
             haptic_force=np.asarray(self.haptic_force),
+            haptic_rep_force=np.asarray(self.haptic_rep_force),
+            fov_h=self.fov_h,
+            fov_v=self.fov_v,
             haptic_active=np.asarray(self.haptic_active),
             haptic_guardrone_active=np.asarray(self.haptic_guardrone_active),
             haptic_peg_active=np.asarray(self.haptic_peg_active),
@@ -567,9 +596,11 @@ class Logger(Node):
             # PoV cilindrico attuale (da MPC /actual_pov)
             r_cyl=r_cyl, beta_cyl=beta_cyl, z_cyl=z_cyl, yaw_err_cyl=yaw_err_cyl,
             peg_ext_force=np.asarray(self.peg_ext_force),
+            peg_ext_torque=np.asarray(self.peg_ext_torque),
             estimated_wrench=np.asarray(self.estimated_wrench),
             delta_p=np.asarray(self.delta_p),
             delta_p_sensor=np.asarray(self.delta_p_sensor),
+            delta_yaw=np.asarray(self.delta_yaw),
             # Stato drone peg ENU (fake_publisher in sim / admittance_planner in real)
             peg_actual_pos=np.asarray(self.peg_actual_pos),
             peg_actual_vel=np.asarray(self.peg_actual_vel),
@@ -602,12 +633,14 @@ class Logger(Node):
             f"Salvataggio completato in {self.final_save_path}. Elaborati {len(T)} campioni."
         )
 
-        # Generazione automatica dei grafici
+        # Generazione automatica dei grafici (PNG e PDF vettoriale)
         plot_script_path = '/root/my_ros2_ws/src/gcs_pkg/gcs_pkg/plot_script.py'
+        if not os.path.exists(plot_script_path):
+            plot_script_path = os.path.join(os.path.dirname(__file__), 'plot_script.py')
         if os.path.exists(plot_script_path):
-            self.get_logger().info(f"Avvio autogenerazione grafici in {self.out_dir}...")
+            self.get_logger().info(f"Avvio autogenerazione grafici (PNG + PDF vettoriali) in {self.out_dir}...")
             try:
-                subprocess.Popen(['python3', plot_script_path, '--log', self.final_save_path, '--save', '--out-dir', self.out_dir, '--formats', 'png'])
+                subprocess.Popen(['python3', plot_script_path, '--log', self.final_save_path, '--save', '--out-dir', self.out_dir, '--formats', 'png', 'pdf'])
             except Exception as e:
                 self.get_logger().error(f"Errore durante l'avvio del plot_script: {e}")
 

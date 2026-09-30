@@ -39,6 +39,8 @@ class FakePublisherNode(Node):
         self.cam_target_pub = self.create_publisher(PoseStamped, '/camera_target_pose', 10)
         self.cam_traj_enabled_pub = self.create_publisher(Bool, '/camera_traj_enabled', 10)
         self.pov_pub = self.create_publisher(Float64MultiArray, '/pov_target', 10)
+        # Stato FSM per il logger e plot_script
+        self.state_pub = self.create_publisher(String, '/supervisor/state', qos_latched)
         # PX4 Commands (Arm, Offboard)
         self.cmd_pub_1 = self.create_publisher(VehicleCommand, '/fmu/in/vehicle_command', px4_qos_profile)
         # Stato attuale drone peg (ENU) — in sim: posizione fissa di hovering
@@ -54,6 +56,8 @@ class FakePublisherNode(Node):
         self.create_subscription(VehicleControlMode, '/fmu/out/vehicle_control_mode', self.mode1_cb, px4_qos_profile)
         self.create_subscription(Bool, '/drone_planner_ready', self.mpc_ready_cb, qos_latched)
         self.create_subscription(String, '/keyboard_input', self.keyboard_cb, 10)
+        self.create_subscription(Float64MultiArray, '/actual_pov', self.actual_pov_cb, 10)
+        self.actual_pov = None
         
         # --- Parametri di volo ---
         self.declare_parameter('takeoff_alt_1', 4.52+3.0)
@@ -120,6 +124,7 @@ class FakePublisherNode(Node):
         self.msg_cnt = 0
         
         self.state = 'WAIT_EKF'
+        self._prev_published_state = None
         self.wait_ticks = 0
         
         # Loop principale a 50Hz (necessario per l'odometria del peg)
@@ -146,20 +151,43 @@ class FakePublisherNode(Node):
             self.mpc_ready = True
             self.get_logger().info("Segnale MPC Pronto ricevuto!")
 
+    def actual_pov_cb(self, msg: Float64MultiArray):
+        if len(msg.data) >= 3:
+            self.actual_pov = [float(msg.data[0]), float(msg.data[1]), float(msg.data[2])]
+
     def keyboard_cb(self, msg):
         cmd = msg.data.strip().lower()
-        if cmd == 'ok':
+        if cmd in ('ok', 'takeoff', 'start'):
             self.user_ok = True
-            self.get_logger().info('Comando OK ricevuto dal terminale GCS!')
-        elif cmd == 'land':
+            self.get_logger().info(f"Comando '{cmd}' ricevuto dal terminale GCS!")
+        elif cmd in ('land', 'landing'):
             self.get_logger().warn('Comando LAND ricevuto dal terminale GCS! Avvio sequenza di atterraggio.')
             self.state = 'LANDING'
             self.landing_started = False
             self.user_ok = False
+        elif cmd in ('home', 'return_home'):
+            if self.state in ('MISSION', 'DETACHMENT'):
+                self.get_logger().warn('Comando RETURN_HOME ricevuto!')
+                self.state = 'RETURN_HOME'
+                self.return_home_started = False
+                self.user_ok = False
         elif cmd == 'stop':
             self.get_logger().error("Comando STOP ricevuto! Atterraggio d'emergenza!")
+            msg_stop = Bool()
+            msg_stop.data = False
+            self.task_start_pub.publish(msg_stop)
+            self.cam_traj_enabled_pub.publish(msg_stop)
             self.publish_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
             self.state = 'EMERGENCY'
+
+    def _publish_state_if_changed(self):
+        """Pubblica lo stato della FSM su /supervisor/state per il logger."""
+        if self.state != self._prev_published_state:
+            self._prev_published_state = self.state
+            msg = String()
+            msg.data = self.state
+            self.state_pub.publish(msg)
+            self.get_logger().info(f"[FSM] Transizione di stato pubblicata: {self.state}")
 
     def publish_command(self, command, param1=0.0, param2=0.0):
         msg = VehicleCommand()
@@ -255,6 +283,8 @@ class FakePublisherNode(Node):
         self.wait_ticks += 1
         if self.wait_ticks % 5 != 0:
             return
+
+        self._publish_state_if_changed()
             
         if self.state == 'WAIT_EKF':
             # Controlla la convergenza di PX4 per il drone reale e la ricezione dell'odometria
@@ -370,7 +400,7 @@ class FakePublisherNode(Node):
             # La quota target per il body è (takeoff_alt_1 - cam_offset_z).
             peg_local_pos_z = -self.drone1_local_pos.z 
             dist = abs(peg_local_pos_z - (self.takeoff_alt_1 - self.cam_offset_z - self.guardrone_start_z))
-            d1_up = dist < 0.03
+            d1_up = dist < 0.10
             self.get_logger().info(f"Distanza dal reference di takeoff: d ={dist:.3f}")
 
             if d1_up:
@@ -388,7 +418,7 @@ class FakePublisherNode(Node):
                 # -----------------------------------------------------------------------
 
                 if not self.switch_msg_printed:
-                    self.get_logger().info(f"Drone in quota! Riferimento attuale: r={self.r_hover:.3f}, beta={math.degrees(self.beta_hover):.1f}°. Switch a MPC pronto. Dare ok da tastiera")
+                    self.get_logger().info(f"Drone in quota! Riferimento stimato: r={self.r_hover:.3f}, beta={math.degrees(self.beta_hover):.1f}°. Switch a MPC pronto. Dare ok da tastiera")
                     self.switch_msg_printed = True
                     
                 if self.user_ok:
@@ -398,10 +428,21 @@ class FakePublisherNode(Node):
                     msg_traj.data = False
                     self.cam_traj_enabled_pub.publish(msg_traj)
             
-                    # 2. Invia target PoV iniziale per l'MPC (inviato una sola volta allo switch)
+                    # 2. Invia target PoV iniziale per l'MPC:
+                    # Usa /actual_pov dall'MPC se disponibile per garantire una transizione a errore zero (senza scatti)
+                    if self.actual_pov is not None:
+                        r_init = self.actual_pov[0]
+                        beta_init = self.actual_pov[1]
+                        z_init = self.actual_pov[2]
+                    else:
+                        r_init = self.r_hover
+                        beta_init = self.beta_hover
+                        z_init = 0.0
+
                     pov_msg = Float64MultiArray()
-                    pov_msg.data = [self.r_hover, self.beta_hover, 0.0, 0.0]
+                    pov_msg.data = [r_init, beta_init, z_init, 0.0]
                     self.pov_pub.publish(pov_msg)
+                    self.get_logger().info(f"Target PoV iniziale inviato all'MPC: r={r_init:.3f}m, beta={math.degrees(beta_init):.1f}°, z={z_init:.3f}m")
 
                     # 3. Avvia MPC
                     msg_start = Bool()
@@ -487,7 +528,12 @@ class FakePublisherNode(Node):
             pass
 
         elif self.state == 'EMERGENCY':
-            # Keep sending land
+            # Stop MPC e Trajectory Planner per evitare conflitti con autoland PX4
+            msg_stop = Bool()
+            msg_stop.data = False
+            self.task_start_pub.publish(msg_stop)
+            self.cam_traj_enabled_pub.publish(msg_stop)
+            # Continua a inviare land
             self.publish_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
 
 def main(args=None):

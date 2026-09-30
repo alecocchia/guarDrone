@@ -57,7 +57,7 @@ public:
     this->declare_parameter("k_repulsive", 1.0);
     this->declare_parameter("alpha", 3.0);
     this->declare_parameter("activation_ratio", 1.0);
-    this->declare_parameter("activation_ratio_cam", 1.0);
+    this->declare_parameter("activation_ratio_cam", 0.3);
     this->declare_parameter("max_repulsive_force", 15.0);
 
     this->declare_parameter("v_pan_max", 0.5);
@@ -97,6 +97,8 @@ public:
     // Publishers
     force_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>(
         "/fd/fd_controller/commands", 10);
+    repulsive_force_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>(
+        "/haptic_repulsive_force", 10);
     haptic_ref_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>(
         "/haptic_ref", 10);
     peg_live_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
@@ -341,6 +343,7 @@ private:
     }
 
     // Somma forze repulsive proiettate dallo spazio FLU all'hardware Falcon (solo con pulsante attivo)
+    std::vector<double> rep_forces = {0.0, 0.0, 0.0};
     if (button_pressed_) {
       // Vettore di forza repulsiva espresso in terna FLU:
       // - Quando r -> r_min (troppo vicino), spinge all'indietro (-X_fwd)
@@ -352,6 +355,10 @@ private:
       forces[0] += F_rep_falcon.x();
       forces[1] += F_rep_falcon.y();
       forces[2] += F_rep_falcon.z();
+
+      rep_forces[0] = F_rep_falcon.x();
+      rep_forces[1] = F_rep_falcon.y();
+      rep_forces[2] = F_rep_falcon.z();
     }
 
     // Saturazione di sicurezza hardware
@@ -359,10 +366,15 @@ private:
       forces[i] = std::max(-max_f, std::min(max_f, forces[i]));
     }
 
-    // Pubblica comandi di forza al driver del Falcon
+    // Pubblica comandi di forza totali al driver del Falcon (molla + smorzamento + APF)
     auto force_msg = std_msgs::msg::Float64MultiArray();
     force_msg.data = forces;
     force_pub_->publish(force_msg);
+
+    // Pubblica le sole forze repulsive pure (vincoli di sicurezza APF per FoV e r_min)
+    auto rep_msg = std_msgs::msg::Float64MultiArray();
+    rep_msg.data = rep_forces;
+    repulsive_force_pub_->publish(rep_msg);
 
     // =====================================================
     // INTEGRAZIONE PoV cilindrico (GUARDRONE) se il pulsante 0 è premuto
@@ -480,6 +492,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr
       actual_pov_sub_;
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr force_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr repulsive_force_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr goal_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr
       haptic_ref_pub_;
