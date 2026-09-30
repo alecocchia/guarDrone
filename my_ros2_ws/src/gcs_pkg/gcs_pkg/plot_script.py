@@ -52,7 +52,7 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
         'MISSION':             {'color': '#16a34a', 'linestyle': '-',  'label': 'Mission'},
         'DETACHMENT':          {'color': '#9333ea', 'linestyle': '--', 'label': 'Detachment'},
         'RETURN_HOME':         {'color': '#2563eb', 'linestyle': '--', 'label': 'Return Home'},
-        'LANDING':             {'color': '#dc2626', 'linestyle': ':',  'label': 'Landing'},
+        'LANDING':             {'color': '#dc2626', 'linestyle': '--', 'label': 'Landing'},
         'EMERGENCY':           {'color': '#b91c1c', 'linestyle': '-.', 'label': 'Emergency'},
         'Mission Start':       {'color': '#2ca02c', 'linestyle': '--', 'label': 'Mission Start'},
         'Mission End':         {'color': '#7f7f7f', 'linestyle': ':',  'label': 'Mission End'},
@@ -78,7 +78,7 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
         if in_mpc:
             mpc_intervals.append((t_start_mpc, float(time[-1])))
     elif task_start > 0:
-        t_end_val = task_end if (task_end > task_start) else float(time[-1])
+        t_end_val = task_end if (task_end > task_start and task_end < float(time[-1])) else float(time[-1])
         mpc_intervals.append((task_start, t_end_val))
 
     for i in range(n):
@@ -123,14 +123,14 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
                 })
                 if pt >= 0:
                     ax.axvline(x=pt, color=st['color'], linestyle=st['linestyle'],
-                               linewidth=1.3 if pname == 'MISSION' else 1.1,
-                               alpha=0.85 if pname == 'MISSION' else 0.70,
+                               linewidth=1.3 if pname in ('MISSION', 'LANDING') else 1.1,
+                               alpha=0.85 if pname in ('MISSION', 'LANDING') else 0.70,
                                label=st['label'])
         else:
             if task_start > 0:
                 ax.axvline(x=task_start, color=c_start, linestyle='--', linewidth=1.3, alpha=0.75, label='Mission Start')
-            if task_end > 0:
-                ax.axvline(x=task_end, color=c_end, linestyle=':', linewidth=1.3, alpha=0.75, label='Mission End')
+            if task_end > 0 and task_end < float(time[-1]):
+                ax.axvline(x=task_end, color='#dc2626', linestyle='--', linewidth=1.3, alpha=0.75, label='Landing')
         
         ax.set_title(labels[i], fontsize=10.5, fontweight='semibold', color='#0f172a', pad=4)
         ax.set_xlabel('Time [s]', fontsize=9, color='#334155')

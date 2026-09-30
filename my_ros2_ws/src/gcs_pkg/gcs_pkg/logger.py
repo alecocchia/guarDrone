@@ -87,6 +87,7 @@ class Logger(Node):
         self.logging_enabled = False
         self.last_log_time   = None
         self.task_start_time = None
+        self.task_end_time   = None
         self.phase_events    = []      # [(timestamp_sec, state_name)]
         self.last_haptic_time     = None   # Timestamp ultimo messaggio da /haptic_ref (GuarDrone)
         self.last_haptic_peg_time = None   # Timestamp ultimo messaggio da /peg_live_pose (Peg Drone)
@@ -427,6 +428,9 @@ class Logger(Node):
         if msg.data and self.task_start_time is None:
             self.task_start_time = self.now_sec()
             self.get_logger().info('Ricevuto start task, salvo timestamp.')
+        elif not msg.data and self.task_start_time is not None and self.task_end_time is None:
+            self.task_end_time = self.now_sec()
+            self.get_logger().info('Ricevuto stop task (Landing/End), salvo timestamp.')
 
     def cb_supervisor_state(self, msg: String):
         state_name = msg.data.strip()
@@ -528,6 +532,7 @@ class Logger(Node):
             return
         T_rel      = T - T[0]
         t_start_rel = (self.task_start_time - T[0]) if self.task_start_time else -1.0
+        t_end_rel   = (self.task_end_time - T[0]) if self.task_end_time is not None else float(T_rel[-1])
 
         # Calcolo tempi relativi delle transizioni FSM rispetto all'avvio del logging (T[0])
         phase_times = []
@@ -616,7 +621,7 @@ class Logger(Node):
             mass=self.mass,
             solve_time=np.asarray(self.solve_time),
             task_start_time=np.array([t_start_rel]),
-            task_end_time=np.array([T_rel[-1]]),  # ultimo campione = momento del kill
+            task_end_time=np.array([t_end_rel]),
             phase_times=np.array(phase_times, dtype=float),
             phase_names=np.array(phase_names, dtype=object)
         )

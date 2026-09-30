@@ -196,6 +196,9 @@ class SupervisorNode(Node):
         if new_state == 'INSPECTION_END':
             self.has_inspected = True
         elif new_state == 'LANDING':
+            # Notifica prima la transizione allo stato LANDING
+            self._publish_state_if_changed()
+
             msg_stop = Bool()
             msg_stop.data = False
             self.task_start_pub.publish(msg_stop)
