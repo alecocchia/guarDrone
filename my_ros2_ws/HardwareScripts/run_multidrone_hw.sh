@@ -35,8 +35,8 @@ KILL_ALIAS="alias aaa='tmux list-panes -s -F \"#{pane_id}\" | grep -v \$(tmux di
 # =============================================================================
 # 1. CREA SESSIONE TMUX
 # =============================================================================
-# Nota: Usa la conf tmux locale del GCS, ma senza /root/ siccome siamo sull'host
-TMUX_CONF="${HOME}/guarDrone/my_ros2_ws/HardwareScripts/tmux.conf"
+# Nota: path valido sia su host che dentro il container Docker (mount: /root/my_ros2_ws/HardwareScripts)
+TMUX_CONF="${HOME}/my_ros2_ws/HardwareScripts/tmux.conf"
 if [ -f "$TMUX_CONF" ]; then
     tmux -f "$TMUX_CONF" new-session -d -s $SESSION_NAME -n 'gcs'
 else
