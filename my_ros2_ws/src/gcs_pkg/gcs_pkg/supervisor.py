@@ -44,8 +44,8 @@ class SupervisorNode(Node):
         self.cmd_pub_1 = self.create_publisher(VehicleCommand, '/fmu/in/vehicle_command', qos_profile)
         self.cmd_pub_2 = self.create_publisher(VehicleCommand, '/px4_1/fmu/in/vehicle_command', qos_profile)
 
-        # Publisher for Task Start
-        self.task_start_pub = self.create_publisher(Bool, '/mpc_task/start', qos_latched)
+        # Publisher for MPC Start
+        self.task_start_pub = self.create_publisher(Bool, '/mpc_enabled', qos_latched)
         # Publisher per segnale di avvio logging (al momento dell'arming+offboard)
         self.logging_start_pub = self.create_publisher(Bool, '/logging/start', qos_latched)
         # Publisher per stato FSM del supervisore
@@ -169,8 +169,10 @@ class SupervisorNode(Node):
     def mode1_cb(self, msg): self.drone1_mode = msg
     def mode2_cb(self, msg): self.drone2_mode = msg
     def actual_pov_cb(self, msg: Float64MultiArray):
-        if len(msg.data) >= 3:
-            self.actual_pov = [float(msg.data[0]), float(msg.data[1]), float(msg.data[2])]
+        if len(msg.data) >= 4:
+            self.actual_pov = [float(msg.data[0]), float(msg.data[1]), float(msg.data[2]), float(msg.data[3])]
+        elif len(msg.data) == 3:
+            self.actual_pov = [float(msg.data[0]), float(msg.data[1]), float(msg.data[2]), 0.0]
 
     def transition_to_state(self, new_state):
         """Esegue una transizione di stato della FSM reimpostando opportunamente i flag."""
@@ -425,7 +427,8 @@ class SupervisorNode(Node):
             # DRONE 1 (CAMERA): PoV iniziale fisso (centrato)
             if not self.drone_target_sent:
                 r, beta, z = self.compute_actual_pov_target()
-                self.publish_pov_target(r, beta, z, self.init_pov_yaw)
+                yaw_off = self.actual_pov[3] if self.actual_pov is not None else self.init_pov_yaw
+                self.publish_pov_target(r, beta, z, yaw_off)
                 self.drone_target_sent = True
 
             # DRONE 2 (INTERACTION): Posa target HOME

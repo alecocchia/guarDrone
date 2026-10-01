@@ -213,7 +213,7 @@ class OffboardAdmittancePlanner(Node):
         self.peg_actual_pose_pub     = self.create_publisher(PoseStamped,  '/peg_actual_pose',     10)
         self.peg_actual_vel_pub      = self.create_publisher(TwistStamped, '/peg_actual_velocity', 10)
         self.peg_actual_yaw_pub      = self.create_publisher(Float64,      '/peg_actual_yaw',      10)
-        self.peg_actual_yaw_rate_pub = self.create_publisher(Float64,      '/peg_actual_yaw_rate', 10)
+        self.peg_actual_omega_z_pub  = self.create_publisher(Float64,      '/peg_actual_omega_z',  10)
 
         # -- Subscribers --
         self.odom_sub = self.create_subscription(
@@ -348,9 +348,9 @@ class OffboardAdmittancePlanner(Node):
         yaw_msg.data = float(self.current_rpy[2])
         self.peg_actual_yaw_pub.publish(yaw_msg)
 
-        yaw_rate_msg = Float64()
-        yaw_rate_msg.data = float(omega_flu[2])
-        self.peg_actual_yaw_rate_pub.publish(yaw_rate_msg)
+        omega_z_msg = Float64()
+        omega_z_msg.data = float(omega_flu[2])
+        self.peg_actual_omega_z_pub.publish(omega_z_msg)
 
     def ft_cb(self, msg: Wrench):
         """
@@ -560,7 +560,7 @@ class OffboardAdmittancePlanner(Node):
         idx_next = min(idx + 1, len(self.traj_p) - 1)
         v_nom = (self.traj_p[idx_next] - p_nom) / self.dt          # [m/s] ENU
         dyaw = min_angle(self.traj_rpy[idx_next][2] - yaw_nom)
-        yaw_rate_nom = dyaw / self.dt                               # [rad/s]
+        omega_z_nom = dyaw / self.dt                                # [rad/s]
 
 
         # -- Composizione setpoint finale (delta_p/v già calcolati sopra) --
@@ -602,14 +602,14 @@ class OffboardAdmittancePlanner(Node):
         ref_msg.pose.orientation.w = float(q_yaw[3])
         self.peg_ref_pub.publish(ref_msg)
 
-        # -- Pubblica velocità + yaw rate nominali (per logger) --
+        # -- Pubblica velocità + omega_z nominali (per logger) --
         twist_msg = TwistStamped()
         twist_msg.header.stamp = self.get_clock().now().to_msg()
         twist_msg.header.frame_id = 'map'
         twist_msg.twist.linear.x  = float(v_nom[0])
         twist_msg.twist.linear.y  = float(v_nom[1])
         twist_msg.twist.linear.z  = float(v_nom[2])
-        twist_msg.twist.angular.z = float(yaw_rate_nom)
+        twist_msg.twist.angular.z = float(omega_z_nom)
         self.peg_ref_twist_pub.publish(twist_msg)
 
         # Avanza l'indice della traiettoria nominale

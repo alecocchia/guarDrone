@@ -33,7 +33,7 @@ class FakePublisherNode(Node):
         #  Odometria fittizia per il peg
         self.odom_pub = self.create_publisher(VehicleOdometry, '/px4_1/fmu/out/vehicle_odometry', px4_qos_profile)
         #  Inizio task mpc e logging
-        self.task_start_pub = self.create_publisher(Bool, '/mpc_task/start', qos_latched)
+        self.task_start_pub = self.create_publisher(Bool, '/mpc_enabled', qos_latched)
         self.logging_start_pub = self.create_publisher(Bool, '/logging/start', qos_latched)
         #  Offboard Trajectory Planner e POV
         self.cam_target_pub = self.create_publisher(PoseStamped, '/camera_target_pose', 10)
@@ -47,8 +47,8 @@ class FakePublisherNode(Node):
         # In real: pubblicato da offboard_admittance_planner
         self.peg_actual_pose_pub     = self.create_publisher(PoseStamped,  '/peg_actual_pose',     10)
         self.peg_actual_vel_pub      = self.create_publisher(TwistStamped, '/peg_actual_velocity', 10)
-        self.peg_actual_yaw_pub      = self.create_publisher(Float64,      '/peg_actual_yaw',      10)
-        self.peg_actual_yaw_rate_pub = self.create_publisher(Float64,      '/peg_actual_yaw_rate', 10)
+        self.peg_actual_yaw_pub     = self.create_publisher(Float64,      '/peg_actual_yaw',      10)
+        self.peg_actual_omega_z_pub = self.create_publisher(Float64,      '/peg_actual_omega_z',  10)
         
         # --- Subscribers ---
         self.create_subscription(VehicleLocalPosition, '/fmu/out/vehicle_local_position', self.pos1_cb, px4_qos_profile)
@@ -152,8 +152,10 @@ class FakePublisherNode(Node):
             self.get_logger().info("Segnale MPC Pronto ricevuto!")
 
     def actual_pov_cb(self, msg: Float64MultiArray):
-        if len(msg.data) >= 3:
-            self.actual_pov = [float(msg.data[0]), float(msg.data[1]), float(msg.data[2])]
+        if len(msg.data) >= 4:
+            self.actual_pov = [float(msg.data[0]), float(msg.data[1]), float(msg.data[2]), float(msg.data[3])]
+        elif len(msg.data) == 3:
+            self.actual_pov = [float(msg.data[0]), float(msg.data[1]), float(msg.data[2]), 0.0]
 
     def keyboard_cb(self, msg):
         cmd = msg.data.strip().lower()
@@ -273,9 +275,9 @@ class FakePublisherNode(Node):
         yaw_msg.data = 0.0
         self.peg_actual_yaw_pub.publish(yaw_msg)
 
-        yaw_rate_msg = Float64()
-        yaw_rate_msg.data = 0.0
-        self.peg_actual_yaw_rate_pub.publish(yaw_rate_msg)
+        omega_z_msg = Float64()
+        omega_z_msg.data = 0.0
+        self.peg_actual_omega_z_pub.publish(omega_z_msg)
 
         # =========================================================================
         # 2) MACCHINA A STATI DEL SUPERVISOR (~10Hz)
@@ -434,15 +436,17 @@ class FakePublisherNode(Node):
                         r_init = self.actual_pov[0]
                         beta_init = self.actual_pov[1]
                         z_init = self.actual_pov[2]
+                        yaw_init = self.actual_pov[3]
                     else:
                         r_init = self.r_hover
                         beta_init = self.beta_hover
                         z_init = 0.0
+                        yaw_init = 0.0
 
                     pov_msg = Float64MultiArray()
-                    pov_msg.data = [r_init, beta_init, z_init, 0.0]
+                    pov_msg.data = [r_init, beta_init, z_init, yaw_init]
                     self.pov_pub.publish(pov_msg)
-                    self.get_logger().info(f"Target PoV iniziale inviato all'MPC: r={r_init:.3f}m, beta={math.degrees(beta_init):.1f}°, z={z_init:.3f}m")
+                    self.get_logger().info(f"Target PoV iniziale inviato all'MPC: r={r_init:.3f}m, beta={math.degrees(beta_init):.1f}°, z={z_init:.3f}m, yaw_off={math.degrees(yaw_init):.1f}°")
 
                     # 3. Avvia MPC
                     msg_start = Bool()
@@ -500,24 +504,19 @@ class FakePublisherNode(Node):
                     self.msg_cnt += 1
 
         elif self.state == 'LANDING':
-            if not self.landing_started:
-                self.landing_started = True
-                target_ground = np.array([self.peg_start_x, self.peg_start_y, self.peg_start_z])
-                dur = self.plan_peg_trajectory(target_ground, v_max=0.2, a_max=0.2)
-                self.get_logger().info(f"LANDING avviato (trapezoidale, {dur:.1f}s): il peg scende verso il suolo, GuarDrone segue in MPC.")
+            # Assicura che la transizione a LANDING sia pubblicata prima di DISARM_WAIT
+            self._publish_state_if_changed()
 
-            # Controlla la quota reale di GuarDrone
-            # drone1_local_pos.z e NED (negativo verso l'alto). La quota relativa allo spawn e -z
-            guardrone_alt_rel = -self.drone1_local_pos.z
-            if guardrone_alt_rel < 0.7:
-                # GuarDrone e vicino al suolo: spegni l'MPC e dai comando di LAND PX4 per il touchdown finale
-                self.get_logger().info(f"GuarDrone vicino al suolo (quota rel = {guardrone_alt_rel:.2f}m). Stop MPC e invio VEHICLE_CMD_NAV_LAND!")
-                msg_stop = Bool()
-                msg_stop.data = False
-                self.task_start_pub.publish(msg_stop)
+            # Stop MPC Task e Trajectory Planner su GuarDrone
+            msg_stop = Bool()
+            msg_stop.data = False
+            self.task_start_pub.publish(msg_stop)
+            self.cam_traj_enabled_pub.publish(msg_stop)
 
-                self.publish_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
-                self.state = 'DISARM_WAIT'
+            # Comando di Atterraggio nativo PX4
+            self.publish_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
+            self.get_logger().info("Comando di Atterraggio nativo PX4 (VEHICLE_CMD_NAV_LAND) inviato a GuarDrone. Stop MPC e attesa disarmo...")
+            self.state = 'DISARM_WAIT'
 
         elif self.state == 'DISARM_WAIT':
             if not self.drone1_mode.flag_armed:

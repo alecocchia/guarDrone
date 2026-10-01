@@ -295,10 +295,8 @@ class MpcPlannerNode(Node):
 
 
         # === Integrazione con Supervisor ===
-        self.supervisor_task_running = False
         self.supervisor_start_sub = self.create_subscription(
-            Bool, '/mpc_task/start', self.supervisor_start_callback, 10)
-        self.supervisor_status_pub = self.create_publisher(String, '/mpc_task/status', 10)
+            Bool, '/mpc_enabled', self.supervisor_start_callback, 10)
 
         # Sottoscrizione comandi PX4 solo per modalità controller (necessari a safe switch e MBE pre-switch)
         if self.is_controller:

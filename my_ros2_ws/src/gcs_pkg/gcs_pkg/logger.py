@@ -143,13 +143,13 @@ class Logger(Node):
         self.peg_actual_pos      = []
         self.peg_actual_vel      = []
         self.peg_actual_yaw      = []
-        self.peg_actual_yaw_rate = []
+        self.peg_actual_omega_z  = []
 
         # Riferimento peg — da /peg_ref_pose, /peg_ref_twist (admittance_planner)
         self.peg_ref_pos      = []
         self.peg_ref_yaw      = []
         self.peg_ref_vel      = []
-        self.peg_ref_yaw_rate = []
+        self.peg_ref_omega_z  = []
 
         # ------------------------------------------------------------------ #
         #  Ultimi valori snapshot (aggiornati dalle callback, loggati al tick) #
@@ -181,11 +181,11 @@ class Logger(Node):
         self.last_peg_actual_pos      = [0.0, 0.0, 0.0]
         self.last_peg_actual_vel      = [0.0, 0.0, 0.0]
         self.last_peg_actual_yaw      = 0.0
-        self.last_peg_actual_yaw_rate = 0.0
-        self.last_peg_ref_pos      = [0.0, 0.0, 0.0]
-        self.last_peg_ref_yaw      = 0.0
-        self.last_peg_ref_vel      = [0.0, 0.0, 0.0]
-        self.last_peg_ref_yaw_rate = 0.0
+        self.last_peg_actual_omega_z  = 0.0
+        self.last_peg_ref_pos         = [0.0, 0.0, 0.0]
+        self.last_peg_ref_yaw         = 0.0
+        self.last_peg_ref_vel         = [0.0, 0.0, 0.0]
+        self.last_peg_ref_omega_z     = 0.0
         self.last_solve_time       = 0.0
 
         # ------------------------------------------------------------------ #
@@ -235,7 +235,7 @@ class Logger(Node):
         self.create_subscription(PoseStamped,  '/peg_actual_pose',     self.cb_peg_actual_pose,     10)
         self.create_subscription(TwistStamped, '/peg_actual_velocity', self.cb_peg_actual_velocity, 10)
         self.create_subscription(Float64,      '/peg_actual_yaw',      self.cb_peg_actual_yaw,      10)
-        self.create_subscription(Float64,      '/peg_actual_yaw_rate', self.cb_peg_actual_yaw_rate, 10)
+        self.create_subscription(Float64,      '/peg_actual_omega_z',  self.cb_peg_actual_omega_z,  10)
 
         # Riferimento peg (admittance_planner)
         self.create_subscription(PoseStamped,  '/peg_ref_pose',  self.cb_peg_ref_pose,  10)
@@ -258,7 +258,7 @@ class Logger(Node):
 
         # Trigger
         self.create_subscription(Bool, '/logging/start', self.cb_logging_start, qos_latched)
-        self.create_subscription(Bool, '/mpc_task/start', self.cb_task_start,   qos_latched)
+        self.create_subscription(Bool, '/mpc_enabled',    self.cb_task_start,   qos_latched)
         self.create_subscription(String, '/supervisor/state', self.cb_supervisor_state, qos_latched)
         self.create_subscription(Float64, '/mpc_solve_time', self.cb_solve_time, 10)
 
@@ -395,8 +395,8 @@ class Logger(Node):
     def cb_peg_actual_yaw(self, msg: Float64):
         self.last_peg_actual_yaw = msg.data
 
-    def cb_peg_actual_yaw_rate(self, msg: Float64):
-        self.last_peg_actual_yaw_rate = msg.data
+    def cb_peg_actual_omega_z(self, msg: Float64):
+        self.last_peg_actual_omega_z = msg.data
 
     # ================================================================== #
     #  Callbacks — riferimento peg (admittance_planner)                   #
@@ -412,8 +412,8 @@ class Logger(Node):
 
     def cb_peg_ref_twist(self, msg: TwistStamped):
         l = msg.twist.linear
-        self.last_peg_ref_vel      = [l.x, l.y, l.z]
-        self.last_peg_ref_yaw_rate = float(msg.twist.angular.z)
+        self.last_peg_ref_vel     = [l.x, l.y, l.z]
+        self.last_peg_ref_omega_z = float(msg.twist.angular.z)
 
     # ================================================================== #
     #  Trigger                                                             #
@@ -508,11 +508,11 @@ class Logger(Node):
         self.peg_actual_pos.append(list(self.last_peg_actual_pos))
         self.peg_actual_vel.append(list(self.last_peg_actual_vel))
         self.peg_actual_yaw.append(self.last_peg_actual_yaw)
-        self.peg_actual_yaw_rate.append(self.last_peg_actual_yaw_rate)
+        self.peg_actual_omega_z.append(self.last_peg_actual_omega_z)
         self.peg_ref_pos.append(list(self.last_peg_ref_pos))
         self.peg_ref_yaw.append(self.last_peg_ref_yaw)
         self.peg_ref_vel.append(list(self.last_peg_ref_vel))
-        self.peg_ref_yaw_rate.append(self.last_peg_ref_yaw_rate)
+        self.peg_ref_omega_z.append(self.last_peg_ref_omega_z)
         self.solve_time.append(self.last_solve_time)
 
         self.last_log_time = t_now
@@ -610,12 +610,12 @@ class Logger(Node):
             peg_actual_pos=np.asarray(self.peg_actual_pos),
             peg_actual_vel=np.asarray(self.peg_actual_vel),
             peg_actual_yaw=np.asarray(self.peg_actual_yaw),
-            peg_actual_yaw_rate=np.asarray(self.peg_actual_yaw_rate),
+            peg_actual_omega_z=np.asarray(self.peg_actual_omega_z),
             # Riferimento peg
             peg_ref_pos=np.asarray(self.peg_ref_pos),
             peg_ref_yaw=np.asarray(self.peg_ref_yaw),
             peg_ref_vel=np.asarray(self.peg_ref_vel),
-            peg_ref_yaw_rate=np.asarray(self.peg_ref_yaw_rate),
+            peg_ref_omega_z=np.asarray(self.peg_ref_omega_z),
             # Derivate numeriche
             acc=acc, ang_acc=ang_acc, jerk=jerk, snap=snap,
             mass=self.mass,

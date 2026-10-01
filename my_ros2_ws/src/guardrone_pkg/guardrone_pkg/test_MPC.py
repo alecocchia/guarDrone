@@ -432,9 +432,9 @@ def run_standalone_test(sim_time=30.0, plot_save_path=None, save_gif=False):
     axs_kin[0, 0].set_title('Velocità Lineari nel Mondo')
 
     # Plot 2: Velocità angolari wx, wy, wz
-    axs_kin[0, 1].plot(t_hist, x_hist[:, 10], label=r'$\omega_x$ (Roll rate)', color='tab:blue')
-    axs_kin[0, 1].plot(t_hist, x_hist[:, 11], label=r'$\omega_y$ (Pitch rate)', color='tab:orange')
-    axs_kin[0, 1].plot(t_hist, x_hist[:, 12], label=r'$\omega_z$ (Yaw rate)', color='tab:green')
+    axs_kin[0, 1].plot(t_hist, x_hist[:, 10], label=r'$\omega_x$', color='tab:blue')
+    axs_kin[0, 1].plot(t_hist, x_hist[:, 11], label=r'$\omega_y$', color='tab:orange')
+    axs_kin[0, 1].plot(t_hist, x_hist[:, 12], label=r'$\omega_z$', color='tab:green')
     axs_kin[0, 1].axhline(ANG_DOT[0], color='tab:blue', linestyle='--', alpha=0.5, label=r'lim $\omega_{xy}$')
     axs_kin[0, 1].axhline(ANG_DOT[0], color='tab:blue', linestyle='--', alpha=0.5)
     axs_kin[0, 1].axhline(ANG_DOT[2], color='tab:green', linestyle='--', alpha=0.5, label=r'lim $\omega_z$')

@@ -1,6 +1,18 @@
 #!/usr/bin/env python3
 import os, sys
 import argparse, numpy as np
+
+# Risolve potenziale conflitto namespace per mpl_toolkits (mplot3d / Axes3D) prima di importare pyplot
+try:
+    import mpl_toolkits
+    import matplotlib
+    local_mpl = os.path.join(os.path.dirname(os.path.dirname(matplotlib.__file__)), 'mpl_toolkits')
+    if os.path.exists(local_mpl) and local_mpl not in mpl_toolkits.__path__:
+        mpl_toolkits.__path__.insert(0, local_mpl)
+    from mpl_toolkits.mplot3d import Axes3D
+except Exception:
+    pass
+
 import matplotlib.pyplot as plt
 
 # Aggiunta percorsi di ricerca per utils_pkg (esecuzione sia standalone che ROS2)
@@ -90,7 +102,7 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
             ax.axvspan(t_m_s, t_m_e, color='#facc15', alpha=0.10,
                        label='MPC Active' if idx_m == 0 else None, zorder=0)
 
-        # Ombreggiatura intervalli di utilizzo dell'haptic device (rosso per GuaDrone, viola per Interaction)
+        # Ombreggiatura intervalli di utilizzo dell'haptic device (rosso per GuarDrone, viola per Interaction)
         if haptic_intervals:
             for idx_h, item in enumerate(haptic_intervals):
                 if len(item) >= 4:
@@ -183,6 +195,22 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
         plt.show()
     return fig
 
+def filter_spatial_trajectory(pts, d_min=0.03):
+    """Filtra micro-jitter da hovering mantenendo solo avanzamenti reali >= d_min."""
+    if len(pts) <= 2 or d_min <= 0: return pts
+    res = [pts[0]]
+    for p in pts[1:-1]:
+        if np.linalg.norm(p - res[-1]) >= d_min:
+            res.append(p)
+    res.append(pts[-1])
+    return np.array(res)
+
+def smooth_trajectory(pts, w=7):
+    """Ammorbidisce la traiettoria con media mobile preservando gli estremi."""
+    if len(pts) < w or w <= 1: return pts
+    pad = np.pad(pts, ((w // 2, w // 2), (0, 0)), mode='edge')
+    return np.column_stack([np.convolve(pad[:, i], np.ones(w) / w, mode='valid') for i in range(3)])
+
 def main():
     import os
     ap = argparse.ArgumentParser()
@@ -196,6 +224,10 @@ def main():
     ap.add_argument("--formats", type=str, nargs="+", default=["png"],
                     choices=["png", "pdf", "eps"],
                     help="Formati di salvataggio (es: --formats png pdf eps). Default: png")
+    ap.add_argument("--d-min-3d", type=float, default=0.08,
+                    help="[m] Soglia minima filtro spaziale 3D per hovering (default: 0.08, 0 per disattivare)")
+    ap.add_argument("--smooth-window-3d", type=int, default=21,
+                    help="Finestra media mobile traiettoria 3D (default: 21, <=1 per disattivare)")
     args = ap.parse_args()
 
     try:
@@ -242,7 +274,7 @@ def main():
                 task_start = pt
                 break
 
-    # --- Rilevamento intervalli di attività dell'haptic device (GuaDrone vs Interaction) ---
+    # --- Rilevamento intervalli di attività dell'haptic device (GuarDrone vs Interaction) ---
     haptic_gd_intervals = []
     h_gd_key = 'haptic_guardrone_active' if indata('haptic_guardrone_active') else 'haptic_active'
     if indata(h_gd_key):
@@ -256,11 +288,11 @@ def main():
                 t_h_start = float(t_arr[idx_h])
             elif val <= 0.5 and in_haptic:
                 in_haptic = False
-                haptic_gd_intervals.append((t_h_start, float(t_arr[idx_h]), '#ef4444', 'Haptic GuaDrone'))
+                haptic_gd_intervals.append((t_h_start, float(t_arr[idx_h]), '#ef4444', 'Haptic GuarDrone'))
         if in_haptic:
-            haptic_gd_intervals.append((t_h_start, float(t_arr[-1]), '#ef4444', 'Haptic GuaDrone'))
+            haptic_gd_intervals.append((t_h_start, float(t_arr[-1]), '#ef4444', 'Haptic GuarDrone'))
         if haptic_gd_intervals:
-            print(f"[DEBUG] Intervalli Haptic GuaDrone ({len(haptic_gd_intervals)}): {haptic_gd_intervals}")
+            print(f"[DEBUG] Intervalli Haptic GuarDrone ({len(haptic_gd_intervals)}): {haptic_gd_intervals}")
 
     haptic_peg_intervals = []
     if indata('haptic_peg_active'):
@@ -280,7 +312,7 @@ def main():
         if haptic_peg_intervals:
             print(f"[DEBUG] Intervalli Haptic Interaction ({len(haptic_peg_intervals)}): {haptic_peg_intervals}")
 
-    # Default per figure GuaDrone (fig 1-10, 17-19)
+    # Default per figure GuarDrone (fig 1-10, 17-19)
     myPlot.default_haptic_intervals = haptic_gd_intervals
     myPlot.haptic_gd_intervals = haptic_gd_intervals
     myPlot.haptic_peg_intervals = haptic_peg_intervals
@@ -338,14 +370,75 @@ def main():
             data['p_cam_target'] = cylindrical_to_cartesian(
                 data['online_cyl_ref'], p_origin=np.asarray(data['peg_pos']))
 
-    # --- FIGURE 1: Position (ENU) ---
-    fig_pos_data = [
-        {'sim': data['pos'][:, 0], 'ref': data['pref_pos'][:, 0]},
-        {'sim': data['pos'][:, 1], 'ref': data['pref_pos'][:, 1]},
-        {'sim': data['pos'][:, 2], 'ref': data['pref_pos'][:, 2]}
-    ]
-    myPlot(t, fig_pos_data, ["Position X [m]", "Position Y [m]", "Position Z [m]"], 
-           "Drone Position vs MPC optimal trajectory", ncols=3, use_tex=args.tex, block=block, fignum=1, task_start=task_start, task_end=task_end)
+    # --- FIGURE 1: 3D Trajectories (GuarDrone & Interaction Drone) ---
+    plt.rcParams.update({"text.usetex": args.tex, "font.family": "serif"})
+    fig1 = plt.figure(figsize=(10, 8), num=1)
+    ax1 = fig1.add_subplot(111, projection='3d')
+    fig1.patch.set_facecolor('#ffffff')
+    ax1.set_facecolor('#ffffff')
+
+    try:
+        fig1.canvas.manager.set_window_title("Figure 1: 3D Drones Trajectories (World Frame ENU)")
+    except AttributeError:
+        try:
+            fig1.canvas.set_window_title("Figure 1: 3D Drones Trajectories (World Frame ENU)")
+        except Exception:
+            pass
+
+    # Traiettoria GuarDrone
+    pos = np.asarray(data['pos'])
+    pos_plot = smooth_trajectory(filter_spatial_trajectory(pos, args.d_min_3d), args.smooth_window_3d)
+    ax1.plot(pos_plot[:, 0], pos_plot[:, 1], pos_plot[:, 2], color='#1f77b4', linewidth=2.0, label='GuarDrone Trajectory', zorder=3)
+
+    # Traiettoria Interaction Drone (Peg)
+    all_pts = [pos]
+    has_peg_actual = indata('peg_actual_pos')
+    has_peg_pos    = indata('peg_pos')
+    if has_peg_actual or has_peg_pos:
+        peg_act = np.asarray(data['peg_actual_pos']) if has_peg_actual else np.asarray(data['peg_pos'])
+        if peg_act.ndim == 1:
+            peg_act = peg_act.reshape(1, -1)
+        if len(peg_act) > 0:
+            all_pts.append(peg_act)
+            if len(peg_act) > 1 and np.linalg.norm(peg_act[-1] - peg_act[0]) > 0.05:
+                peg_plot = smooth_trajectory(filter_spatial_trajectory(peg_act, args.d_min_3d), args.smooth_window_3d)
+                ax1.plot(peg_plot[:, 0], peg_plot[:, 1], peg_plot[:, 2], color='#9333ea', linewidth=2.0, label='Interaction Drone Trajectory', zorder=3)
+                ax1.scatter(peg_act[0, 0], peg_act[0, 1], peg_act[0, 2], color='#16a34a', marker='o', s=60, edgecolors='black', linewidth=0.8, zorder=5)
+                ax1.scatter(peg_act[-1, 0], peg_act[-1, 1], peg_act[-1, 2], color='#dc2626', marker='s', s=60, edgecolors='black', linewidth=0.8, zorder=5)
+            else:
+                # Hovering statico
+                ax1.scatter(peg_act[0, 0], peg_act[0, 1], peg_act[0, 2], color='#9333ea', marker='^', s=80, edgecolors='black', linewidth=0.8, label='Interaction Drone (Hovering)', zorder=5)
+
+    # Punti di Start ed End (stesso simbolo e colore per entrambi i droni)
+    ax1.scatter(pos[0, 0], pos[0, 1], pos[0, 2], color='#16a34a', marker='o', s=60, edgecolors='black', linewidth=0.8, label='Start', zorder=5)
+    ax1.scatter(pos[-1, 0], pos[-1, 1], pos[-1, 2], color='#dc2626', marker='s', s=60, edgecolors='black', linewidth=0.8, label='End', zorder=5)
+
+    ax1.set_xlabel('X [m]', fontsize=10, labelpad=8)
+    ax1.set_ylabel('Y [m]', fontsize=10, labelpad=8)
+    ax1.set_zlabel('Z [m]', fontsize=10, labelpad=8)
+    ax1.set_title('3D Drones Trajectories in World Frame (ENU)', fontsize=13, fontweight='bold', pad=15, color='#0f172a')
+    ax1.legend(loc='upper right', frameon=True, facecolor='white', framealpha=0.92, edgecolor='#cbd5e1', fontsize=8.5)
+    ax1.grid(True, linestyle='--', alpha=0.45, color='#94a3b8')
+
+    # Scala assi isotropa (proporzioni 1:1:1 reali nello spazio 3D)
+    all_coords = np.vstack(all_pts)
+    max_range = np.array([
+        all_coords[:, 0].max() - all_coords[:, 0].min(),
+        all_coords[:, 1].max() - all_coords[:, 1].min(),
+        all_coords[:, 2].max() - all_coords[:, 2].min()
+    ]).max() / 2.0
+    margin = max(max_range, 0.5)
+    mid_x = (all_coords[:, 0].max() + all_coords[:, 0].min()) * 0.5
+    mid_y = (all_coords[:, 1].max() + all_coords[:, 1].min()) * 0.5
+    mid_z = (all_coords[:, 2].max() + all_coords[:, 2].min()) * 0.5
+
+    ax1.set_xlim(mid_x - margin, mid_x + margin)
+    ax1.set_ylim(mid_y - margin, mid_y + margin)
+    ax1.set_zlim(mid_z - margin, mid_z + margin)
+
+    plt.tight_layout()
+    if block:
+        plt.show()
 
     # --- FIGURE 2: Orientation (RPY) ---
     fig_rpy_data = [
@@ -650,13 +743,13 @@ def main():
                "Interaction Drone Position ENU (Actual vs Planner Reference)",
                ncols=2, use_tex=args.tex, block=block, fignum=14, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
 
-    # --- FIGURE 15: Interaction Drone Velocities (ENU) + Yaw Rate ---
-    has_peg_vel      = indata('peg_actual_vel')
-    has_peg_yaw_rate = indata('peg_actual_yaw_rate')
-    if has_peg_vel or has_peg_yaw_rate:
+    # --- FIGURE 15: Interaction Drone Velocities (ENU) + Omega Z ---
+    has_peg_vel     = indata('peg_actual_vel')
+    has_peg_omega_z = indata('peg_actual_omega_z') or indata('peg_actual_yaw_rate')
+    if has_peg_vel or has_peg_omega_z:
         fig15_data, labels15 = [], []
-        peg_ref_vel      = data['peg_ref_vel']      if indata('peg_ref_vel')      else None
-        peg_ref_yaw_rate = data['peg_ref_yaw_rate'] if indata('peg_ref_yaw_rate') else None
+        peg_ref_vel     = data['peg_ref_vel']     if indata('peg_ref_vel')     else None
+        peg_ref_omega_z = data['peg_ref_omega_z'] if indata('peg_ref_omega_z') else (data['peg_ref_yaw_rate'] if indata('peg_ref_yaw_rate') else None)
         if has_peg_vel:
             peg_vel = data['peg_actual_vel']
             fig15_data += [
@@ -665,11 +758,12 @@ def main():
                 {'sim': peg_vel[:, 2], 'ref': peg_ref_vel[:, 2] if peg_ref_vel is not None else None},
             ]
             labels15 += ["Vel X [m/s]", "Vel Y [m/s]", "Vel Z [m/s]"]
-        if has_peg_yaw_rate:
-            fig15_data.append({'sim': data['peg_actual_yaw_rate'], 'ref': peg_ref_yaw_rate})
-            labels15.append("Yaw Rate [rad/s]")
+        if has_peg_omega_z:
+            actual_omega_z = data['peg_actual_omega_z'] if indata('peg_actual_omega_z') else data['peg_actual_yaw_rate']
+            fig15_data.append({'sim': actual_omega_z, 'ref': peg_ref_omega_z})
+            labels15.append("Omega Z [rad/s]")
         myPlot(t, fig15_data, labels15,
-               "Interaction Drone Velocities (ENU) and Yaw Rate",
+               "Interaction Drone Velocities (ENU) and Angular Velocity Omega Z",
                ncols=2, use_tex=args.tex, block=block, fignum=15, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
 
     # --- FIGURE 16: Estimated Wrench (Momentum Based Estimator) ---
