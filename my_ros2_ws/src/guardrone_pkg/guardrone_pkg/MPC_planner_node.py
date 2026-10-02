@@ -676,7 +676,7 @@ class MpcPlannerNode(Node):
             self.get_logger().info("[MPC Tuning] Modalità: CONTROLLER + MBE (Feedforward: ON)")
             PesoVel    = PesoVis / 5.0   
             PesoAngVel = PesoVis / 20.0
-            PesoAcc    = PesoVis / 30.0
+            PesoAcc    = PesoVis / 25.0
             PesoAngAcc = PesoVis / 50.0
             PesoForce  = PesoVis / 10.0   
             PesoTorque = PesoVis / 10.0
