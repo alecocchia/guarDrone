@@ -91,8 +91,8 @@ class MpcPlannerNode(Node):
         self.U_F = self.get_parameter('f_max').value
         #self.U_TAU_X = arm_l_y * self.U_F / 2.0
         #self.U_TAU_Y = arm_l_x * self.U_F / 2.0
-        self.U_TAU_X = self.U_TAU_X/1.75        ## MODIFICA PER HARDWARE
-        self.U_TAU_Y = self.U_TAU_Y/1.75        ## MODIFICA PER HARDWARE
+        self.U_TAU_X = arm_l_y * self.U_F / 2.0 * (2 / 1.75)
+        self.U_TAU_Y = arm_l_x * self.U_F / 2.0 * (2 / 1.75)
         #self.U_TAU_X = self.U_TAU_X
         #self.U_TAU_Y = self.U_TAU_Y
         self.U_TAU_Z = moment_const * self.U_F
