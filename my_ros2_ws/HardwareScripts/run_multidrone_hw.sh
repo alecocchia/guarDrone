@@ -61,11 +61,15 @@ tmux split-window -v -t $SESSION_NAME:gcs.0
 tmux split-window -v -t $SESSION_NAME:gcs.2          
 tmux select-layout -t $SESSION_NAME:gcs tiled        
 
-# --- Layout Droni: 3 pane (Agent, Launch, Shell) ---
-for WIN in 'guardrone' 'drone_interaction'; do
-    tmux split-window -h -t $SESSION_NAME:$WIN.0
-    tmux split-window -v -t $SESSION_NAME:$WIN.0
-done
+# --- Layout Guardrone: 4 pane (2x2) (Agent, Launch, Camera, Shell) ---
+tmux split-window -h -t $SESSION_NAME:guardrone.0
+tmux split-window -v -t $SESSION_NAME:guardrone.0
+tmux split-window -v -t $SESSION_NAME:guardrone.2
+tmux select-layout -t $SESSION_NAME:guardrone tiled
+
+# --- Layout Drone Interaction: 3 pane (Agent, Launch, Shell) ---
+tmux split-window -h -t $SESSION_NAME:drone_interaction.0
+tmux split-window -v -t $SESSION_NAME:drone_interaction.0
 
 # =============================================================================
 # 4. FINESTRA 0 — GCS (LOCALE)
@@ -130,13 +134,26 @@ tmux select-pane -T '1: GuarDrone Launch' -t $SESSION_NAME:guardrone.1
     tmux send-keys -t $SESSION_NAME:guardrone.1 "ros2 launch guardrone_pkg guardrone_hw.launch.py" C-m
 ) &
 
-# --- Pane 2: Shell interattiva nel container (per debug manuale) ---
-tmux select-pane -T '2: Interactive Shell' -t $SESSION_NAME:guardrone.2
+# --- Pane 2: Launch RealSense Camera ---
+tmux select-pane -T '2: Camera Launch' -t $SESSION_NAME:guardrone.2
 (
     tmux send-keys -t $SESSION_NAME:guardrone.2 "ssh dummy@${GD_IP}" C-m
-    # Stesso wait del Pane 1
+    # Aspetta che il container sia avviato dal Pane 0
     sleep 15
     tmux send-keys -t $SESSION_NAME:guardrone.2 "docker exec -it ${GD_CONTAINER} bash" C-m
+    sleep 2
+    tmux send-keys -t $SESSION_NAME:guardrone.2 "colcon build && source /opt/ros/humble/setup.bash && source /root/my_ros2_ws/install/setup.bash" C-m
+    sleep 1
+    tmux send-keys -t $SESSION_NAME:guardrone.2 "ros2 launch realsense2_camera rs_launch.py" C-m
+) &
+
+# --- Pane 3: Shell interattiva nel container (per debug manuale) ---
+tmux select-pane -T '3: Interactive Shell' -t $SESSION_NAME:guardrone.3
+(
+    tmux send-keys -t $SESSION_NAME:guardrone.3 "ssh dummy@${GD_IP}" C-m
+    # Stesso wait del Pane 1
+    sleep 15
+    tmux send-keys -t $SESSION_NAME:guardrone.3 "docker exec -it ${GD_CONTAINER} bash" C-m
 ) &
 
 

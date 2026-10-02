@@ -97,7 +97,7 @@ def launch_setup(context, *args, **kwargs):
     )
 
     gcs_pkg_dir = get_package_share_directory('gcs_pkg')
-    rviz_config_file = os.path.join(gcs_pkg_dir, 'config', 'rviz_config_file.rviz')
+    rviz_config_file = os.path.join(gcs_pkg_dir, 'config', 'rviz_config_file_hw.rviz')
     
     rviz_node = Node(
         package='rviz2',
@@ -115,7 +115,7 @@ def generate_launch_description():
         # --- Modalità Esecuzione ---
         DeclareLaunchArgument('use_fake_supervisor', default_value='false',
                               description='Se true, avvia fake_publisher invece del supervisor vero per testare il drone singolo'),
-        DeclareLaunchArgument('enable_rviz', default_value='false',
+        DeclareLaunchArgument('enable_rviz', default_value='true',
                               description='Avvia RViz nella GCS'),
         
         # --- Pose iniziali (con MOCAP: default 0.0, il frame è già globale) ---
