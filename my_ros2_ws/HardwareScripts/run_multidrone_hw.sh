@@ -129,9 +129,8 @@ tmux select-pane -T '1: GuarDrone Launch' -t $SESSION_NAME:guardrone.1
     sleep 15
     tmux send-keys -t $SESSION_NAME:guardrone.1 "docker exec -it ${GD_CONTAINER} bash" C-m
     sleep 2
-    tmux send-keys -t $SESSION_NAME:guardrone.1 "colcon build && source /opt/ros/humble/setup.bash && source /root/my_ros2_ws/install/setup.bash" C-m
-    sleep 1
-    tmux send-keys -t $SESSION_NAME:guardrone.1 "ros2 launch guardrone_pkg guardrone_hw.launch.py" C-m
+    # Pulisce eventuale cache corrotta, compila e lancia in sequenza (&& garantisce l'attesa del build)
+    tmux send-keys -t $SESSION_NAME:guardrone.1 "cd /root/my_ros2_ws && rm -rf build install log && colcon build && source /opt/ros/humble/setup.bash && source /root/my_ros2_ws/install/setup.bash && ros2 launch guardrone_pkg guardrone_hw.launch.py" C-m
 ) &
 
 # --- Pane 2: Launch RealSense Camera ---
@@ -142,9 +141,8 @@ tmux select-pane -T '2: Camera Launch' -t $SESSION_NAME:guardrone.2
     sleep 15
     tmux send-keys -t $SESSION_NAME:guardrone.2 "docker exec -it ${GD_CONTAINER} bash" C-m
     sleep 2
-    tmux send-keys -t $SESSION_NAME:guardrone.2 "colcon build && source /opt/ros/humble/setup.bash && source /root/my_ros2_ws/install/setup.bash" C-m
-    sleep 1
-    tmux send-keys -t $SESSION_NAME:guardrone.2 "ros2 launch realsense2_camera rs_launch.py" C-m
+    # realsense2_camera e' un package binario in /opt/ros/humble: non serve colcon build (evita conflitti CMake con Pane 1)
+    tmux send-keys -t $SESSION_NAME:guardrone.2 "cd /root/my_ros2_ws && source /opt/ros/humble/setup.bash && [ -f /root/my_ros2_ws/install/setup.bash ] && source /root/my_ros2_ws/install/setup.bash && ros2 launch realsense2_camera rs_launch.py" C-m
 ) &
 
 # --- Pane 3: Shell interattiva nel container (per debug manuale) ---
@@ -154,6 +152,8 @@ tmux select-pane -T '3: Interactive Shell' -t $SESSION_NAME:guardrone.3
     # Stesso wait del Pane 1
     sleep 15
     tmux send-keys -t $SESSION_NAME:guardrone.3 "docker exec -it ${GD_CONTAINER} bash" C-m
+    sleep 2
+    tmux send-keys -t $SESSION_NAME:guardrone.3 "cd /root/my_ros2_ws" C-m
 ) &
 
 
