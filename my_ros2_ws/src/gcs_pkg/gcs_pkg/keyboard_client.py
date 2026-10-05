@@ -25,10 +25,11 @@ class KeyboardClientNode(Node):
         self.get_logger().info('Comandi disponibili:')
         self.get_logger().info('  ok               → conferma passaggio fase (sequenziale)')
         self.get_logger().info('  takeoff          → avvia decollo (dopo convergenza EKF)')
-        self.get_logger().info('  home             → transizione a HOME (hovering di partenza)')
-        self.get_logger().info('  mission_start    → transizione a MISSION_START (2m dal muro)')
-        self.get_logger().info('  inspection_start → transizione a INSPECTION_START (ispezione a parete)')
-        self.get_logger().info('  inspection_end   → transizione a INSPECTION_END (distacco 1m)')
+        self.get_logger().info('  hovering         → transizione ad HOVERING (quota sopra spawn)')
+        self.get_logger().info('  approach         → transizione ad APPROACH (2m dal muro)')
+        self.get_logger().info('  interaction      → transizione ad INTERACTION (contatto a parete)')
+        self.get_logger().info('  detachment       → transizione a DETACHMENT (distacco 1m)')
+        self.get_logger().info('  return_home      → transizione a RETURN_HOME (rientro alla base)')
         self.get_logger().info('  landing          → atterraggio immediato (NAV_LAND PX4)')
         self.get_logger().info('  stop             → atterraggio d\'emergenza')
         self.get_logger().info('─' * 55)
@@ -38,7 +39,7 @@ class KeyboardClientNode(Node):
         try:
             while rclpy.ok():
                 try:
-                    user_input = input('\n⏳ In attesa di comando (ok / takeoff / home / mission_start / inspection_start / inspection_end / landing / stop): ').strip().lower()
+                    user_input = input('\n⏳ In attesa di comando (ok / takeoff / hovering / approach / interaction / detachment / return_home / landing / stop): ').strip().lower()
                 except EOFError:
                     break
 
@@ -55,7 +56,8 @@ class KeyboardClientNode(Node):
                     self.get_logger().info('🛫 Comando TAKEOFF inviato al supervisor.')
                 elif user_input == 'stop':
                     self.get_logger().warn('🛑 Comando STOP inviato al supervisor!')
-                elif user_input in ('home', 'mission_start', 'inspection_start', 'inspection_end', 'landing', 'land'):
+                elif user_input in ('hovering', 'approach', 'interaction', 'detachment', 'return_home', 'landing', 'land',
+                                    'home', 'mission_start', 'inspection_start', 'inspection_end'):
                     self.get_logger().info(f'🚀 Richiesta transizione diretta a fase: "{user_input}"')
                 else:
                     self.get_logger().info(f'📤 Inviato: "{user_input}"')

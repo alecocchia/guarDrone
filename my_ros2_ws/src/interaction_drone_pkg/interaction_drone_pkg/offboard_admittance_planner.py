@@ -98,7 +98,6 @@ class OffboardAdmittancePlanner(Node):
         self.declare_parameter('F_threshold', 0.2)        # [N] soglia attivazione forza
         self.declare_parameter('adm_max_delta', 10.0)      # [m] saturazione spostamento traslazionale
         self.declare_parameter('tau_threshold', 0.002)    # [Nm] soglia attivazione coppia yaw
-        self.declare_parameter('adm_max_delta_yaw', 0.35) # [rad] saturazione rotazione (~20 deg)
 
         self.start_x = self.get_parameter('start_x').value
         self.start_y = self.get_parameter('start_y').value
@@ -169,7 +168,7 @@ class OffboardAdmittancePlanner(Node):
         self.adm_K_psi = K_psi
         self.adm_J_psi = J_psi
         self.adm_D_psi = D_psi
-        self.adm_max_delta_yaw = self.get_parameter('adm_max_delta_yaw').get_parameter_value().double_value
+        self.adm_max_delta_yaw = 0.35  # [rad] saturazione rotazione (~20 deg)
 
         self.get_logger().info(
             f"[Admittance Trans] K={self.adm_K:.2f}, M={self.adm_M:.3f}, D={self.adm_D:.2f}, "

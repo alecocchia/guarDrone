@@ -24,6 +24,8 @@ def launch_setup(context, *args, **kwargs):
     cam_x = LaunchConfiguration('cam_x')
     cam_y = LaunchConfiguration('cam_y')
     cam_z = LaunchConfiguration('cam_z')
+    fov_h_deg = LaunchConfiguration('fov_h_deg')
+    fov_v_deg = LaunchConfiguration('fov_v_deg')
 
     # NODO: SUPERVISOR (usato per missioni multi-drone reali)
     supervisor_node = Node(
@@ -46,6 +48,8 @@ def launch_setup(context, *args, **kwargs):
             'cam_offset_x': cam_x,
             'cam_offset_y': cam_y,
             'cam_z_offset': cam_z,
+            'fov_h_deg': fov_h_deg,
+            'fov_v_deg': fov_v_deg,
         }],
     )
 
@@ -88,6 +92,8 @@ def launch_setup(context, *args, **kwargs):
             'start_z': drone_z,
             'cam_x': cam_x, 'cam_y': cam_y, 'cam_z': cam_z,
             'ft_topic': LaunchConfiguration('peg_ft_topic'),
+            'fov_h': fov_h_deg,
+            'fov_v': fov_v_deg,
             # Drone di interazione: namespace PX4 e offset spawn
             'peg_px4_ns':  'px4_1',
             'peg_start_x': peg_x,
@@ -130,6 +136,8 @@ def generate_launch_description():
         DeclareLaunchArgument('cam_x',     default_value='0.105'),
         DeclareLaunchArgument('cam_y',     default_value='0.0'),
         DeclareLaunchArgument('cam_z',     default_value='-0.15'),
+        DeclareLaunchArgument('fov_h_deg', default_value='80.0', description='FoV orizzontale camera [deg]'),
+        DeclareLaunchArgument('fov_v_deg', default_value='60.0', description='FoV verticale camera [deg]'),
 
         # --- Parametri logger ---
         DeclareLaunchArgument('peg_ft_topic',

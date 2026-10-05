@@ -54,8 +54,12 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
     
     # Mappatura stili grafici per ciascuna fase della missione FSM
     phase_style_map = {
+        'WAIT_TAKEOFF':        {'color': '#94a3b8', 'linestyle': ':',  'label': 'Wait Takeoff'},
         'ARM_OFFBOARD':        {'color': '#64748b', 'linestyle': ':',  'label': 'Arm & Offboard'},
         'TAKEOFF_MONITOR':     {'color': '#0284c7', 'linestyle': '--', 'label': 'Takeoff'},
+        'HOVERING':            {'color': '#2563eb', 'linestyle': '--', 'label': 'Hovering'},
+        'APPROACH':            {'color': '#f59e0b', 'linestyle': '--', 'label': 'Approach'},
+        'INTERACTION':         {'color': '#16a34a', 'linestyle': '-',  'label': 'Interaction'},
         'HOME':                {'color': '#2563eb', 'linestyle': '--', 'label': 'Home'},
         'MISSION_START':       {'color': '#f59e0b', 'linestyle': '--', 'label': 'Mission Start'},
         'INSPECTION_START':    {'color': '#16a34a', 'linestyle': '-',  'label': 'Inspection Start'},
@@ -73,7 +77,7 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
 
     # Identifica gli intervalli temporali in cui l'MPC è attivo per l'ombreggiatura gialla
     # (escluse le fasi preparatorie/decollo e atterraggio/emergenza)
-    NON_MPC_PHASES = {'WAIT_EKF', 'WAIT_START', 'ARM_OFFBOARD', 'TAKEOFF_MONITOR',
+    NON_MPC_PHASES = {'WAIT_EKF', 'WAIT_START', 'WAIT_TAKEOFF', 'ARM_OFFBOARD', 'TAKEOFF_MONITOR',
                       'LANDING', 'DISARM_WAIT', 'MISSION_COMPLETE', 'EMERGENCY'}
     mpc_intervals = []
     if phases:
@@ -262,7 +266,7 @@ def main():
         for pt, pn in zip(p_times, p_names):
             name_str = str(pn).strip()
             # Mostriamo solo le fasi operative significative nei plot, escludendo preparatori e disarmo
-            if name_str not in ('WAIT_EKF', 'WAIT_START', 'ARM_OFFBOARD', 'DISARM_WAIT', 'MISSION_COMPLETE'):
+            if name_str not in ('WAIT_EKF', 'WAIT_START', 'WAIT_TAKEOFF', 'ARM_OFFBOARD', 'DISARM_WAIT', 'MISSION_COMPLETE'):
                 phases.append((float(pt), name_str))
         print(f"[DEBUG] Fasi FSM caricate dal log ({len(phases)}): {phases}")
     myPlot.default_phases = phases
@@ -270,7 +274,7 @@ def main():
     # Se task_start non era esplicito ma abbiamo le fasi, allinea task_start alla preparazione/missione
     if task_start <= 0 and phases:
         for pt, pn in phases:
-            if pn in ('HOME', 'MISSION_START', 'INSPECTION_START', 'MISSION_PREPARATION', 'MISSION'):
+            if pn in ('HOVERING', 'APPROACH', 'INTERACTION', 'DETACHMENT', 'RETURN_HOME', 'HOME', 'MISSION_START', 'INSPECTION_START', 'MISSION_PREPARATION', 'MISSION'):
                 task_start = pt
                 break
 

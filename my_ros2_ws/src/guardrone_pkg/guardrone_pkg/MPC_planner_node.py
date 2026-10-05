@@ -59,8 +59,6 @@ class MpcPlannerNode(Node):
         self.declare_parameter('start_x', 0.0)
         self.declare_parameter('start_y', 0.0)
         self.declare_parameter('start_z', 0.0)
-        self.declare_parameter('start_roll', 0.0)
-        self.declare_parameter('start_pitch', 0.0)
         self.declare_parameter('start_yaw', 0.0)
         self.declare_parameter('peg_x', 0.0)
         self.declare_parameter('peg_y', 0.0)
@@ -76,7 +74,6 @@ class MpcPlannerNode(Node):
         self.declare_parameter('arm_l_x', 0.174)
         self.declare_parameter('arm_l_y', 0.174)
         self.declare_parameter('moment_const', 0.016)
-        self.declare_parameter('rp_limit', 45.0)
 
         self.declare_parameter('use_mbe', True)
 
@@ -89,10 +86,10 @@ class MpcPlannerNode(Node):
         arm_l_y = self.get_parameter('arm_l_y').value
         moment_const = self.get_parameter('moment_const').value        
         self.U_F = self.get_parameter('f_max').value
-        #self.U_TAU_X = arm_l_y * self.U_F / 2.0
-        #self.U_TAU_Y = arm_l_x * self.U_F / 2.0
-        self.U_TAU_X = arm_l_y * self.U_F / 2.0 * (2 / 2.2)
-        self.U_TAU_Y = arm_l_x * self.U_F / 2.0 * (2 / 2.2)
+        self.U_TAU_X = arm_l_y * self.U_F / 2.0
+        self.U_TAU_Y = arm_l_x * self.U_F / 2.0
+        #self.U_TAU_X = arm_l_y * self.U_F / 2.0 * (2 / 2.2)
+        #self.U_TAU_Y = arm_l_x * self.U_F / 2.0 * (2 / 2.2)
         #self.U_TAU_X = self.U_TAU_X
         #self.U_TAU_Y = self.U_TAU_Y
         self.U_TAU_Z = moment_const * self.U_F
@@ -100,14 +97,15 @@ class MpcPlannerNode(Node):
         self.start_x = self.get_parameter('start_x').value
         self.start_y = self.get_parameter('start_y').value
         self.start_z = self.get_parameter('start_z').value
-        self.start_roll = self.get_parameter('start_roll').value
-        self.start_pitch = self.get_parameter('start_pitch').value
+        self.start_roll = 0.0
+        self.start_pitch = 0.0
         self.start_yaw = self.get_parameter('start_yaw').value
         self.peg_drone_spawn = np.array([
             self.get_parameter('peg_x').value,
             self.get_parameter('peg_y').value,
             self.get_parameter('peg_z').value
         ])
+        self.peg_offset = np.array([0.455, 0.0, 0.22])  # Offset punta end-effector nel body frame FLU [m]
         self.fov_h = self.get_parameter('fov_h').value
         self.fov_v = self.get_parameter('fov_v').value
         cam_x = self.get_parameter('cam_x').value
@@ -342,16 +340,20 @@ class MpcPlannerNode(Node):
         R_flu2enu = self.M_ned2enu @ R_frd2ned @ self.M_frd2flu
         rot_flu2enu = Rotation.from_matrix(R_flu2enu)
         
-        # Posizione: NED → ENU con offset
+        # Posizione: NED → ENU centro drone
         pos_enu = self.M_ned2enu @ np.array([msg.position[0], msg.position[1], msg.position[2]])
-        peg_offset = np.array([0.455, 0.0, 0.22])
-        self.current_obj_pos = pos_enu + self.peg_drone_spawn + peg_offset
         
-        # Velocità: NED → ENU
-        self.current_obj_vel[:] = self.M_ned2enu @ np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]])
+        # Ruota l'offset dell'end-effector (solidale al body FLU) nel frame mondo ENU
+        peg_offset_world = R_flu2enu @ self.peg_offset
+        self.current_obj_pos = pos_enu + self.peg_drone_spawn + peg_offset_world
         
         # Velocità angolare: FRD → FLU
         self.current_obj_ang_vel[:] = self.M_frd2flu @ np.array([msg.angular_velocity[0], msg.angular_velocity[1], msg.angular_velocity[2]])
+
+        # Velocità della punta (traslazione centro + rotazione omega x r): NED → ENU
+        v_center = self.M_ned2enu @ np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]])
+        omega_enu = R_flu2enu @ self.current_obj_ang_vel
+        self.current_obj_vel[:] = v_center + np.cross(omega_enu, peg_offset_world)
         
         # Orientamento in RPY
         self.current_obj_rpy[:] = rot_flu2enu.as_euler('xyz')

@@ -70,10 +70,15 @@ class FakePublisherNode(Node):
         self.declare_parameter('cam_offset_x', 0.0)
         self.declare_parameter('cam_offset_y', 0.0)
         self.declare_parameter('cam_offset_z', 0.0)
+        # Parametri FoV camera per calcolo offset decentrato
+        self.declare_parameter('fov_h_deg', 80.0)
+        self.declare_parameter('fov_v_deg', 60.0)
 
         self.cam_offset_x = self.get_parameter('cam_offset_x').value
         self.cam_offset_y = self.get_parameter('cam_offset_y').value
         self.cam_offset_z = self.get_parameter('cam_offset_z').value
+        self.fov_h_deg = self.get_parameter('fov_h_deg').value
+        self.fov_v_deg = self.get_parameter('fov_v_deg').value
         self.takeoff_alt_1 = self.get_parameter('takeoff_alt_1').value
         self.guardrone_start_x = self.get_parameter('guardrone_start_x').value
         self.guardrone_start_y = self.get_parameter('guardrone_start_y').value
@@ -119,6 +124,8 @@ class FakePublisherNode(Node):
         self.peg_traj_v = None
         self.peg_traj_idx = 0
         self.detachment_started = False
+        self.approach_started = False
+        self.interaction_started = False
         self.return_home_started = False
         self.landing_started = False
         self.msg_cnt = 0
@@ -167,12 +174,28 @@ class FakePublisherNode(Node):
             self.state = 'LANDING'
             self.landing_started = False
             self.user_ok = False
-        elif cmd in ('home', 'return_home'):
-            if self.state in ('MISSION', 'DETACHMENT'):
-                self.get_logger().warn('Comando RETURN_HOME ricevuto!')
-                self.state = 'RETURN_HOME'
-                self.return_home_started = False
-                self.user_ok = False
+        elif cmd in ('hovering', 'home',
+                     'approach', 'mission_start', 'mission_preparation',
+                     'interaction', 'inspection_start', 'mission',
+                     'detachment', 'inspection_end',
+                     'return_home'):
+            alias_map = {
+                'hovering': 'HOVERING',
+                'home': 'HOVERING',
+                'approach': 'APPROACH',
+                'interaction': 'INTERACTION',
+                'detachment': 'DETACHMENT',
+                'return_home': 'RETURN_HOME',
+            }
+            target_st = alias_map[cmd]
+            self.get_logger().warn(f'COMANDO DIRETTO FASE RICEVUTO: "{cmd}" -> Salto immediato a {target_st}')
+            self.state = target_st
+            self.user_ok = False
+            self.approach_started = False
+            self.interaction_started = False
+            self.detachment_started = False
+            self.return_home_started = False
+            self.msg_cnt = 0
         elif cmd == 'stop':
             self.get_logger().error("Comando STOP ricevuto! Atterraggio d'emergenza!")
             msg_stop = Bool()
@@ -181,6 +204,36 @@ class FakePublisherNode(Node):
             self.cam_traj_enabled_pub.publish(msg_stop)
             self.publish_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
             self.state = 'EMERGENCY'
+
+    def compute_actual_pov_target(self):
+        """Restituisce il target PoV (r, beta, z) letto dal topic /actual_pov dell'MPC,
+        oppure i valori stimati di hovering se /actual_pov non è ancora disponibile."""
+        if self.actual_pov is not None:
+            return self.actual_pov[0], self.actual_pov[1], self.actual_pov[2]
+        return self.r_hover, self.beta_hover, 0.0
+
+    def compute_decentered_pov(self, r, h_fraction=0.0, v_fraction=0.0):
+        """Calcola yaw_offset e z_rel per decentrare l'oggetto nel FoV.
+
+        h_fraction in [-1, 1]: +1 = bordo destro, -1 = bordo sinistro
+        v_fraction in [-1, 1]: +1 = bordo superiore, -1 = bordo inferiore
+        Restituisce (yaw_offset, z_rel) da passare a publish_pov_target.
+        """
+        fov_h_half = math.radians(self.get_parameter('fov_h_deg').value / 2.0)
+        fov_v_half = math.radians(self.get_parameter('fov_v_deg').value / 2.0)
+
+        yaw_offset = h_fraction * fov_h_half
+        z_max = r * math.cos(yaw_offset) * math.tan(fov_v_half)
+        z_rel = v_fraction * z_max
+
+        return yaw_offset, z_rel
+
+    def publish_pov_target(self, r, beta, z=0.0, yaw=0.0):
+        """Pubblica riferimento PoV cilindrico [r, beta, z_rel, yaw_offset] per l'MPC."""
+        msg = Float64MultiArray()
+        msg.data = [float(r), float(beta), float(z), float(yaw)]
+        self.pov_pub.publish(msg)
+        self.get_logger().info(f"Target PoV inviato all'MPC: r={r:.3f} m, beta={math.degrees(beta):.1f}°, z={z:.3f} m, yaw={math.degrees(yaw):.1f}°")
 
     def _publish_state_if_changed(self):
         """Pubblica lo stato della FSM su /supervisor/state per il logger."""
@@ -326,9 +379,9 @@ class FakePublisherNode(Node):
                     f"EKF Convergente. Rilevato yaw iniziale ENU: {math.degrees(psi_enu):.1f}° | "
                     f"Target impostato: r={self.r_hover:.3f}m, beta={math.degrees(self.beta_hover):.1f}°"
                 )
-                self.state = 'WAIT_START'
+                self.state = 'WAIT_TAKEOFF'
                 
-        elif self.state == 'WAIT_START':
+        elif self.state == 'WAIT_TAKEOFF':
             if self.mpc_ready:
                 if not self.wait_msg_printed:
                     self.get_logger().info("Planner di takeoff pronto. Digita 'ok' (e premi invio) sul terminale GCS per autorizzare il decollo.")
@@ -430,49 +483,80 @@ class FakePublisherNode(Node):
                     msg_traj.data = False
                     self.cam_traj_enabled_pub.publish(msg_traj)
             
-                    # 2. Invia target PoV iniziale per l'MPC:
-                    # Usa /actual_pov dall'MPC se disponibile per garantire una transizione a errore zero (senza scatti)
-                    if self.actual_pov is not None:
-                        r_init = self.actual_pov[0]
-                        beta_init = self.actual_pov[1]
-                        z_init = self.actual_pov[2]
-                        yaw_init = self.actual_pov[3]
-                    else:
-                        r_init = self.r_hover
-                        beta_init = self.beta_hover
-                        z_init = 0.0
-                        yaw_init = 0.0
-
-                    pov_msg = Float64MultiArray()
-                    pov_msg.data = [r_init, beta_init, z_init, yaw_init]
-                    self.pov_pub.publish(pov_msg)
-                    self.get_logger().info(f"Target PoV iniziale inviato all'MPC: r={r_init:.3f}m, beta={math.degrees(beta_init):.1f}°, z={z_init:.3f}m, yaw_off={math.degrees(yaw_init):.1f}°")
+                    # 2. Invia target PoV iniziale per l'MPC (centrato: yaw_offset=0, z_rel=0):
+                    r_init, beta_init, _ = self.compute_actual_pov_target()
+                    self.publish_pov_target(r_init, beta_init, 0.0, 0.0)
 
                     # 3. Avvia MPC
                     msg_start = Bool()
                     msg_start.data = True
                     self.task_start_pub.publish(msg_start)
                     
-                    self.state = 'MISSION'
-                    self.get_logger().info("MISSIONE AVVIATA. Hovering mantenuto tramite MPC.")
+                    self.state = 'HOVERING'
+                    self.get_logger().info("HOVERING AVVIATO. Hovering mantenuto tramite MPC (PoV centrato).")
                 
-        elif self.state == 'MISSION':
+        elif self.state == 'HOVERING':
             if self.user_ok:
                 self.user_ok = False
-                self.get_logger().info("Comando 'ok' ricevuto in MISSION: inizio fase di DETACHMENT...")
+                self.get_logger().info("Comando 'ok' ricevuto in HOVERING: inizio fase di APPROACH...")
+                self.state = 'APPROACH'
+                self.approach_started = False
+                self.msg_cnt = 0
+            elif self.msg_cnt == 0:
+                self.get_logger().info('HOVERING in corso con MPC (PoV centrato). Digita "ok" per procedere ad APPROACH o "land" per atterrare.')
+                self.msg_cnt += 1
+
+        elif self.state == 'APPROACH':
+            if not self.approach_started:
+                self.approach_started = True
+                # Mantiene lo stesso PoV centrato
+                r_act, beta_act, _ = self.compute_actual_pov_target()
+                self.publish_pov_target(r_act, beta_act, 0.0, 0.0)
+                self.get_logger().info(f"Fase APPROACH avviata: PoV centrato mantenuto (r={r_act:.3f}m, beta={math.degrees(beta_act):.1f}°).")
+
+            if self.user_ok:
+                self.user_ok = False
+                self.get_logger().info("Comando 'ok' ricevuto in APPROACH: inizio fase INTERACTION...")
+                self.state = 'INTERACTION'
+                self.interaction_started = False
+                self.msg_cnt = 0
+            elif self.msg_cnt == 0:
+                self.get_logger().info('APPROACH in corso con MPC. Digita "ok" per procedere ad INTERACTION o "land" per atterrare.')
+                self.msg_cnt += 1
+
+        elif self.state == 'INTERACTION':
+            if not self.interaction_started:
+                self.interaction_started = True
+                # Inquadra in basso a destra (60%) e raggio r = 1.5 m
+                _, beta_act, _ = self.compute_actual_pov_target()
+                r_target = 1.5
+                h_frac = 0.6
+                v_frac = 0.6
+                yaw_off, z_off = self.compute_decentered_pov(r_target, h_frac, v_frac)
+                self.publish_pov_target(r_target, beta_act, z_off, yaw_off)
+                self.get_logger().info(f"Fase INTERACTION avviata: PoV decentrato (r={r_target:.2f}m, beta={math.degrees(beta_act):.1f}°, in basso a dx).")
+
+            if self.user_ok:
+                self.user_ok = False
+                self.get_logger().info("Comando 'ok' ricevuto in INTERACTION: inizio fase di DETACHMENT...")
                 self.state = 'DETACHMENT'
                 self.detachment_started = False
                 self.msg_cnt = 0
             elif self.msg_cnt == 0:
-                self.get_logger().info('MISSIONE in corso con MPC. Digita "ok" per procedere al distacco (DETACHMENT) o "land" per atterrare.')
+                self.get_logger().info('INTERACTION in corso con MPC. Digita "ok" per procedere al distacco (DETACHMENT) o "land" per atterrare.')
                 self.msg_cnt += 1
 
         elif self.state == 'DETACHMENT':
             if not self.detachment_started:
                 self.detachment_started = True
+                # Torna a centrare l'inquadratura (z=0, yaw=0) mantenendo r = 1.5 m
+                _, beta_act, _ = self.compute_actual_pov_target()
+                r_target = 1.5
+                self.publish_pov_target(r_target, beta_act, 0.0, 0.0)
+
                 detach_target = np.array([self.peg_start_x, self.peg_start_y + 1.5, self.takeoff_alt_1])
                 dur = self.plan_peg_trajectory(detach_target, v_max=0.2, a_max=0.2)
-                self.get_logger().info(f"Distacco avviato (trapezoidale, {dur:.1f}s): peg verso {detach_target}. GuarDrone segue in MPC...")
+                self.get_logger().info(f"Distacco avviato (trapezoidale, {dur:.1f}s): peg verso {detach_target}. GuarDrone torna a PoV centrato (r=1.5m)...")
 
             if self.is_peg_trajectory_done():
                 if self.user_ok:
@@ -488,9 +572,14 @@ class FakePublisherNode(Node):
         elif self.state == 'RETURN_HOME':
             if not self.return_home_started:
                 self.return_home_started = True
+                # Torna a centrare l'inquadratura (z=0, yaw=0) con raggio allargato a r = 2.0 m
+                _, beta_act, _ = self.compute_actual_pov_target()
+                r_target = 2.0
+                self.publish_pov_target(r_target, beta_act, 0.0, 0.0)
+
                 home_target = np.array([self.peg_start_x, self.peg_start_y, self.takeoff_alt_1])
                 dur = self.plan_peg_trajectory(home_target, v_max=0.3, a_max=0.2)
-                self.get_logger().info(f"Ritorno alla base avviato (trapezoidale, {dur:.1f}s): peg verso {home_target}. GuarDrone segue in MPC...")
+                self.get_logger().info(f"Ritorno alla base avviato (trapezoidale, {dur:.1f}s): peg verso {home_target}. GuarDrone allarga raggio a 2.0m...")
 
             if self.is_peg_trajectory_done():
                 if self.user_ok:

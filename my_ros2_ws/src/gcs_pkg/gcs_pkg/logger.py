@@ -20,7 +20,6 @@ class Logger(Node):
 
         self.declare_parameter('save_path', '/tmp/sim_run.mat')
         self.declare_parameter('log_hz', 50.0)
-        self.declare_parameter('save_ref_flag', True)
         self.declare_parameter('mass', 2.064)
         self.declare_parameter('ft_topic', '/world/interaction/model/x500_interaction/joint/end_eff_sens_joint/force_torque')
 
@@ -44,7 +43,7 @@ class Logger(Node):
         
         self.log_hz        = float(self.get_parameter('log_hz').value)
         self.log_dt        = 1.0 / max(self.log_hz, 1e-3)
-        self.save_ref_flag = bool(self.get_parameter('save_ref_flag').value)
+        self.save_ref_flag = True
         self.mass          = self.get_parameter('mass').value
         self.ft_topic      = self.get_parameter('ft_topic').value
 
