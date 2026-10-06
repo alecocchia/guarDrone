@@ -90,7 +90,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-octomap-rviz-plugins  \
     ros-humble-rtabmap-ros \
     ros-humble-librealsense2* \
-    ros-humble-realsense2-* \  
+    ros-humble-realsense2-* \
+    ros-humble-compressed-image-transport \
     && rm -rf /var/lib/apt/lists/*
 
 RUN apt-get update && apt-get install -y --no-install-recommends \ 
