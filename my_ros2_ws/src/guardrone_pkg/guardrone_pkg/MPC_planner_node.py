@@ -119,6 +119,7 @@ class MpcPlannerNode(Node):
 
         self.camera_offset = np.array([cam_x, cam_y, cam_z])
         self.camera_rpy = np.array([cam_roll, cam_pitch, cam_yaw])
+        self.q_camera_rel = Rotation.from_euler('xyz', self.camera_rpy).as_quat()  # [x, y, z, w]
         
         """
         Setup problema di ottimizzazione: modello, condizioni iniziali, ts, N_horiz
@@ -352,8 +353,7 @@ class MpcPlannerNode(Node):
 
         # Velocità della punta (traslazione centro + rotazione omega x r): NED → ENU
         v_center = self.M_ned2enu @ np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]])
-        omega_enu = R_flu2enu @ self.current_obj_ang_vel
-        self.current_obj_vel[:] = v_center + np.cross(omega_enu, peg_offset_world)
+        self.current_obj_vel[:] = v_center
         
         # Orientamento in RPY
         self.current_obj_rpy[:] = rot_flu2enu.as_euler('xyz')
@@ -501,7 +501,21 @@ class MpcPlannerNode(Node):
         t.transform.rotation.x = float(q_x)
         t.transform.rotation.y = float(q_y)
         t.transform.rotation.z = float(q_z)
-        self.tf_broadcaster.sendTransform(t)
+
+        # Trasformazione rigida corpo -> camera: drone_base_link -> camera_link
+        t_cam = TransformStamped()
+        t_cam.header.stamp = t.header.stamp
+        t_cam.header.frame_id = 'drone_base_link'
+        t_cam.child_frame_id = 'camera_link'
+        t_cam.transform.translation.x = float(self.camera_offset[0])
+        t_cam.transform.translation.y = float(self.camera_offset[1])
+        t_cam.transform.translation.z = float(self.camera_offset[2])
+        t_cam.transform.rotation.x = float(self.q_camera_rel[0])
+        t_cam.transform.rotation.y = float(self.q_camera_rel[1])
+        t_cam.transform.rotation.z = float(self.q_camera_rel[2])
+        t_cam.transform.rotation.w = float(self.q_camera_rel[3])
+
+        self.tf_broadcaster.sendTransform([t, t_cam])
 
         # Pubblicazione posa reale per RViz
         drone_pose_msg = PoseStamped()
@@ -646,10 +660,10 @@ class MpcPlannerNode(Node):
         X_CART     = 0.2                          # [m] tolleranza errore posizione piano XY
         Y_CART     = 0.2                          # [m]
         Z_CART     = 0.2                          # [m] tolleranza errore quota
-        Y_CYL      = np.pi / 3.0                  # [rad] tolleranza puntamento yaw (~60 deg)
+        Y_CYL      = np.pi / 4.0                  # [rad] tolleranza puntamento yaw (~45 deg)
         V          = np.array([0.3, 0.3, 0.3])    # [m/s] velocità max attesa
         ANG_DOT    = np.array([0.2, 0.2, 0.3])  # [rad/s] velocità angolare max
-        ACC        = np.array([0.3, 0.3, 0.3])    # [m/s^2] accelerazione max
+        ACC        = np.array([0.2, 0.2, 0.2])    # [m/s^2] accelerazione max
         ACC_ANG    = np.array([0.4, 0.4, 0.6])    # [rad/s^2] accelerazione angolare max
 
         # =========================================================================
@@ -676,10 +690,10 @@ class MpcPlannerNode(Node):
             # CASO 2: CONTROLLER WRENCH CON MBE (disturbi compensati via feedforward)
             # ---------------------------------------------------------------------
             self.get_logger().info("[MPC Tuning] Modalità: CONTROLLER + MBE (Feedforward: ON)")
-            PesoVel    = PesoVis / 5.0   
-            PesoAngVel = PesoVis / 20.0
-            PesoAcc    = PesoVis / 30.0
-            PesoAngAcc = PesoVis / 60.0
+            PesoVel    = PesoVis / 7.0   
+            PesoAngVel = PesoVis / 10.0
+            PesoAcc    = PesoVis / 20.0
+            PesoAngAcc = PesoVis / 20.0
             PesoForce  = PesoVis / 10.0   
             PesoTorque = PesoVis / 10.0
             scale_e = [5.0, 5.0, 5.0, 1.0, 1.0]

@@ -35,8 +35,11 @@ KILL_ALIAS="alias aaa='tmux list-panes -s -F \"#{pane_id}\" | grep -v \$(tmux di
 # =============================================================================
 # 1. CREA SESSIONE TMUX
 # =============================================================================
-# Nota: path valido sia su host che dentro il container Docker (mount: /root/my_ros2_ws/HardwareScripts)
-TMUX_CONF="${HOME}/my_ros2_ws/HardwareScripts/tmux.conf"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Percorso configurazione tmux
+TMUX_CONF="${SCRIPT_DIR}/tmux.conf"
 if [ -f "$TMUX_CONF" ]; then
     tmux -f "$TMUX_CONF" new-session -d -s $SESSION_NAME -n 'gcs'
 else
@@ -74,8 +77,6 @@ tmux split-window -v -t $SESSION_NAME:drone_interaction.0
 # =============================================================================
 # 4. FINESTRA 0 — GCS (LOCALE)
 # =============================================================================
-# I path locali presumono che il ws sia in ~/guarDrone/my_ros2_ws
-WS_DIR="${HOME}/my_ros2_ws"
 LOCAL_SOURCE="source /opt/ros/humble/setup.bash && [ -f ${WS_DIR}/install/setup.bash ] && source ${WS_DIR}/install/setup.bash"
 
 # Pane 0: GCS Launch (supervisor + logger)

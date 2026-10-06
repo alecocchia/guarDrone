@@ -13,9 +13,13 @@ from ament_index_python.packages import get_package_share_directory
 
 try:
     from utils_pkg.PX4_model_parser import PX4ModelParser
+    from utils_pkg.config_loader import load_config
 except ImportError:
     sys.path.append('/root/my_ros2_ws/src/utils_pkg')
+    sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'utils_pkg'))
     from utils_pkg.PX4_model_parser import PX4ModelParser
+    from utils_pkg.config_loader import load_config
+
 
 
 def launch_setup(context, *args, **kwargs):
@@ -116,23 +120,28 @@ def launch_setup(context, *args, **kwargs):
 
 
 def generate_launch_description():
+    cfg = load_config('sim_config.yaml')
+    pose_cfg = cfg['initial_poses']
+    sim_cfg = cfg['guardrone_sim']
+
     return LaunchDescription([
         # Modello PX4/Gazebo del GuaDrone
-        DeclareLaunchArgument('model',          default_value='x500_depth',
+        DeclareLaunchArgument('model',          default_value=str(cfg['model']),
                               description='Modello Gazebo del GuaDrone (es. x500_depth)'),
-        DeclareLaunchArgument('controller', default_value='1',
+        DeclareLaunchArgument('controller', default_value=str(sim_cfg['controller']),
                               description='1: MPC come controllore (spinta e coppie), 0: MPC come planner (setpoint pos/vel)'),
         # Posa iniziale GuaDrone
-        DeclareLaunchArgument('drone_x',   default_value='-4.0'),
-        DeclareLaunchArgument('drone_y',   default_value='-53.0'),
-        DeclareLaunchArgument('drone_z',   default_value='4.52'),
-        DeclareLaunchArgument('drone_yaw', default_value='0.0'),
+        DeclareLaunchArgument('drone_x',   default_value=str(pose_cfg['drone_x'])),
+        DeclareLaunchArgument('drone_y',   default_value=str(pose_cfg['drone_y'])),
+        DeclareLaunchArgument('drone_z',   default_value=str(pose_cfg['drone_z'])),
+        DeclareLaunchArgument('drone_yaw', default_value=str(pose_cfg['drone_yaw'])),
         # Posa iniziale Interaction Drone (usata dall'MPC come target peg)
-        DeclareLaunchArgument('peg_x', default_value='-1.0'),
-        DeclareLaunchArgument('peg_y', default_value='-55.0'),
-        DeclareLaunchArgument('peg_z', default_value='4.55'),
+        DeclareLaunchArgument('peg_x', default_value=str(pose_cfg['peg_x'])),
+        DeclareLaunchArgument('peg_y', default_value=str(pose_cfg['peg_y'])),
+        DeclareLaunchArgument('peg_z', default_value=str(pose_cfg['peg_z'])),
         # Parametri motore
-        DeclareLaunchArgument('cf', default_value='8.0e-4'),
-        DeclareLaunchArgument('ct', default_value='1.0e-5'),
+        DeclareLaunchArgument('cf', default_value=str(sim_cfg['cf'])),
+        DeclareLaunchArgument('ct', default_value=str(sim_cfg['ct'])),
         OpaqueFunction(function=launch_setup)
     ])
+

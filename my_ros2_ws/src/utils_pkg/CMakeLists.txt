@@ -42,6 +42,13 @@ install(PROGRAMS
 )
 
 # ==========================================
+# FILE DI CONFIGURAZIONE COMUNI
+# ==========================================
+install(DIRECTORY config/
+  DESTINATION share/${PROJECT_NAME}/config
+)
+
+# ==========================================
 # PARTE C++ (Futuro)
 # ==========================================
 # Se ci saranno file .hpp in include/utils_pkg/
@@ -51,3 +58,4 @@ install(DIRECTORY include/
 ament_export_include_directories(include)
 
 ament_package()
+

@@ -11,12 +11,20 @@
 # Avvia: MPC_planner_node, guarDrone_trajectory_planner.
 
 import os
+import sys
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, TimerAction, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
+
+try:
+    from utils_pkg.config_loader import load_config
+except ImportError:
+    sys.path.append('/root/my_ros2_ws/src/utils_pkg')
+    sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'utils_pkg'))
+    from utils_pkg.config_loader import load_config
 
 
 def launch_setup(context, *args, **kwargs):
@@ -119,47 +127,53 @@ def launch_setup(context, *args, **kwargs):
 
 
 def generate_launch_description():
+    cfg = load_config('hw_config.yaml')
+    cam_cfg = cfg['camera']
+    phys_cfg = cfg['guardrone_physics']
+    pose_cfg = cfg['initial_poses']
+
     return LaunchDescription([
         # === Parametri fisici del drone (misurati sul drone reale) ===
-        DeclareLaunchArgument('mass',    default_value='3.4',   description='Massa del drone [kg]'),
-        DeclareLaunchArgument('ixx',     default_value='0.0232',  description='Momento di inerzia Ixx [kg·m²]'),
-        DeclareLaunchArgument('iyy',     default_value='0.0224',  description='Momento di inerzia Iyy [kg·m²]'),
-        DeclareLaunchArgument('izz',     default_value='0.0405',   description='Momento di inerzia Izz [kg·m²]'),
-        DeclareLaunchArgument('f_max',   default_value='52.0',    description='Spinta massima totale [N]'),
-        DeclareLaunchArgument('w_min',   default_value='150.0',   description='Velocità angolare minima motore [rad/s]'),
-        DeclareLaunchArgument('w_max',   default_value='1200.0',  description='Velocità angolare massima motore [rad/s]'),
-        DeclareLaunchArgument('arm_l_x', default_value='0.151',   description='Braccio motore asse X [m]'),
-        DeclareLaunchArgument('arm_l_y', default_value='0.160',   description='Braccio motore asse Y [m]'),
-        DeclareLaunchArgument('moment_const', default_value='0.0144', description='Costante di momento motore'),
+        DeclareLaunchArgument('mass',         default_value=str(phys_cfg['mass']),         description='Massa del drone [kg]'),
+        DeclareLaunchArgument('ixx',          default_value=str(phys_cfg['ixx']),          description='Momento di inerzia Ixx [kg·m²]'),
+        DeclareLaunchArgument('iyy',          default_value=str(phys_cfg['iyy']),          description='Momento di inerzia Iyy [kg·m²]'),
+        DeclareLaunchArgument('izz',          default_value=str(phys_cfg['izz']),          description='Momento di inerzia Izz [kg·m²]'),
+        DeclareLaunchArgument('f_max',        default_value=str(phys_cfg['f_max']),        description='Spinta massima totale [N]'),
+        DeclareLaunchArgument('w_min',        default_value=str(phys_cfg['w_min']),        description='Velocità angolare minima motore [rad/s]'),
+        DeclareLaunchArgument('w_max',        default_value=str(phys_cfg['w_max']),        description='Velocità angolare massima motore [rad/s]'),
+        DeclareLaunchArgument('arm_l_x',      default_value=str(phys_cfg['arm_l_x']),      description='Braccio motore asse X [m]'),
+        DeclareLaunchArgument('arm_l_y',      default_value=str(phys_cfg['arm_l_y']),      description='Braccio motore asse Y [m]'),
+        DeclareLaunchArgument('moment_const', default_value=str(phys_cfg['moment_const']), description='Costante di momento motore'),
 
         # === Parametri camera ===
-        DeclareLaunchArgument('cam_x',     default_value='0.105',  description='Offset camera X (body) [m]'),
-        DeclareLaunchArgument('cam_y',     default_value='0.0',  description='Offset camera Y (body) [m]'),
-        DeclareLaunchArgument('cam_z',     default_value='-0.15', description='Offset camera Z (body) [m]'),
-        DeclareLaunchArgument('cam_roll',  default_value='0.0',  description='Rotazione camera roll [rad]'),
-        DeclareLaunchArgument('cam_pitch', default_value='0.0',  description='Rotazione camera pitch [rad]'),
-        DeclareLaunchArgument('cam_yaw',   default_value='0.0',  description='Rotazione camera yaw [rad]'),
-        DeclareLaunchArgument('fov_h',     default_value='87.0', description='FOV orizzontale camera [deg]'),
-        DeclareLaunchArgument('fov_v',     default_value='58.0', description='FOV verticale camera [deg]'),
+        DeclareLaunchArgument('cam_x',     default_value=str(cam_cfg['cam_x']),     description='Offset camera X (body) [m]'),
+        DeclareLaunchArgument('cam_y',     default_value=str(cam_cfg['cam_y']),     description='Offset camera Y (body) [m]'),
+        DeclareLaunchArgument('cam_z',     default_value=str(cam_cfg['cam_z']),     description='Offset camera Z (body) [m]'),
+        DeclareLaunchArgument('cam_roll',  default_value=str(cam_cfg['cam_roll']),  description='Rotazione camera roll [rad]'),
+        DeclareLaunchArgument('cam_pitch', default_value=str(cam_cfg['cam_pitch']), description='Rotazione camera pitch [rad]'),
+        DeclareLaunchArgument('cam_yaw',   default_value=str(cam_cfg['cam_yaw']),   description='Rotazione camera yaw [rad]'),
+        DeclareLaunchArgument('fov_h',     default_value=str(cam_cfg['fov_h_deg']), description='FOV orizzontale camera [deg]'),
+        DeclareLaunchArgument('fov_v',     default_value=str(cam_cfg['fov_v_deg']), description='FOV verticale camera [deg]'),
 
         # === Controllo ===
-        DeclareLaunchArgument('controller', default_value='1',
+        DeclareLaunchArgument('controller', default_value=str(phys_cfg['controller']),
                               description='1: MPC come controllore (spinta e coppie), 0: MPC come planner (setpoint pos/vel)'),
 
         # === Pose iniziali (con MOCAP/OptiTrack: default 0.0, il frame è già globale) ===
-        DeclareLaunchArgument('drone_x',   default_value='0.0'),
-        DeclareLaunchArgument('drone_y',   default_value='0.0'),
-        DeclareLaunchArgument('drone_z',   default_value='0.0'),
-        DeclareLaunchArgument('drone_yaw', default_value='0.0'),
+        DeclareLaunchArgument('drone_x',   default_value=str(pose_cfg['drone_x'])),
+        DeclareLaunchArgument('drone_y',   default_value=str(pose_cfg['drone_y'])),
+        DeclareLaunchArgument('drone_z',   default_value=str(pose_cfg['drone_z'])),
+        DeclareLaunchArgument('drone_yaw', default_value=str(pose_cfg['drone_yaw'])),
 
         # Posizione interaction drone (con MOCAP: default 0.0, niente offset)
-        DeclareLaunchArgument('peg_x', default_value='0.0'),
-        DeclareLaunchArgument('peg_y', default_value='0.0'),
-        DeclareLaunchArgument('peg_z', default_value='0.0'),
+        DeclareLaunchArgument('peg_x', default_value=str(pose_cfg['peg_x'])),
+        DeclareLaunchArgument('peg_y', default_value=str(pose_cfg['peg_y'])),
+        DeclareLaunchArgument('peg_z', default_value=str(pose_cfg['peg_z'])),
 
         # Parametri motore
-        DeclareLaunchArgument('cf', default_value='1.25e-5'),
-        DeclareLaunchArgument('ct', default_value='1.8e-7'),
+        DeclareLaunchArgument('cf', default_value=str(phys_cfg['cf'])),
+        DeclareLaunchArgument('ct', default_value=str(phys_cfg['ct'])),
 
         OpaqueFunction(function=launch_setup)
     ])
+

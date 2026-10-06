@@ -70,13 +70,22 @@ class FakePublisherNode(Node):
         self.declare_parameter('cam_offset_x', 0.0)
         self.declare_parameter('cam_offset_y', 0.0)
         self.declare_parameter('cam_offset_z', 0.0)
+        self.declare_parameter('peg_z_offset', 0.22)
         # Parametri FoV camera per calcolo offset decentrato
         self.declare_parameter('fov_h_deg', 80.0)
         self.declare_parameter('fov_v_deg', 60.0)
+        # Vettori delta cinematici relativi (X, Y, Z) per le fasi del peg
+        self.declare_parameter('peg_delta_x_approach', 0.0)
+        self.declare_parameter('peg_delta_y_approach', 1.0)
+        self.declare_parameter('peg_delta_z_approach', 0.0)
+        self.declare_parameter('peg_delta_x_detachment', 0.0)
+        self.declare_parameter('peg_delta_y_detachment', -0.5)
+        self.declare_parameter('peg_delta_z_detachment', 0.0)
 
         self.cam_offset_x = self.get_parameter('cam_offset_x').value
         self.cam_offset_y = self.get_parameter('cam_offset_y').value
         self.cam_offset_z = self.get_parameter('cam_offset_z').value
+        self.peg_z_offset = self.get_parameter('peg_z_offset').value
         self.fov_h_deg = self.get_parameter('fov_h_deg').value
         self.fov_v_deg = self.get_parameter('fov_v_deg').value
         self.takeoff_alt_1 = self.get_parameter('takeoff_alt_1').value
@@ -86,6 +95,15 @@ class FakePublisherNode(Node):
         self.peg_start_x = self.get_parameter('peg_start_x').value
         self.peg_start_y = self.get_parameter('peg_start_y').value
         self.peg_start_z = self.get_parameter('peg_start_z').value
+        self.peg_delta_x_approach = float(self.get_parameter('peg_delta_x_approach').value)
+        self.peg_delta_y_approach = float(self.get_parameter('peg_delta_y_approach').value)
+        self.peg_delta_z_approach = float(self.get_parameter('peg_delta_z_approach').value)
+        self.peg_delta_x_detachment = float(self.get_parameter('peg_delta_x_detachment').value)
+        self.peg_delta_y_detachment = float(self.get_parameter('peg_delta_y_detachment').value)
+        self.peg_delta_z_detachment = float(self.get_parameter('peg_delta_z_detachment').value)
+
+        self.peg_delta_approach = np.array([self.peg_delta_x_approach, self.peg_delta_y_approach, self.peg_delta_z_approach], dtype=float)
+        self.peg_delta_detachment = np.array([self.peg_delta_x_detachment, self.peg_delta_y_detachment, self.peg_delta_z_detachment], dtype=float)
 
         
         # Posizione ENU globale del drone, aggiornata continuamente da odom1_cb.
@@ -116,8 +134,8 @@ class FakePublisherNode(Node):
         self.wait_msg_printed = False
         self.switch_msg_printed = False
 
-        # Posizione e velocita dinamica del fake peg (inizialmente sopra il suo spawn point a quota takeoff_alt_1)
-        self.fake_peg_pos = np.array([self.peg_start_x, self.peg_start_y, self.takeoff_alt_1], dtype=float)
+        # Posizione e velocita dinamica del fake peg (quota takeoff_alt_1 - peg_z_offset cosicché sommando peg_offset la punta sia a takeoff_alt_1)
+        self.fake_peg_pos = np.array([self.peg_start_x, self.peg_start_y, self.takeoff_alt_1 - self.peg_z_offset], dtype=float)
         self.fake_peg_vel = np.zeros(3, dtype=float)
         # Traiettoria trapezoidale continua (utils_pkg.planner)
         self.peg_traj_p = None
@@ -483,9 +501,9 @@ class FakePublisherNode(Node):
                     msg_traj.data = False
                     self.cam_traj_enabled_pub.publish(msg_traj)
             
-                    # 2. Invia target PoV iniziale per l'MPC (centrato: yaw_offset=0, z_rel=0):
-                    r_init, beta_init, _ = self.compute_actual_pov_target()
-                    self.publish_pov_target(r_init, beta_init, 0.0, 0.0)
+                    # 2. Invia target PoV iniziale per l'MPC (centrato: yaw_offset=0):
+                    r_init, beta_init, z_init = self.compute_actual_pov_target()
+                    self.publish_pov_target(r_init, beta_init, z_init, 0.0)
 
                     # 3. Avvia MPC
                     msg_start = Bool()
@@ -510,19 +528,27 @@ class FakePublisherNode(Node):
             if not self.approach_started:
                 self.approach_started = True
                 # Mantiene lo stesso PoV centrato
-                r_act, beta_act, _ = self.compute_actual_pov_target()
-                self.publish_pov_target(r_act, beta_act, 0.0, 0.0)
-                self.get_logger().info(f"Fase APPROACH avviata: PoV centrato mantenuto (r={r_act:.3f}m, beta={math.degrees(beta_act):.1f}°).")
+                r_act, beta_act, z_act = self.compute_actual_pov_target()
+                self.publish_pov_target(r_act, beta_act, z_act, 0.0)
 
-            if self.user_ok:
-                self.user_ok = False
-                self.get_logger().info("Comando 'ok' ricevuto in APPROACH: inizio fase INTERACTION...")
-                self.state = 'INTERACTION'
-                self.interaction_started = False
-                self.msg_cnt = 0
-            elif self.msg_cnt == 0:
-                self.get_logger().info('APPROACH in corso con MPC. Digita "ok" per procedere ad INTERACTION o "land" per atterrare.')
-                self.msg_cnt += 1
+                approach_target = np.array([
+                    self.peg_start_x,
+                    self.peg_start_y,
+                    self.takeoff_alt_1 - self.peg_z_offset
+                ]) + self.peg_delta_approach
+                dur = self.plan_peg_trajectory(approach_target, v_max=0.2, a_max=0.2)
+                self.get_logger().info(f"Fase APPROACH avviata (trapezoidale, {dur:.1f}s): peg verso {approach_target}. GuarDrone segue con PoV centrato...")
+
+            if self.is_peg_trajectory_done():
+                if self.user_ok:
+                    self.user_ok = False
+                    self.get_logger().info("Avvicinamento completato + 'ok' ricevuto! Inizio INTERACTION...")
+                    self.state = 'INTERACTION'
+                    self.interaction_started = False
+                    self.msg_cnt = 0
+                elif self.msg_cnt == 0:
+                    self.get_logger().info('Peg in posizione di avvicinamento. Digita "ok" per procedere ad INTERACTION o "land" per atterrare.')
+                    self.msg_cnt += 1
 
         elif self.state == 'INTERACTION':
             if not self.interaction_started:
@@ -534,7 +560,7 @@ class FakePublisherNode(Node):
                 v_frac = 0.6
                 yaw_off, z_off = self.compute_decentered_pov(r_target, h_frac, v_frac)
                 self.publish_pov_target(r_target, beta_act, z_off, yaw_off)
-                self.get_logger().info(f"Fase INTERACTION avviata: PoV decentrato (r={r_target:.2f}m, beta={math.degrees(beta_act):.1f}°, in basso a dx).")
+                self.get_logger().info(f"Fase INTERACTION avviata: GuarDrone in PoV decentrato (r={r_target:.2f}m). Peg in teleoperazione (nessun target da nodo).")
 
             if self.user_ok:
                 self.user_ok = False
@@ -543,7 +569,7 @@ class FakePublisherNode(Node):
                 self.detachment_started = False
                 self.msg_cnt = 0
             elif self.msg_cnt == 0:
-                self.get_logger().info('INTERACTION in corso con MPC. Digita "ok" per procedere al distacco (DETACHMENT) o "land" per atterrare.')
+                self.get_logger().info('INTERACTION in corso (teleoperazione). Digita "ok" per procedere al distacco (DETACHMENT) o "land" per atterrare.')
                 self.msg_cnt += 1
 
         elif self.state == 'DETACHMENT':
@@ -554,7 +580,7 @@ class FakePublisherNode(Node):
                 r_target = 1.5
                 self.publish_pov_target(r_target, beta_act, 0.0, 0.0)
 
-                detach_target = np.array([self.peg_start_x, self.peg_start_y + 1.5, self.takeoff_alt_1])
+                detach_target = self.fake_peg_pos + self.peg_delta_detachment
                 dur = self.plan_peg_trajectory(detach_target, v_max=0.2, a_max=0.2)
                 self.get_logger().info(f"Distacco avviato (trapezoidale, {dur:.1f}s): peg verso {detach_target}. GuarDrone torna a PoV centrato (r=1.5m)...")
 
@@ -577,7 +603,11 @@ class FakePublisherNode(Node):
                 r_target = 2.0
                 self.publish_pov_target(r_target, beta_act, 0.0, 0.0)
 
-                home_target = np.array([self.peg_start_x, self.peg_start_y, self.takeoff_alt_1])
+                home_target = np.array([
+                    self.peg_start_x,
+                    self.peg_start_y,
+                    self.takeoff_alt_1 - self.peg_z_offset
+                ])
                 dur = self.plan_peg_trajectory(home_target, v_max=0.3, a_max=0.2)
                 self.get_logger().info(f"Ritorno alla base avviato (trapezoidale, {dur:.1f}s): peg verso {home_target}. GuarDrone allarga raggio a 2.0m...")
 

@@ -1,0 +1,52 @@
+# =============================================================================
+# Configurazione Comune Simulazione Gazebo (GuarDrone + GCS + Interaction Drone)
+# =============================================================================
+
+# Modello PX4 / Gazebo del GuarDrone
+model: 'x500_depth'
+
+# Parametri End-Effector / Peg
+peg:
+  peg_z_offset: 0.22  # Offset Z della punta dell'end-effector dal CoM [m]
+
+  # Spostamento relativo del peg durante APPROACH [m]
+  approach:
+    delta_x: 0.0
+    delta_y: -3.0
+    delta_z: 0.0
+
+  # Spostamento relativo del peg durante DETACHMENT [m]
+  detachment:
+    delta_x: 0.0
+    delta_y: 0.5
+    delta_z: 0.0
+
+# Quote di decollo ENU [m]
+# Quota spawn sul ponte = 4.55 m
+mission:
+  takeoff_alt_guardrone: 10.0
+  takeoff_alt_peg: 10.0
+
+# Pose Iniziali Spawn Gazebo (coordinate ENU mondo Gazebo bridge)
+initial_poses:
+  drone_x: -3.0
+  drone_y: -51.0
+  drone_z: 4.55
+  drone_yaw: 0.0
+  peg_x: -1.0
+  peg_y: -52.0
+  peg_z: 4.55
+
+# Parametri Motore / Controllo SIM per GuarDrone
+guardrone_sim:
+  cf: 8.0e-4
+  ct: 1.0e-5
+  controller: 1
+
+# Topics e Logging
+topics:
+  peg_ft_topic: '/world/interaction/model/x500_interaction/joint/end_eff_sens_joint/force_torque'
+  log_save_path: '/tmp/sim_run.mat'
+  record_rosbag: false
+  camera_topic: '/camera/camera/color/image_raw/compressed'
+

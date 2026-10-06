@@ -7,20 +7,33 @@
 #
 # Avvia: offboard_admittance_planner.
 
+import os
+import sys
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+try:
+    from utils_pkg.config_loader import load_config
+except ImportError:
+    sys.path.append('/root/my_ros2_ws/src/utils_pkg')
+    sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'utils_pkg'))
+    from utils_pkg.config_loader import load_config
+
 
 def generate_launch_description():
+    cfg = load_config('hw_config.yaml')
+    pose_cfg = cfg['initial_poses']
+    topics_cfg = cfg['topics']
+
     return LaunchDescription([
         # Posa iniziale Interaction Drone (con MOCAP: default 0.0, il frame è già globale)
-        DeclareLaunchArgument('peg_x', default_value='0.0',
+        DeclareLaunchArgument('peg_x', default_value=str(pose_cfg['peg_x']),
                               description='Posa iniziale peg X [m]'),
-        DeclareLaunchArgument('peg_y', default_value='0.0',
+        DeclareLaunchArgument('peg_y', default_value=str(pose_cfg['peg_y']),
                               description='Posa iniziale peg Y [m]'),
-        DeclareLaunchArgument('peg_z', default_value='0.0',
+        DeclareLaunchArgument('peg_z', default_value=str(pose_cfg['peg_z']),
                               description='Posa iniziale peg Z [m]'),
 
         # Parametri ammettenza
@@ -31,8 +44,9 @@ def generate_launch_description():
         DeclareLaunchArgument('tau_threshold', default_value='0.002',
                               description='[Nm] Soglia coppia per attivare ammettenza yaw'),
         DeclareLaunchArgument('peg_ft_topic',
-                              default_value='/interaction_drone/force_torque',
+                              default_value=str(topics_cfg['peg_ft_topic']),
                               description='Topic FT del sensore hardware'),
+
 
         # Parametri cinematica traiettoria
         DeclareLaunchArgument('v_takeoff_max', default_value='0.1',

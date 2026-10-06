@@ -29,17 +29,44 @@ class Logger(Node):
         raw_save_path     = self.get_parameter('save_path').value
         base_name = os.path.basename(raw_save_path)
         
+        # Risoluzione dinamica radice workspace (Docker /root/my_ros2_ws o Host locale)
+        ws_root = None
+        if os.path.exists('/root/my_ros2_ws') and os.access('/root/my_ros2_ws', os.W_OK):
+            ws_root = '/root/my_ros2_ws'
+        else:
+            curr = os.path.abspath(os.path.dirname(__file__))
+            for _ in range(6):
+                if os.path.exists(os.path.join(curr, 'HardwareScripts')):
+                    ws_root = curr
+                    break
+                curr = os.path.dirname(curr)
+        if not ws_root:
+            ws_root = os.path.expanduser('~/my_ros2_ws')
+        self.ws_root = ws_root
+
         if 'hw' in base_name.lower() or 'exp' in base_name.lower():
             run_type = 'exp'
-            base_dir = '/root/my_ros2_ws/HardwareScripts/bag_files'
+            base_dir = os.path.join(ws_root, 'HardwareScripts', 'bag_files')
         else:
             run_type = 'sim'
-            base_dir = '/root/my_ros2_ws/SimulationScripts/bag_files'
+            base_dir = os.path.join(ws_root, 'SimulationScripts', 'bag_files')
 
         tz = pytz.timezone('Europe/Rome')    
         timestamp = datetime.datetime.now(tz).strftime('%Y%m%d_%H%M')
         self.out_dir = os.path.join(base_dir, f"{run_type}_{timestamp}")
         self.final_save_path = os.path.join(self.out_dir, base_name)
+        
+        # Parametri registrazione rosbag (TF, camera compressa, pose)
+        self.declare_parameter('record_rosbag', True)
+        self.declare_parameter('camera_topic', '/camera/camera/color/image_raw/compressed')
+        record_bag_param = self.get_parameter('record_rosbag').value
+        if isinstance(record_bag_param, str):
+            self.record_rosbag = record_bag_param.lower() in ('true', '1', 'yes')
+        else:
+            self.record_rosbag = bool(record_bag_param)
+        self.camera_topic = str(self.get_parameter('camera_topic').value).strip()
+        self.bag_proc = None
+        self.bag_dir = os.path.join(self.out_dir, 'rosbag')
         
         self.log_hz        = float(self.get_parameter('log_hz').value)
         self.log_dt        = 1.0 / max(self.log_hz, 1e-3)
@@ -71,17 +98,17 @@ class Logger(Node):
         from geometry_msgs.msg import TransformStamped
 
         self.tf_static_broadcaster = StaticTransformBroadcaster(self)
-        t = TransformStamped()
+        self.tf_static_msg = TransformStamped()
         # i TF statici non scadono
-        t.header.stamp = self.get_clock().now().to_msg()
-        t.header.frame_id = 'world'
-        t.child_frame_id = 'spawn_origin'
-        t.transform.translation.x = float(start_x)
-        t.transform.translation.y = float(start_y)
-        t.transform.translation.z = float(start_z)
-        t.transform.rotation.w = 1.0
+        self.tf_static_msg.header.stamp = self.get_clock().now().to_msg()
+        self.tf_static_msg.header.frame_id = 'world'
+        self.tf_static_msg.child_frame_id = 'spawn_origin'
+        self.tf_static_msg.transform.translation.x = float(start_x)
+        self.tf_static_msg.transform.translation.y = float(start_y)
+        self.tf_static_msg.transform.translation.z = float(start_z)
+        self.tf_static_msg.transform.rotation.w = 1.0
         
-        self.tf_static_broadcaster.sendTransform(t)
+        self.tf_static_broadcaster.sendTransform(self.tf_static_msg)
 
         self.logging_enabled = False
         self.last_log_time   = None
@@ -422,6 +449,87 @@ class Logger(Node):
         if msg.data and not self.logging_enabled:
             self.logging_enabled = True
             self.get_logger().info('Logging AVVIATO (segnale /logging/start ricevuto).')
+            if self.record_rosbag:
+                self.start_rosbag_recording()
+
+    def start_rosbag_recording(self):
+        """Avvia la registrazione di ros2 bag in un subprocess con gruppo di processi dedicato."""
+        if self.bag_proc is not None:
+            return
+        import subprocess
+        os.makedirs(self.out_dir, exist_ok=True)
+
+        bag_dir = self.bag_dir
+        counter = 1
+        while os.path.exists(bag_dir):
+            bag_dir = f"{self.bag_dir}_{counter}"
+            counter += 1
+        self.bag_dir = bag_dir
+
+        topics_to_record = [
+            '/tf',
+            '/tf_static',
+            '/drone_pose',
+            '/peg_pose',
+            '/drone_path',
+            '/peg_path',
+            '/optimal_drone_path',
+            '/odometry',
+            '/drone_cam_pose',
+            '/camera_target_pose',
+            '/peg_target_pose',
+            '/optimal_drone_pose',
+            '/camera_ref_pose',
+            '/supervisor/state',
+        ]
+        if self.ft_topic and self.ft_topic not in topics_to_record:
+            topics_to_record.append(self.ft_topic)
+        if self.camera_topic and self.camera_topic not in topics_to_record:
+            topics_to_record.append(self.camera_topic)
+            # Aggiunge camera_info se deducibile (es. /camera/camera/color/camera_info)
+            cam_info_topic = self.camera_topic.replace('/compressed', '').replace('/image_raw', '/camera_info')
+            if cam_info_topic != self.camera_topic and cam_info_topic not in topics_to_record:
+                topics_to_record.append(cam_info_topic)
+
+        # Ripubblica il frame statico spawn_origin -> world affinche' sia registrato nel bag
+        if hasattr(self, 'tf_static_broadcaster') and hasattr(self, 'tf_static_msg'):
+            self.tf_static_msg.header.stamp = self.get_clock().now().to_msg()
+            self.tf_static_broadcaster.sendTransform(self.tf_static_msg)
+
+        cmd = ['ros2', 'bag', 'record', '-o', self.bag_dir] + topics_to_record
+        try:
+            self.get_logger().info(f"Avvio registrazione rosbag in: {self.bag_dir}")
+            self.get_logger().info(f"Topics inclusi ({len(topics_to_record)}): {', '.join(topics_to_record)}")
+            self.bag_proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                preexec_fn=os.setsid
+            )
+        except Exception as e:
+            self.get_logger().error(f"Errore durante l'avvio di ros2 bag record: {e}")
+            self.bag_proc = None
+
+    def stop_rosbag_recording(self):
+        """Arresta pulitamente ros2 bag record inviando SIGINT per garantire la scrittura dei metadati."""
+        if self.bag_proc is None:
+            return
+        if self.bag_proc.poll() is None:
+            self.get_logger().info("Chiusura rosbag in corso (scrittura metadata)...")
+            try:
+                os.killpg(os.getpgid(self.bag_proc.pid), signal.SIGINT)
+                self.bag_proc.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                self.get_logger().warn("Timeout attesa chiusura rosbag, invio SIGTERM...")
+                try:
+                    os.killpg(os.getpgid(self.bag_proc.pid), signal.SIGTERM)
+                    self.bag_proc.wait(timeout=2.0)
+                except Exception:
+                    pass
+            except Exception as e:
+                self.get_logger().error(f"Errore durante chiusura rosbag: {e}")
+        self.bag_proc = None
+        self.get_logger().info(f"Rosbag completato e salvato in: {self.bag_dir}")
 
     def cb_task_start(self, msg: Bool):
         if msg.data and self.task_start_time is None:
@@ -524,6 +632,9 @@ class Logger(Node):
         if self._saved:
             return
         self._saved = True
+
+        if self.record_rosbag:
+            self.stop_rosbag_recording()
 
         T = np.asarray(self.t)
         if not T.size:
@@ -638,7 +749,9 @@ class Logger(Node):
         )
 
         # Generazione automatica dei grafici (PNG e PDF vettoriale)
-        plot_script_path = '/root/my_ros2_ws/src/gcs_pkg/gcs_pkg/plot_script.py'
+        plot_script_path = os.path.join(self.ws_root, 'src', 'gcs_pkg', 'gcs_pkg', 'plot_script.py')
+        if not os.path.exists(plot_script_path):
+            plot_script_path = '/root/my_ros2_ws/src/gcs_pkg/gcs_pkg/plot_script.py'
         if not os.path.exists(plot_script_path):
             plot_script_path = os.path.join(os.path.dirname(__file__), 'plot_script.py')
         if os.path.exists(plot_script_path):

@@ -1,14 +1,18 @@
-# file: gcs_hw.launch.py
-# Launch file dedicato alla Ground Control Station per test in HARDWARE.
-# Avvia: data_logger e, a scelta, supervisor_node OPPURE fake_publisher_node.
-
 import os
+import sys
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
+
+try:
+    from utils_pkg.config_loader import load_config
+except ImportError:
+    sys.path.append('/root/my_ros2_ws/src/utils_pkg')
+    sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'utils_pkg'))
+    from utils_pkg.config_loader import load_config
 
 def launch_setup(context, *args, **kwargs):
     # Argomenti
@@ -27,6 +31,9 @@ def launch_setup(context, *args, **kwargs):
     fov_h_deg = LaunchConfiguration('fov_h_deg')
     fov_v_deg = LaunchConfiguration('fov_v_deg')
 
+    takeoff_alt_1 = LaunchConfiguration('takeoff_alt_1')
+    takeoff_alt_2 = LaunchConfiguration('takeoff_alt_2')
+
     # NODO: SUPERVISOR (usato per missioni multi-drone reali)
     supervisor_node = Node(
         package='gcs_pkg',
@@ -37,8 +44,8 @@ def launch_setup(context, *args, **kwargs):
         condition=UnlessCondition(use_fake),
         parameters=[{
             'use_sim_time': False,
-            'takeoff_alt_1': 1.50,   # [m] Quota di decollo reale per GuaDrone
-            'takeoff_alt_2': 1.50,   # [m] Quota di decollo reale per Interaction Drone
+            'takeoff_alt_1': takeoff_alt_1,
+            'takeoff_alt_2': takeoff_alt_2,
             'cam_start_x': drone_x,
             'cam_start_y': drone_y,
             'cam_start_z': drone_z,
@@ -48,6 +55,13 @@ def launch_setup(context, *args, **kwargs):
             'cam_offset_x': cam_x,
             'cam_offset_y': cam_y,
             'cam_z_offset': cam_z,
+            'peg_z_offset': LaunchConfiguration('peg_z_offset'),
+            'peg_delta_x_approach': LaunchConfiguration('peg_delta_x_approach'),
+            'peg_delta_y_approach': LaunchConfiguration('peg_delta_y_approach'),
+            'peg_delta_z_approach': LaunchConfiguration('peg_delta_z_approach'),
+            'peg_delta_x_detachment': LaunchConfiguration('peg_delta_x_detachment'),
+            'peg_delta_y_detachment': LaunchConfiguration('peg_delta_y_detachment'),
+            'peg_delta_z_detachment': LaunchConfiguration('peg_delta_z_detachment'),
             'fov_h_deg': fov_h_deg,
             'fov_v_deg': fov_v_deg,
         }],
@@ -62,7 +76,7 @@ def launch_setup(context, *args, **kwargs):
         condition=IfCondition(use_fake),
         parameters=[{
             'use_sim_time': False,
-            'takeoff_alt_1': 1.5,   # [m] Quota di decollo reale per GuaDrone
+            'takeoff_alt_1': takeoff_alt_1,
             'guardrone_start_x': drone_x,
             'guardrone_start_y': drone_y,
             'guardrone_start_z': drone_z,
@@ -75,6 +89,13 @@ def launch_setup(context, *args, **kwargs):
             'cam_offset_x': cam_x,
             'cam_offset_y': cam_y,
             'cam_offset_z': cam_z,
+            'peg_z_offset': LaunchConfiguration('peg_z_offset'),
+            'peg_delta_x_approach': LaunchConfiguration('peg_delta_x_approach'),
+            'peg_delta_y_approach': LaunchConfiguration('peg_delta_y_approach'),
+            'peg_delta_z_approach': LaunchConfiguration('peg_delta_z_approach'),
+            'peg_delta_x_detachment': LaunchConfiguration('peg_delta_x_detachment'),
+            'peg_delta_y_detachment': LaunchConfiguration('peg_delta_y_detachment'),
+            'peg_delta_z_detachment': LaunchConfiguration('peg_delta_z_detachment'),
         }],
     )
 
@@ -99,8 +120,11 @@ def launch_setup(context, *args, **kwargs):
             'peg_start_x': peg_x,
             'peg_start_y': peg_y,
             'peg_start_z': peg_z,
+            'record_rosbag': LaunchConfiguration('record_rosbag'),
+            'camera_topic':  LaunchConfiguration('camera_topic'),
         }],
     )
+
 
     gcs_pkg_dir = get_package_share_directory('gcs_pkg')
     rviz_config_file = os.path.join(gcs_pkg_dir, 'config', 'rviz_config_file_hw.rviz')
@@ -117,6 +141,13 @@ def launch_setup(context, *args, **kwargs):
 
 
 def generate_launch_description():
+    cfg = load_config('hw_config.yaml')
+    cam_cfg = cfg['camera']
+    peg_cfg = cfg['peg']
+    mission_cfg = cfg['mission']
+    pose_cfg = cfg['initial_poses']
+    topics_cfg = cfg['topics']
+
     return LaunchDescription([
         # --- Modalità Esecuzione ---
         DeclareLaunchArgument('use_fake_supervisor', default_value='false',
@@ -124,26 +155,54 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_rviz', default_value='true',
                               description='Avvia RViz nella GCS'),
         
+        # --- Quote di decollo ---
+        DeclareLaunchArgument('takeoff_alt_1', default_value=str(mission_cfg['takeoff_alt_guardrone']),
+                              description='Quota ENU decollo camera GuaDrone [m]'),
+        DeclareLaunchArgument('takeoff_alt_2', default_value=str(mission_cfg['takeoff_alt_peg']),
+                              description='Quota ENU decollo punta peg Interaction Drone [m]'),
+
         # --- Pose iniziali (con MOCAP: default 0.0, il frame è già globale) ---
-        DeclareLaunchArgument('drone_x',   default_value='0.0'),
-        DeclareLaunchArgument('drone_y',   default_value='0.0'),
-        DeclareLaunchArgument('drone_z',   default_value='0.0'),
-        DeclareLaunchArgument('peg_x',     default_value='0.0'),
-        DeclareLaunchArgument('peg_y',     default_value='0.0'),
-        DeclareLaunchArgument('peg_z',     default_value='0.0'),
+        DeclareLaunchArgument('drone_x',   default_value=str(pose_cfg['drone_x'])),
+        DeclareLaunchArgument('drone_y',   default_value=str(pose_cfg['drone_y'])),
+        DeclareLaunchArgument('drone_z',   default_value=str(pose_cfg['drone_z'])),
+        DeclareLaunchArgument('peg_x',     default_value=str(pose_cfg['peg_x'])),
+        DeclareLaunchArgument('peg_y',     default_value=str(pose_cfg['peg_y'])),
+        DeclareLaunchArgument('peg_z',     default_value=str(pose_cfg['peg_z'])),
+        DeclareLaunchArgument('peg_z_offset', default_value=str(peg_cfg['peg_z_offset']),
+                              description='Offset Z della punta end-effector dal CoM [m]'),
+        DeclareLaunchArgument('peg_delta_x_approach', default_value=str(peg_cfg['approach']['delta_x']),
+                              description='Delta X del peg in APPROACH [m]'),
+        DeclareLaunchArgument('peg_delta_y_approach', default_value=str(peg_cfg['approach']['delta_y']),
+                              description='Delta Y del peg in APPROACH [m]'),
+        DeclareLaunchArgument('peg_delta_z_approach', default_value=str(peg_cfg['approach']['delta_z']),
+                              description='Delta Z del peg in APPROACH [m]'),
+        DeclareLaunchArgument('peg_delta_x_detachment', default_value=str(peg_cfg['detachment']['delta_x']),
+                              description='Delta X del peg in DETACHMENT [m]'),
+        DeclareLaunchArgument('peg_delta_y_detachment', default_value=str(peg_cfg['detachment']['delta_y']),
+                              description='Delta Y del peg in DETACHMENT [m]'),
+        DeclareLaunchArgument('peg_delta_z_detachment', default_value=str(peg_cfg['detachment']['delta_z']),
+                              description='Delta Z del peg in DETACHMENT [m]'),
         
         # --- Offset Camera HW (usati per log e target reference se serve) ---
-        DeclareLaunchArgument('cam_x',     default_value='0.105'),
-        DeclareLaunchArgument('cam_y',     default_value='0.0'),
-        DeclareLaunchArgument('cam_z',     default_value='-0.15'),
-        DeclareLaunchArgument('fov_h_deg', default_value='80.0', description='FoV orizzontale camera [deg]'),
-        DeclareLaunchArgument('fov_v_deg', default_value='60.0', description='FoV verticale camera [deg]'),
+        DeclareLaunchArgument('cam_x',     default_value=str(cam_cfg['cam_x'])),
+        DeclareLaunchArgument('cam_y',     default_value=str(cam_cfg['cam_y'])),
+        DeclareLaunchArgument('cam_z',     default_value=str(cam_cfg['cam_z'])),
+        DeclareLaunchArgument('fov_h_deg', default_value=str(cam_cfg['fov_h_deg']), description='FoV orizzontale camera [deg]'),
+        DeclareLaunchArgument('fov_v_deg', default_value=str(cam_cfg['fov_v_deg']), description='FoV verticale camera [deg]'),
 
         # --- Parametri logger ---
         DeclareLaunchArgument('peg_ft_topic',
-                              default_value='/interaction_drone/force_torque',
+                              default_value=str(topics_cfg['peg_ft_topic']),
                               description='Topic FT del sensore hardware'),
-        DeclareLaunchArgument('log_save_path', default_value='/tmp/hw_run.mat',
+        DeclareLaunchArgument('log_save_path', default_value=str(topics_cfg['log_save_path']),
                               description='Percorso file di salvataggio dati log'),
+        DeclareLaunchArgument('record_rosbag',
+                              default_value=str(topics_cfg.get('record_rosbag', True)),
+                              description='Se true, avvia automaticamente la registrazione del rosbag (TF, camera, pose)'),
+        DeclareLaunchArgument('camera_topic',
+                              default_value=str(topics_cfg.get('camera_topic', '/camera/camera/color/image_raw/compressed')),
+                              description='Topic camera da registrare nel rosbag'),
         OpaqueFunction(function=launch_setup)
     ])
+
+

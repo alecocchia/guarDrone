@@ -2,19 +2,32 @@
 # Launch file dedicato alla simulazione dell'Interaction Drone (Drone 2 - ammettenza).
 # Avvia: offboard_admittance_planner.
 
+import os
+import sys
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
+try:
+    from utils_pkg.config_loader import load_config
+except ImportError:
+    sys.path.append('/root/my_ros2_ws/src/utils_pkg')
+    sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'utils_pkg'))
+    from utils_pkg.config_loader import load_config
+
 
 def generate_launch_description():
+    cfg = load_config('sim_config.yaml')
+    pose_cfg = cfg['initial_poses']
+    topics_cfg = cfg['topics']
+
     return LaunchDescription([
         # Posa iniziale Interaction Drone (NED --> ENU offset di spawn)
-        DeclareLaunchArgument('peg_x', default_value='-1.0'),
-        DeclareLaunchArgument('peg_y', default_value='-55.0'),
-        DeclareLaunchArgument('peg_z', default_value='4.52'),
+        DeclareLaunchArgument('peg_x', default_value=str(pose_cfg['peg_x'])),
+        DeclareLaunchArgument('peg_y', default_value=str(pose_cfg['peg_y'])),
+        DeclareLaunchArgument('peg_z', default_value=str(pose_cfg['peg_z'])),
         # Parametri ammettenza
         DeclareLaunchArgument('F_threshold',       default_value='0.2',
                               description='[N] Soglia forza per attivare ammettenza'),
@@ -23,8 +36,9 @@ def generate_launch_description():
         DeclareLaunchArgument('tau_threshold',     default_value='0.01',
                               description='[Nm] Soglia coppia per attivare ammettenza yaw'),
         DeclareLaunchArgument('peg_ft_topic',
-                              default_value='/world/interaction/model/x500_interaction/joint/end_eff_sens_joint/force_torque',
+                              default_value=str(topics_cfg['peg_ft_topic']),
                               description='Topic Gazebo del sensore FT sull\'end-effector'),
+
 
         # Parametri cinematica traiettoria
         DeclareLaunchArgument('v_takeoff_max',     default_value='0.2',

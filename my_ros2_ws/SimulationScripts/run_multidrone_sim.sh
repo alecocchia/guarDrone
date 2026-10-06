@@ -21,26 +21,48 @@ if [[ "$1" == "--headless" ]]; then
 fi
 
 # =============================================================================
-# CONFIGURAZIONE POSE E MODELLI
+# CONFIGURAZIONE POSE E MODELLI (letti da sim_config.yaml, sovrascrivibili via ENV)
 # =============================================================================
 
+eval $(python3 -c "
+import sys, os
+sys.path.append('/root/my_ros2_ws/src/utils_pkg')
+sys.path.append(os.path.expanduser('~/my_ros2_ws/src/utils_pkg'))
+try:
+    from utils_pkg.config_loader import load_config
+    cfg = load_config('sim_config.yaml')
+    p = cfg.get('initial_poses', {})
+    print(f'CFG_D1_X={p.get(\"drone_x\", -4.0)}')
+    print(f'CFG_D1_Y={p.get(\"drone_y\", -53.0)}')
+    print(f'CFG_D1_Z={p.get(\"drone_z\", 4.55)}')
+    print(f'CFG_D1_YAW={p.get(\"drone_yaw\", 0.0)}')
+    print(f'CFG_D2_X={p.get(\"peg_x\", 1.0)}')
+    print(f'CFG_D2_Y={p.get(\"peg_y\", -55.0)}')
+    print(f'CFG_D2_Z={p.get(\"peg_z\", 4.55)}')
+    print(f'CFG_D2_YAW={p.get(\"peg_yaw\", 0.0)}')
+    print(f'CFG_MODEL={cfg.get(\"model\", \"x500_depth\")}')
+except Exception:
+    pass
+" 2>/dev/null || true)
+
 # Drone 1 — GuarDrone (MPC + Camera): avvia Gazebo
-DRONE1_X=${DRONE1_X:--3.0}
-DRONE1_Y=${DRONE1_Y:--49.0}
-DRONE1_Z=${DRONE1_Z:-4.55}
-DRONE1_YAW=${DRONE1_YAW:-0.0}
-DRONE1_MODEL_NAME=${DRONE1_MODEL_NAME:-"x500_depth"}
+DRONE1_X=${DRONE1_X:-${CFG_D1_X:--4.0}}
+DRONE1_Y=${DRONE1_Y:-${CFG_D1_Y:--53.0}}
+DRONE1_Z=${DRONE1_Z:-${CFG_D1_Z:-4.55}}
+DRONE1_YAW=${DRONE1_YAW:-${CFG_D1_YAW:-0.0}}
+DRONE1_MODEL_NAME=${DRONE1_MODEL_NAME:-${CFG_MODEL:-"x500_depth"}}
 
 # Drone 2 — Interaction Drone (ammettenza): standalone, si aggancia a Gazebo
-DRONE2_X=${DRONE2_X:--2.0}
-DRONE2_Y=${DRONE2_Y:--50.0}
-DRONE2_Z=${DRONE2_Z:-4.55}
-DRONE2_YAW=${DRONE2_YAW:-0.0}
+DRONE2_X=${DRONE2_X:-${CFG_D2_X:-1.0}}
+DRONE2_Y=${DRONE2_Y:-${CFG_D2_Y:--55.0}}
+DRONE2_Z=${DRONE2_Z:-${CFG_D2_Z:-4.55}}
+DRONE2_YAW=${DRONE2_YAW:-${CFG_D2_YAW:-0.0}}
 DRONE2_MODEL_NAME=${DRONE2_MODEL_NAME:-"x500_interaction"}
 
 USE_FAKE=${USE_FAKE:-"false"}
 
 WORLD_NAME=${WORLD_NAME:-"bridge_inspection_gazebo"}
+
 
 # Comando di source ROS2 + workspace (usato in ogni pane)
 SOURCE_CMD="source /opt/ros/humble/setup.bash && [ -f /root/my_ros2_ws/install/setup.bash ] && source /root/my_ros2_ws/install/setup.bash"
