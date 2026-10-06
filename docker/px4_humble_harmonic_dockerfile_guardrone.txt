@@ -90,8 +90,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-octomap-rviz-plugins  \
     ros-humble-rtabmap-ros \
     ros-humble-librealsense2* \
-    ros-humble-realsense2-* \
-    ros-humble-compressed-image-transport \
+    ros-humble-realsense2-* \  
     && rm -rf /var/lib/apt/lists/*
 
 RUN apt-get update && apt-get install -y --no-install-recommends \ 
@@ -206,6 +205,11 @@ source /opt/ros/humble/setup.bash\n\
 [ -f /root/px4_ws/install/setup.bash ] && source /root/px4_ws/install/setup.bash\n\
 [ -f /root/my_ros2_ws/install/setup.bash ] && source /root/my_ros2_ws/install/setup.bash\n\
 exec "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
+
+# Plugin per la compressione immagini (posizionato come ultimo layer per preservare la cache di build)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-compressed-image-transport \
+    && rm -rf /var/lib/apt/lists/*
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]
