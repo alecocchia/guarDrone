@@ -19,8 +19,8 @@ peg:
 
   # Spostamento relativo del peg durante APPROACH [m] (rispetto alla posa di hovering)
   approach:
-    delta_x: 0.0
-    delta_y: 1.0
+    delta_x: 1.0
+    delta_y: -1.80
     delta_z: 0.0
 
   # Spostamento relativo del peg durante DETACHMENT [m] (rispetto alla posa di contatto)
@@ -43,6 +43,7 @@ initial_poses:
   peg_x: 0.0
   peg_y: 0.0
   peg_z: 0.0
+  peg_yaw: -1.57
 
 # Parametri Fisici GuarDrone Reale
 guardrone_physics:

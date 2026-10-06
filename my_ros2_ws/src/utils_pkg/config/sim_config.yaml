@@ -36,6 +36,7 @@ initial_poses:
   peg_x: -1.0
   peg_y: -52.0
   peg_z: 4.55
+  peg_yaw: 0.0
 
 # Parametri Motore / Controllo SIM per GuarDrone
 guardrone_sim:

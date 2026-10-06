@@ -1,0 +1,44 @@
+======================================================================
+             EXPERIMENT METRICS & BENCHMARK REPORT
+======================================================================
+File log          : /root/my_ros2_ws/HardwareScripts/bag_files/exp_20261006_1618/hw_run.mat
+Campioni totali   : 1762
+Durata totale     : 73.72 s
+Tempo missione    : 53.63 s (da t=20.09s a t=73.72s)
+
+----------------------------------------------------------------------
+ 1. SAMPLING PERIOD & REAL-TIME CLOCK JITTER (delta_t)
+----------------------------------------------------------------------
+Frequenza media nominale : 23.89 Hz
+Delta_t medio            : 41.86 ms
+Jitter Campionamento (Std): 53.47 ms
+Delta_t Min / Max        : 20.00 ms / 1091.62 ms
+
+----------------------------------------------------------------------
+ 2. MPC SOLVER PERFORMANCE & TIMING JITTER
+----------------------------------------------------------------------
+Campioni solve analizzati: 1279
+Periodo nominale (Ts)    : 10.0 ms (100 Hz)
+Tempo Medio Solve        : 2.62 ms  (Carico medio CPU: 26.2%)
+Deviazione Standard (Jit): 1.11 ms
+Minimo / Massimo         : 1.70 ms / 11.21 ms
+Step-to-Step Jitter      : 0.98 ms (variazione media passo-passo)
+Percentile 95%           : 4.80 ms
+Percentile 99%           : 6.36 ms
+Overrun (> 10 ms)         : 3 / 1279 (0.23%)
+
+----------------------------------------------------------------------
+ 3. TRACKING PERFORMANCE SUMMARY (in Missione)
+----------------------------------------------------------------------
+Errore Raggio (r_cyl)    : RMS = 0.1935 m | Max = 0.5282 m
+Errore Azimut (beta)     : RMS = 0.0980 rad (5.61 deg) | Max = 0.4883 rad
+Errore Quota (z_cyl)     : RMS = 0.1722 m | Max = 0.8057 m
+Errore Yaw               : RMS = 0.0727 rad (4.17 deg) | Max = 0.3305 rad
+
+----------------------------------------------------------------------
+ 4. CONSTRAINT VIOLATIONS SUMMARY (in Mission)
+----------------------------------------------------------------------
+Violazione Distanza Minima (r_min=1.0m)  : Max = 0.0000 m (NESSUNA)
+Violazione FoV Orizzontale (lim=43°) : Max = 0.00 deg (NESSUNA)
+Violazione FoV Verticale   (lim=29°) : Max = 0.00 deg (NESSUNA)
+======================================================================

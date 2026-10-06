@@ -67,6 +67,7 @@ class FakePublisherNode(Node):
         self.declare_parameter('peg_start_x', 0.0)
         self.declare_parameter('peg_start_y', 0.0)
         self.declare_parameter('peg_start_z', 4.52)
+        self.declare_parameter('peg_start_yaw', 0.0)
         self.declare_parameter('cam_offset_x', 0.0)
         self.declare_parameter('cam_offset_y', 0.0)
         self.declare_parameter('cam_offset_z', 0.0)
@@ -95,6 +96,7 @@ class FakePublisherNode(Node):
         self.peg_start_x = self.get_parameter('peg_start_x').value
         self.peg_start_y = self.get_parameter('peg_start_y').value
         self.peg_start_z = self.get_parameter('peg_start_z').value
+        self.peg_start_yaw = float(self.get_parameter('peg_start_yaw').value)
         self.peg_delta_x_approach = float(self.get_parameter('peg_delta_x_approach').value)
         self.peg_delta_y_approach = float(self.get_parameter('peg_delta_y_approach').value)
         self.peg_delta_z_approach = float(self.get_parameter('peg_delta_z_approach').value)
@@ -124,6 +126,15 @@ class FakePublisherNode(Node):
         self.M_frd2flu = np.array([[1.0, 0.0, 0.0], 
                                    [0.0, -1.0, 0.0], 
                                    [0.0, 0.0, -1.0]])
+
+        # Calcolo quaternioni per lo yaw del peg (in coordinate ENU e PX4 NED)
+        rot_peg_flu2enu = Rotation.from_euler('z', self.peg_start_yaw)
+        self.peg_enu_q = rot_peg_flu2enu.as_quat()  # [x, y, z, w]
+        # Orientamento in PX4 NED (body FRD -> world NED): R_frd2ned = M_ned2enu @ R_flu2enu @ M_frd2flu
+        R_peg_frd2ned = self.M_ned2enu @ rot_peg_flu2enu.as_matrix() @ self.M_frd2flu
+        q_peg_ned = Rotation.from_matrix(R_peg_frd2ned).as_quat()  # [x, y, z, w]
+        # In PX4 VehicleOdometry il formato è [w, x, y, z]
+        self.peg_odom_q = [float(q_peg_ned[3]), float(q_peg_ned[0]), float(q_peg_ned[1]), float(q_peg_ned[2])]
 
         # Variabili di stato interne
         self.drone1_local_pos = VehicleLocalPosition()
@@ -316,7 +327,7 @@ class FakePublisherNode(Node):
         delta_enu = self.fake_peg_pos - np.array([self.peg_start_x, self.peg_start_y, self.peg_start_z])
         delta_ned = self.M_ned2enu @ delta_enu
         peg_odom_msg.position = [float(delta_ned[0]), float(delta_ned[1]), float(delta_ned[2])]
-        peg_odom_msg.q = [1.0, 0.0, 0.0, 0.0]
+        peg_odom_msg.q = self.peg_odom_q
         vel_ned = self.M_ned2enu @ self.fake_peg_vel
         peg_odom_msg.velocity = [float(vel_ned[0]), float(vel_ned[1]), float(vel_ned[2])]
         peg_odom_msg.angular_velocity = [0.0, 0.0, 0.0]
@@ -331,7 +342,10 @@ class FakePublisherNode(Node):
         peg_pose_msg.pose.position.x = float(self.fake_peg_pos[0])
         peg_pose_msg.pose.position.y = float(self.fake_peg_pos[1])
         peg_pose_msg.pose.position.z = float(self.fake_peg_pos[2])
-        peg_pose_msg.pose.orientation.w = 1.0  # identità (yaw=0)
+        peg_pose_msg.pose.orientation.x = float(self.peg_enu_q[0])
+        peg_pose_msg.pose.orientation.y = float(self.peg_enu_q[1])
+        peg_pose_msg.pose.orientation.z = float(self.peg_enu_q[2])
+        peg_pose_msg.pose.orientation.w = float(self.peg_enu_q[3])
         self.peg_actual_pose_pub.publish(peg_pose_msg)
 
         peg_vel_msg = TwistStamped()
@@ -343,7 +357,7 @@ class FakePublisherNode(Node):
         self.peg_actual_vel_pub.publish(peg_vel_msg)
 
         yaw_msg = Float64()
-        yaw_msg.data = 0.0
+        yaw_msg.data = float(self.peg_start_yaw)
         self.peg_actual_yaw_pub.publish(yaw_msg)
 
         omega_z_msg = Float64()

@@ -22,6 +22,7 @@ def launch_setup(context, *args, **kwargs):
     peg_x   = LaunchConfiguration('peg_x')
     peg_y   = LaunchConfiguration('peg_y')
     peg_z   = LaunchConfiguration('peg_z')
+    peg_yaw = LaunchConfiguration('peg_yaw')
     use_fake = LaunchConfiguration('use_fake_supervisor')
     
     # Parametri camera HW (di solito passati al drone, il logger GCS li usa solo per referenza)
@@ -67,7 +68,7 @@ def launch_setup(context, *args, **kwargs):
         }],
     )
 
-    # NODO: FAKE PUBLISHER (usato per testare solo il GuaDrone, simula l'interaction drone e il supervisor)
+    # NODO: FAKE PUBLISHER (usato per testare solo il GuarDrone, simula l'interaction drone e il supervisor)
     fake_publisher_node = Node(
         package='gcs_pkg',
         executable='fake_publisher.py',
@@ -83,6 +84,7 @@ def launch_setup(context, *args, **kwargs):
             'peg_start_x': peg_x,
             'peg_start_y': peg_y,
             'peg_start_z': peg_z,
+            'peg_start_yaw': peg_yaw,
             # Offset camera nel body frame (identico a gcs_sim.launch.py):
             # necessario per calcolare r_hover/beta_hover rispetto alla camera reale
             # e non al centro del drone, così da non avere un piccolo errore residuo allo switch MPC.
@@ -157,7 +159,7 @@ def generate_launch_description():
         
         # --- Quote di decollo ---
         DeclareLaunchArgument('takeoff_alt_1', default_value=str(mission_cfg['takeoff_alt_guardrone']),
-                              description='Quota ENU decollo camera GuaDrone [m]'),
+                              description='Quota ENU decollo camera GuarDrone [m]'),
         DeclareLaunchArgument('takeoff_alt_2', default_value=str(mission_cfg['takeoff_alt_peg']),
                               description='Quota ENU decollo punta peg Interaction Drone [m]'),
 
@@ -168,6 +170,8 @@ def generate_launch_description():
         DeclareLaunchArgument('peg_x',     default_value=str(pose_cfg['peg_x'])),
         DeclareLaunchArgument('peg_y',     default_value=str(pose_cfg['peg_y'])),
         DeclareLaunchArgument('peg_z',     default_value=str(pose_cfg['peg_z'])),
+        DeclareLaunchArgument('peg_yaw',   default_value=str(pose_cfg.get('peg_yaw', 0.0)),
+                              description='Yaw iniziale peg/interaction drone [rad]'),
         DeclareLaunchArgument('peg_z_offset', default_value=str(peg_cfg['peg_z_offset']),
                               description='Offset Z della punta end-effector dal CoM [m]'),
         DeclareLaunchArgument('peg_delta_x_approach', default_value=str(peg_cfg['approach']['delta_x']),

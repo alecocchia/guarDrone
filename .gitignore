@@ -45,6 +45,12 @@ PX4-Autopilot/
 # Cartelle e file di log/bag di SIMULAZIONE (NON tracciati su Git)
 my_ros2_ws/SimulationScripts/bag_files/
 
+# Registrazioni ROS 2 (rosbag, database SQLite3 / MCAP)
+**/rosbag*/
+rosbag*/
+*.db3*
+*.mcap
+
 # Ignora file temporanei di Python e archivi compressi
 __pycache__/
 *.pyc
