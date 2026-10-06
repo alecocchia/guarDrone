@@ -201,7 +201,7 @@ def generate_launch_description():
         DeclareLaunchArgument('log_save_path', default_value=str(topics_cfg['log_save_path']),
                               description='Percorso file di salvataggio dati log'),
         DeclareLaunchArgument('record_rosbag',
-                              default_value=str(topics_cfg.get('record_rosbag', True)),
+                              default_value=str(topics_cfg.get('record_rosbag', False)),
                               description='Se true, avvia automaticamente la registrazione del rosbag (TF, camera, pose)'),
         DeclareLaunchArgument('camera_topic',
                               default_value=str(topics_cfg.get('camera_topic', '/camera/camera/color/image_raw/compressed')),
