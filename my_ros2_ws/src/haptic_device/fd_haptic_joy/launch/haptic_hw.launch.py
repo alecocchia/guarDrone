@@ -73,22 +73,22 @@ def generate_launch_description():
         DeclareLaunchArgument('use_fake_hardware', default_value='false',
                               description='False per collegarsi al dispositivo USB fisico'),
 
-        # --- FoV telecamera reale (es. RealSense D435i Depth: 87x58 deg, RGB: 69x42 deg) ---
-        DeclareLaunchArgument('fov_h', default_value='87.0',
-                              description='FoV orizzontale reale [deg] (default 87.0 per RealSense D435i Depth)'),
+        # --- FoV telecamera reale (es. RealSense D435 Depth: 87x58 deg, RGB: 69x42 deg) ---
+        DeclareLaunchArgument('fov_h', default_value='85.2',
+                              description='FoV orizzontale reale [deg] (default 85.2 per RealSense D435 Depth)'),
         DeclareLaunchArgument('fov_v', default_value='58.0',
-                              description='FoV verticale reale [deg] (default 58.0 per RealSense D435i Depth)'),
+                              description='FoV verticale reale [deg] (default 58.0 per RealSense D435 Depth)'),
 
         # --- Limiti di sicurezza e distanze ---
-        DeclareLaunchArgument('r_min_safety', default_value='1.5',
+        DeclareLaunchArgument('r_min_safety', default_value='1.0',
                               description='Distanza minima di sicurezza dal target [m]'),
         DeclareLaunchArgument('k_repulsive', default_value='1.0',
                               description='Guadagno forza repulsiva barriera'),
         DeclareLaunchArgument('max_repulsive_force', default_value='15.0',
                               description='Forza repulsiva massima consentita [N]'),
 
-        # --- Velocità teleoperazione (GuaDrone) ---
-        DeclareLaunchArgument('v_beta_max', default_value='0.3',
+        # --- Velocità teleoperazione (GuarDrone) ---
+        DeclareLaunchArgument('v_beta_max', default_value='0.2',
                               description='Velocità max azimut GuarDrone [rad/s]'),
         DeclareLaunchArgument('v_r_max', default_value='0.3',
                               description='Velocità max radiale GuarDrone [m/s]'),
