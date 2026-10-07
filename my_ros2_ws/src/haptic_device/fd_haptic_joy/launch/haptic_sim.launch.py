@@ -36,12 +36,16 @@ def generate_launch_description():
             'v_beta_max':  0.3,   # <-- Velocità di orbita del GuarDrone (rad/s)
             'v_r_max':     0.3,    # <-- Velocità radiale avvicinamento/allontanamento
             'v_z_max':     0.2,    # <-- Velocità quota
-            'deadband':    0.008,
-            'v_pan_max':   0.5,    # (parametri Peg Drone)
-            'v_zc_max':    0.3,
-            'v_xc_max':    0.5,
-            'fov_h':       68.98,  # FoV orizzontale reale OakD-Lite (1.204 rad)
-            'fov_v':       51.74,  # FoV verticale reale OakD-Lite (4:3)
+            'deadband':            0.008,
+            'max_force':           15.0,
+            'v_pan_max':           0.5,    # (parametri Peg Drone)
+            'v_zc_max':            0.3,
+            'v_xc_max':            0.5,
+            'fov_h':               68.98,  # FoV orizzontale reale OakD-Lite (1.204 rad)
+            'fov_v':               51.74,  # FoV verticale reale OakD-Lite (4:3)
+            'r_min_safety':        1.5,    # Limiti di sicurezza barriera
+            'k_repulsive':         1.0,
+            'max_repulsive_force': 15.0,
         }]
 
     )

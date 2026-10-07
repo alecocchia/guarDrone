@@ -154,20 +154,12 @@ class OffboardAdmittancePlanner(Node):
         self.adm_D = D
         self.adm_max_delta = self.get_parameter('adm_max_delta').get_parameter_value().double_value
 
-        # --- ASSE ROTAZIONALE YAW (K_psi > 0 per ritorno a perpendicolare alla parete) ---
-        tau_typ_yaw   = 0.05              # [Nm] coppia tipica attesa a contatto
-        delta_typ_yaw = float(np.radians(3.0))  # [rad] deflessione tipica a tau_typ_yaw (~5 deg)
-        Ta_yaw        = 0.5              # [s] tempo assestamento al 5%
-        zeta_yaw      = 1              # [-] smorzamento critico
-
-        K_psi  = tau_typ_yaw / delta_typ_yaw
-        wn_psi = 3.0 / (zeta_yaw * Ta_yaw)
-        J_psi  = K_psi / (wn_psi ** 2)
-        D_psi  = 2.0 * zeta_yaw * K_psi / wn_psi
-
-        self.adm_K_psi = K_psi
-        self.adm_J_psi = J_psi
-        self.adm_D_psi = D_psi
+        # --- ASSE ROTAZIONALE YAW (K_psi = 0 per allineamento e mantenimento orientamento parete) ---
+        # Dinamica: J_psi * alpha_psi + D_psi * omega_psi = tau_ext
+        # Quando tau_ext -> 0 (punta del sensore complanare alla parete), omega_psi -> 0 e delta_yaw rimane costante.
+        self.adm_K_psi = 0.0
+        self.adm_D_psi = 0.5   # [Nms/rad] smorzamento rotazionale
+        self.adm_J_psi = 0.2  # [kg*m^2] inerzia virtuale (tempo di risposta tau = J/D = 2.5 s)
         self.adm_max_delta_yaw = 0.35  # [rad] saturazione rotazione (~20 deg)
 
         self.get_logger().info(
@@ -175,8 +167,8 @@ class OffboardAdmittancePlanner(Node):
             f"wn={wn:.2f} rad/s, Ta={Ta}s, zeta={zeta}"
         )
         self.get_logger().info(
-            f"[Admittance Yaw] K_psi={self.adm_K_psi:.4f} Nm/rad, J_psi={self.adm_J_psi:.4f} kg*m^2, "
-            f"D_psi={self.adm_D_psi:.4f} Nms/rad, wn={wn_psi:.2f} rad/s, Ta={Ta_yaw}s, zeta={zeta_yaw}"
+            f"[Admittance Yaw] K_psi=0.0 (allineamento permanente), J_psi={self.adm_J_psi:.4f} kg*m^2, "
+            f"D_psi={self.adm_D_psi:.4f} Nms/rad"
         )
 
         ft_topic = self.get_parameter('ft_topic').get_parameter_value().string_value
@@ -271,8 +263,9 @@ class OffboardAdmittancePlanner(Node):
         self.tau_adm_input = 0.0  # [Nm] ingresso ammettenza yaw
         self.tau_x_prev = 0.0     # [Nm] precedente lettura per filtro IIR
 
-        self.p_contact   = None  # Posizione congelata al momento del contatto
-        self.yaw_contact = None  # Yaw perpendicolare alla parete, congelato al primo contatto
+        self.p_contact   = None  # Posizione ENU al primo contatto
+        self.p_contact_tangential = None  # Componente tangenziale congelata/in sliding
+        self.slide_vel_thresh = 0.02      # [m/s] soglia velocità tangenziale per consentire sliding
 
 
         # Stato live haptic
@@ -280,6 +273,7 @@ class OffboardAdmittancePlanner(Node):
         self.live_target_yaw = 0.0
         self.live_mode = False
         self.live_mode_stamp = None
+        self.prev_live_pos = None
 
         # -- Timer principale --
         self.timer = self.create_timer(self.dt, self.timer_cb)
@@ -363,7 +357,7 @@ class OffboardAdmittancePlanner(Node):
 
         """
         F_sensor = msg.force.z
-        alpha = 0.4
+        alpha = 0.2
         self.F_ext_sens = alpha * F_sensor + (1 - alpha) * self.Fz_prev
         self.Fz_prev = self.F_ext_sens
         F_norm = np.abs(self.F_ext_sens)
@@ -395,27 +389,21 @@ class OffboardAdmittancePlanner(Node):
         if self.admittance_active and not was_active:
             # Memorizza la posizione corrente al primo contatto dopo free-flight (fronte di salita).
             self.p_contact = self.current_pos.copy()
-
-            # Yaw perpendicolare alla parete: n = R_sensor2enu[:,2] è il vettore che 
-            # punta VERSO il drone
-            # (F>0 = parete spinge il drone in direzione +n), quindi la parete
-            # è nella direzione -n → il drone deve guardare verso -n.
             R_s2enu = self.R_flu2enu @ _R_SENSOR_TO_BODY
-            n_contact = R_s2enu[:, 2]                        # normale parete in ENU
-            n_h = np.array([n_contact[0], n_contact[1], 0.0])
-            n_h_norm = np.linalg.norm(n_h)
-            if n_h_norm > 1e-3:                            # parete non orizzontale
-                self.yaw_contact = np.arctan2(-n_h[1], -n_h[0])
-            else:
-                self.yaw_contact = self.current_rpy[2]     # fallback: mantieni yaw attuale
+            n = R_s2enu[:, 2]
+            n_unit = n / np.linalg.norm(n)
+            p_c_norm = np.dot(self.p_contact, n_unit) * n_unit
+            self.p_contact_tangential = self.p_contact - p_c_norm
 
             self.get_logger().info(
                 f"[AdmittancePlanner] CONTATTO rilevato: |F|={F_norm:.3f}N >= {self.F_threshold:.2f}N"
-                f" | |tau_yaw|={tau_norm:.4f}Nm | p_contact={self.p_contact} | yaw_contact={np.degrees(self.yaw_contact):.1f}°"
+                f" | |tau_yaw|={tau_norm:.4f}Nm | p_contact={np.round(self.p_contact, 3)}"
             )
         elif not self.admittance_active and was_active:
+            self.p_contact = None
+            self.p_contact_tangential = None
             self.get_logger().info(
-                "[AdmittancePlanner] Contatto perso. Ritorno a free-flight lungo la normale al contatto."
+                "[AdmittancePlanner] Contatto perso. Ritorno a free-flight."
             )
 
     def supervisor_state_cb(self, msg: String):
@@ -451,9 +439,11 @@ class OffboardAdmittancePlanner(Node):
             self.get_logger().warn("[AdmittancePlanner] Target ricevuto, odometria non ancora valida. Ignoro.")
             return
 
-        # Annullo la variabile di primo contatto
-        self.p_contact   = None
-        self.yaw_contact = None
+        # Reset stato di contatto per nuova traiettoria
+        self.p_contact = None
+        self.p_contact_tangential = None
+        self.delta_p_yaw = 0.0
+        self.delta_v_yaw = 0.0
 
         t_x = msg.pose.position.x
         t_y = msg.pose.position.y
@@ -536,12 +526,37 @@ class OffboardAdmittancePlanner(Node):
                 self.traj_p = [self.live_target_pos.copy()]
                 self.traj_rpy = [np.array([0.0, 0.0, self.live_target_yaw])]
                 self.current_index = 0
+                self.prev_live_pos = None
                 self.get_logger().info("[AdmittancePlanner] Live mode TERMINATO - mantengo posizione haptic")
             else:
-                # Setpoint diretto senza traiettoria (con ammettenza traslazionale + rotazionale)
-                p_cmd = self.live_target_pos + delta_p_enu
+                p_live = self.live_target_pos
+                v_live = np.zeros(3)
+                if self.prev_live_pos is not None:
+                    v_live = (p_live - self.prev_live_pos) / self.dt
+                self.prev_live_pos = p_live.copy()
+
+                if self.admittance_active and self.p_contact_tangential is not None:
+                    n = R_sensor2enu[:, 2]
+                    n_unit = n / np.linalg.norm(n)
+                    v_live_norm = np.dot(v_live, n_unit) * n_unit
+                    v_live_tang = v_live - v_live_norm
+                    norm_v_tang = float(np.linalg.norm(v_live_tang))
+
+                    # Se l'operatore comanda velocità tangenziale oltre soglia, consenti sliding
+                    if norm_v_tang > self.slide_vel_thresh:
+                        self.p_contact_tangential += v_live_tang * self.dt
+                        v_cmd = v_live_norm + delta_v_enu + v_live_tang
+                    else:
+                        v_cmd = v_live_norm + delta_v_enu
+
+                    p_live_norm = np.dot(p_live, n_unit) * n_unit
+                    p_cmd = p_live_norm + self.p_contact_tangential + delta_p_enu
+                else:
+                    p_cmd = p_live + delta_p_enu
+                    v_cmd = v_live + delta_v_enu
+
                 yaw_cmd = self.live_target_yaw + self.delta_p_yaw
-                self.publish_setpoint(p_cmd, yaw_cmd, delta_v_enu)
+                self.publish_setpoint(p_cmd, yaw_cmd, v_cmd)
                 self._publish_deltas()
                 return
 
@@ -562,24 +577,28 @@ class OffboardAdmittancePlanner(Node):
         omega_z_nom = dyaw / self.dt                                # [rad/s]
 
 
-        # -- Composizione setpoint finale (delta_p/v già calcolati sopra) --
-        if self.p_contact is not None:
-            # Contatto avvenuto almeno una volta dal setpoint di posizione
-            # - Normale:     segue p_nom_normal + compliance ammettenza (delta_p_enu)
-            # - Tangenziale: congelata a p_contact (anche dopo il rilascio, delta_p_enu → 0)
+        # -- Composizione setpoint finale (modalità traiettoria nominale) --
+        if self.admittance_active and self.p_contact_tangential is not None:
             n = R_sensor2enu[:, 2]
-            p_contact_normal     = np.dot(self.p_contact, n) * n
-            p_contact_tangential = self.p_contact - p_contact_normal
-            p_nom_normal         = np.dot(p_nom, n) * n
-            v_nom_normal         = np.dot(v_nom, n) * n
+            n_unit = n / np.linalg.norm(n)
+            p_nom_normal = np.dot(p_nom, n_unit) * n_unit
+            v_nom_normal = np.dot(v_nom, n_unit) * n_unit
+            v_nom_tang   = v_nom - v_nom_normal
+            norm_v_tang  = float(np.linalg.norm(v_nom_tang))
 
-            p_cmd = p_nom_normal + p_contact_tangential + delta_p_enu
-            v_cmd = v_nom_normal + delta_v_enu   # tangenziale = 0, normale = feedforward
+            # Se la traiettoria comanda scorrimento tangenziale lungo la parete oltre soglia
+            if norm_v_tang > self.slide_vel_thresh:
+                self.p_contact_tangential += v_nom_tang * self.dt
+                v_cmd = v_nom_normal + delta_v_enu + v_nom_tang
+            else:
+                v_cmd = v_nom_normal + delta_v_enu
+
+            p_cmd = p_nom_normal + self.p_contact_tangential + delta_p_enu
         else:
             p_cmd = p_nom + delta_p_enu
             v_cmd = v_nom + delta_v_enu
 
-        # Yaw: nominale + deviazione di ammettenza rotazionale (K_psi > 0 riporta a 0 a coppia nulla)
+        # Yaw: nominale + deviazione di ammettenza rotazionale (K_psi = 0 mantiene l'orientamento perpendicolare)
         yaw_cmd = yaw_nom + self.delta_p_yaw
         self.publish_setpoint(p_cmd, yaw_cmd, v_cmd)
 

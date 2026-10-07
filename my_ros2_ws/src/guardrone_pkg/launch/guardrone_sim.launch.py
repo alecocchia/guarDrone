@@ -109,10 +109,21 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{'use_sim_time': True}]
     )
 
-
+    image_compressor_node = Node(
+        package='image_transport',
+        executable='republish',
+        name='image_compressor',
+        arguments=['raw', 'compressed'],
+        remappings=[
+            ('in', '/camera/image'),
+            ('out/compressed', '/camera/camera/color/image_raw/compressed'),
+        ],
+        parameters=[{'use_sim_time': True}]
+    )
 
     return [
         ros_gz_bridge,
+        image_compressor_node,
         guardrone_trajectory_planner,
         # MPC planner parte con un ritardo per dare tempo a PX4 e bridge di stabilizzarsi
         TimerAction(period=10.0, actions=[mpc_planner_node]),

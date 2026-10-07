@@ -74,10 +74,10 @@ def generate_launch_description():
                               description='False per collegarsi al dispositivo USB fisico'),
 
         # --- FoV telecamera reale (es. RealSense D435 Depth: 87x58 deg, RGB: 69x42 deg) ---
-        DeclareLaunchArgument('fov_h', default_value='85.2',
-                              description='FoV orizzontale reale [deg] (default 85.2 per RealSense D435 Depth)'),
-        DeclareLaunchArgument('fov_v', default_value='58.0',
-                              description='FoV verticale reale [deg] (default 58.0 per RealSense D435 Depth)'),
+        DeclareLaunchArgument('fov_h', default_value='69.0',
+                              description='FoV orizzontale reale [deg] (default 69.0 per RealSense D435 Depth)'),
+        DeclareLaunchArgument('fov_v', default_value='42.0',
+                              description='FoV verticale reale [deg] (default 42.0 per RealSense D435 Depth)'),
 
         # --- Limiti di sicurezza e distanze ---
         DeclareLaunchArgument('r_min_safety', default_value='1.0',
@@ -88,19 +88,19 @@ def generate_launch_description():
                               description='Forza repulsiva massima consentita [N]'),
 
         # --- Velocità teleoperazione (GuarDrone) ---
-        DeclareLaunchArgument('v_beta_max', default_value='0.2',
+        DeclareLaunchArgument('v_beta_max', default_value='0.1',
                               description='Velocità max azimut GuarDrone [rad/s]'),
-        DeclareLaunchArgument('v_r_max', default_value='0.3',
+        DeclareLaunchArgument('v_r_max', default_value='0.2',
                               description='Velocità max radiale GuarDrone [m/s]'),
-        DeclareLaunchArgument('v_z_max', default_value='0.2',
+        DeclareLaunchArgument('v_z_max', default_value='0.1',
                               description='Velocità max quota GuarDrone [m/s]'),
 
         # --- Velocità teleoperazione (Peg Drone) ---
-        DeclareLaunchArgument('v_xc_max', default_value='0.5',
+        DeclareLaunchArgument('v_xc_max', default_value='0.2',
                               description='Velocità traslazione Peg [m/s]'),
         DeclareLaunchArgument('v_zc_max', default_value='0.3',
                               description='Velocità quota Peg [m/s]'),
-        DeclareLaunchArgument('v_pan_max', default_value='0.5',
+        DeclareLaunchArgument('v_pan_max', default_value='0.2',
                               description='Velocità yaw Peg [rad/s]'),
 
         # --- Proprietà meccaniche virtuali Falcon ---

@@ -18,8 +18,8 @@ def build_yref_online(y_idx, vel_ref, u_ref=np.zeros(4)):
     yref[y_idx["ang_vel"]] = np.array([0.0, 0.0, 0.0])
     yref[y_idx["acc"]]     = np.array([0.0, 0.0, 0.0])
     yref[y_idx["acc_ang"]] = np.array([0.0, 0.0, 0.0])
-    #yref[y_idx["jerk"]]    = np.array([0.0, 0.0, 0.0])
-    #yref[y_idx["snap"]]    = np.array([0.0, 0.0, 0.0])
+    yref[y_idx["jerk"]]    = np.array([0.0, 0.0, 0.0])
+    yref[y_idx["snap"]]    = np.array([0.0, 0.0, 0.0])
     yref[y_idx["u"]]       = u_ref
     return yref
 
@@ -223,8 +223,8 @@ def configure_mpc(model : AcadosModel, x0, p_target, Tf, ts, W, W_e,
         ang_vel,                        # Velocità angolari
         acc_expr,                       # Accelerazione
         acc_ang_expr,                   # Accelerazione angolare
-        #j_expr,                        # Jerk
-        #s_expr,                        # Snap
+        j_expr,                        # Jerk
+        s_expr,                        # Snap
         model.u                         # Controllo
     )
 
@@ -236,8 +236,8 @@ def configure_mpc(model : AcadosModel, x0, p_target, Tf, ts, W, W_e,
         ang_vel,
         acc_hover,
         acc_ang_hover,
-        #j_hover,
-        #s_hover,
+        j_hover,
+        s_hover,
     )
     
     ocp.cost.cost_type = 'NONLINEAR_LS'
@@ -269,10 +269,10 @@ def configure_mpc(model : AcadosModel, x0, p_target, Tf, ts, W, W_e,
     ang_vel_ind = slice(vel_ind.stop,     vel_ind.stop + 3)
     acc_ind     = slice(ang_vel_ind.stop, ang_vel_ind.stop + 3)
     acc_ang_ind = slice(acc_ind.stop,     acc_ind.stop + 3)
-    #jerk_ind    = slice(acc_ang_ind.stop, acc_ang_ind.stop + 3)
-    #snap_ind    = slice(jerk_ind.stop,    jerk_ind.stop + 3)
-    u_ind       = slice(acc_ang_ind.stop, acc_ang_ind.stop + 4) # CASO NO JERK e SNAP
-    #u_ind       = slice(snap_ind.stop,    snap_ind.stop + 4)
+    jerk_ind    = slice(acc_ang_ind.stop, acc_ang_ind.stop + 3)
+    snap_ind    = slice(jerk_ind.stop,    jerk_ind.stop + 3)
+    #u_ind       = slice(acc_ang_ind.stop, acc_ang_ind.stop + 4) # CASO NO JERK e SNAP
+    u_ind       = slice(snap_ind.stop,    snap_ind.stop + 4)
 
     y_idx = {
         "pos":     pos_ind,      # [ex, ey, ez, yaw_err]
@@ -280,8 +280,8 @@ def configure_mpc(model : AcadosModel, x0, p_target, Tf, ts, W, W_e,
         "ang_vel": ang_vel_ind,
         "acc":     acc_ind,
         "acc_ang": acc_ang_ind,
-        #"jerk":    jerk_ind,
-        #"snap":    snap_ind,
+        "jerk":    jerk_ind,
+        "snap":    snap_ind,
         "u":       u_ind,
     }
     ny   = y_expr.numel()

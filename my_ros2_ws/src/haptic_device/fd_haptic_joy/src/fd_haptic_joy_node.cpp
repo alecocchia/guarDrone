@@ -33,43 +33,36 @@ geometry_msgs::msg::Quaternion rpy_to_quaternion(double roll, double pitch,
 
 class FDHapticJoyNode : public rclcpp::Node {
 public:
+  // Costanti interne del nodo non configurabili da launchfile (come #DEFINE ma con tipo)
+  static constexpr double DT = 0.01;
+  static constexpr double JOY_SCALE = 15.0;
+  static constexpr double ALPHA = 3.0;
+  static constexpr double ACTIVATION_RATIO = 1.0;
+  static constexpr double ACTIVATION_RATIO_CAM = 0.3;
+
   FDHapticJoyNode() : Node("fd_haptic_joy_node") {
     // Parametri molla aptica
-    this->declare_parameter("k_spring",
-                            50.0); // Aumentato per un ritorno più forte (da 40)
-    this->declare_parameter(
-        "b_damping", 10.0); // Coefficiente di smorzamento viscoso virtuale
-    this->declare_parameter("max_force", 15.0); // Limite hardware
+    this->declare_parameter("k_spring", 50.0);
+    this->declare_parameter("b_damping", 10.0);
+    this->declare_parameter("max_force", 15.0);
     this->declare_parameter("deadband", 0.005);
-    this->declare_parameter("joy_scale", 15.0);
 
-    // Parametri integrazione PoV cilindrico
+    // Parametri integrazione PoV cilindrico (GuarDrone)
     this->declare_parameter("v_r_max", 1.2);    // velocità radiale max [m/s]
     this->declare_parameter("v_beta_max", 0.2); // velocità azimut max [rad/s]
-    this->declare_parameter("v_z_max", 1.0); // velocità verticale max [m/s]
-    this->declare_parameter("dt", 0.01);
+    this->declare_parameter("v_z_max", 1.0);    // velocità verticale max [m/s]
 
-    // Parametri Campo Potenziale (Force Feedback dai vincoli MPC)
+    // Parametri Campo Potenziale e FoV
     this->declare_parameter("fov_h", 80.0);
     this->declare_parameter("fov_v", 60.0);
-    this->declare_parameter("r_min_safety",
-                            1.5); // distanza minima di sicurezza [m]
+    this->declare_parameter("r_min_safety", 1.5); // distanza minima di sicurezza [m]
     this->declare_parameter("k_repulsive", 1.0);
-    this->declare_parameter("alpha", 3.0);
-    this->declare_parameter("activation_ratio", 1.0);
-    this->declare_parameter("activation_ratio_cam", 0.3);
     this->declare_parameter("max_repulsive_force", 15.0);
 
+    // Parametri teleoperazione Peg Drone
     this->declare_parameter("v_pan_max", 0.5);
     this->declare_parameter("v_zc_max", 0.5);
     this->declare_parameter("v_xc_max", 1.0);
-    // Actual parameters taken from launchfile:
-    //  'k_spring'
-    //  'b_damping'
-    //  'v_pan_max'
-    //  'v_zc_max'
-    //  'v_xc_max'
-    //  'deadband'
 
     // Subscribers
     pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
@@ -125,9 +118,8 @@ public:
     peg_mode_active_ = false;
 
     // Timer loop a 100Hz
-    double dt = this->get_parameter("dt").as_double();
     timer_ = this->create_wall_timer(
-        std::chrono::duration<double>(dt),
+        std::chrono::duration<double>(DT),
         std::bind(&FDHapticJoyNode::control_loop, this));
 
     RCLCPP_INFO(
@@ -276,11 +268,11 @@ private:
 
   void control_loop() {
     double k = this->get_parameter("k_spring").as_double();
-    double alpha = this->get_parameter("alpha").as_double();
+    double alpha = ALPHA;
     double b = this->get_parameter("b_damping").as_double();
     double max_f = this->get_parameter("max_force").as_double();
     double deadband = this->get_parameter("deadband").as_double();
-    double dt = this->get_parameter("dt").as_double();
+    double dt = DT;
     double alpha_filter = 0.4;
 
     // Calcola velocità istantanea filtrata dell'haptic per lo smorzamento viscoso
@@ -296,9 +288,8 @@ private:
     // Parametri campo potenziale
     double r_min = this->get_parameter("r_min_safety").as_double();
     double k_rep = this->get_parameter("k_repulsive").as_double();
-    double act_ratio = this->get_parameter("activation_ratio").as_double();
-    double act_ratio_cam =
-        this->get_parameter("activation_ratio_cam").as_double();
+    double act_ratio = ACTIVATION_RATIO;
+    double act_ratio_cam = ACTIVATION_RATIO_CAM;
     double max_rep = this->get_parameter("max_repulsive_force").as_double();
 
     // Parametri Campo Visivo (FoV)
@@ -384,7 +375,7 @@ private:
     //   p_flu.z() (Alto)     -> dz_cmd    (spinta in alto = sale in quota: dz = +z_up * v_z_max)
     // =====================================================
     if (button_pressed_) {
-      double joy_scale = this->get_parameter("joy_scale").as_double();
+      double joy_scale = JOY_SCALE;
       double v_r_max = this->get_parameter("v_r_max").as_double();
       double v_beta_max = this->get_parameter("v_beta_max").as_double();
       double v_z_max = this->get_parameter("v_z_max").as_double();
@@ -434,7 +425,7 @@ private:
     peg_mode_active_ = peg_btn;
 
     if (peg_btn) {
-      double joy_scale = this->get_parameter("joy_scale").as_double();
+      double joy_scale = JOY_SCALE;
       double v_t =
           this->get_parameter("v_xc_max").as_double(); // velocità trasl [m/s]
       v_t = 0.5 * v_t;
