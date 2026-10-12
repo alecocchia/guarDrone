@@ -90,12 +90,12 @@ class OffboardAdmittancePlanner(Node):
         self.declare_parameter('start_z', 0.0)
         self.declare_parameter('v_takeoff_max', 0.1)
         self.declare_parameter('a_takeoff_max', 0.2)
-        self.declare_parameter('v_max', 0.2)
-        self.declare_parameter('a_max', 0.3)
+        self.declare_parameter('v_max', 0.1)
+        self.declare_parameter('a_max', 0.2)
         self.declare_parameter('dt', 0.01)   # 100 Hz
 
         # -- Parametri ammettenza --
-        self.declare_parameter('F_threshold', 0.25)       # [N] soglia attivazione forza (deadband)
+        self.declare_parameter('F_threshold', 0.8)        # [N] soglia attivazione forza (deadband)
         self.declare_parameter('adm_max_delta', 10.0)      # [m] saturazione spostamento traslazionale
         self.declare_parameter('tau_threshold', 0.002)    # [Nm] soglia attivazione coppia yaw
         self.declare_parameter('peg_length', 0.455)       # [m] distanza CoM - punta asta
@@ -139,8 +139,8 @@ class OffboardAdmittancePlanner(Node):
         #   D = 2 * zeta * sqrt(K*M)             (smorzamento)
         #
         # --- ASSE ASSIALE TRASLAZIONALE (lungo l'asta peg verso la parete) ---
-        F_typ_z     = 6.0    # [N] forza di contatto tipica
-        delta_typ_z = 0.04   # [m] compressione virtuale desiderata a F_typ_z (--> K = 28.57 N/m)
+        F_typ_z     = 8.0    # [N] forza di contatto tipica
+        delta_typ_z = 0.5   # [m] compressione virtuale desiderata a F_typ_z (--> K = 27.78 N/m)
         Ta_z        = 0.5    # [s] tempo di assestamento al 5%
         zeta_z      = 1.2    # [-] smorzamento critico (nessun rimbalzo né oscillazione)
 
@@ -355,7 +355,7 @@ class OffboardAdmittancePlanner(Node):
 
         """
         F_sensor = msg.force.z
-        alpha = 0.05
+        alpha = 0.25
         self.F_ext_sens = alpha * F_sensor + (1.0 - alpha) * self.Fz_prev
         self.Fz_prev = self.F_ext_sens
         F_norm = np.abs(self.F_ext_sens)
@@ -491,11 +491,40 @@ class OffboardAdmittancePlanner(Node):
                 self.get_logger().info("[AdmittancePlanner] Live mode TERMINATO - mantengo posizione haptic")
             else:
                 p_live = self.live_target_pos.copy()
+                v_live = np.zeros(3)
+                if self.prev_live_pos is not None:
+                    v_live = (p_live - self.prev_live_pos) / self.dt
+                self.prev_live_pos = p_live.copy()
+
                 p_cmd = p_live - self.delta_p
-                v_cmd = - self.delta_v
+                v_cmd = v_live - self.delta_v
                 yaw_cmd = self.live_target_yaw
                 self.publish_setpoint(p_cmd, yaw_cmd, v_cmd)
                 self._publish_deltas()
+
+                # Pubblica riferimenti per logger e teleop
+                ref_msg = PoseStamped()
+                ref_msg.header.stamp = self.get_clock().now().to_msg()
+                ref_msg.header.frame_id = 'map'
+                ref_msg.pose.position.x = float(p_live[0])
+                ref_msg.pose.position.y = float(p_live[1])
+                ref_msg.pose.position.z = float(p_live[2])
+                q_yaw = Rotation.from_euler('z', yaw_cmd).as_quat()
+                ref_msg.pose.orientation.x = float(q_yaw[0])
+                ref_msg.pose.orientation.y = float(q_yaw[1])
+                ref_msg.pose.orientation.z = float(q_yaw[2])
+                ref_msg.pose.orientation.w = float(q_yaw[3])
+                self.peg_ref_pub.publish(ref_msg)
+
+                twist_msg = TwistStamped()
+                twist_msg.header.stamp = self.get_clock().now().to_msg()
+                twist_msg.header.frame_id = 'map'
+                twist_msg.twist.linear.x  = float(v_live[0])
+                twist_msg.twist.linear.y  = float(v_live[1])
+                twist_msg.twist.linear.z  = float(v_live[2])
+                twist_msg.twist.angular.z = 0.0
+                self.peg_ref_twist_pub.publish(twist_msg)
+
                 return
 
         # -- Posizione e velocità nominali dalla traiettoria --

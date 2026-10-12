@@ -5,6 +5,7 @@
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/float64.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
 #include "std_msgs/msg/int32_multi_array.hpp"
 
@@ -85,6 +86,9 @@ public:
     peg_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
         "/peg_ref_pose", 10,
         std::bind(&FDHapticJoyNode::peg_pose_cb, this, _1));
+    echo_sub_ = this->create_subscription<std_msgs::msg::Float64>(
+        "/haptic_ref_echo", 10,
+        std::bind(&FDHapticJoyNode::echo_cb, this, _1));
 
     // Publishers
     force_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>(
@@ -95,6 +99,8 @@ public:
         "/haptic_ref", 10);
     peg_live_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
         "/peg_live_pose", 10);
+    latency_pub_ = this->create_publisher<std_msgs::msg::Float64>(
+        "/haptic_latency_ms", 10);
 
     // Initial state
     // Stato PoV in coordinate cilindriche: [r_cyl, beta, z]
@@ -193,6 +199,18 @@ private:
       current_pov_ref_[1] = actual_pov_[1]; // beta
       current_pov_ref_[2] = actual_pov_[2]; // z
       current_pov_vel_ = {0.0, 0.0, 0.0};
+    }
+  }
+
+  void echo_cb(const std_msgs::msg::Float64::SharedPtr msg) {
+    double t_now = this->get_clock()->now().seconds();
+    double t_send = msg->data;
+    double rtt = t_now - t_send;
+    if (rtt >= 0.0 && rtt < 5.0) {
+      double latency_ms = (rtt / 2.0) * 1000.0;
+      auto lat_msg = std_msgs::msg::Float64();
+      lat_msg.data = latency_ms;
+      latency_pub_->publish(lat_msg);
     }
   }
 
@@ -401,10 +419,11 @@ private:
       current_pov_ref_[2] += current_pov_vel_[2] * dt; // z
       current_pov_ref_[2] = std::max(-10.0, std::min(10.0, current_pov_ref_[2])); // clamp z
 
-      // Pubblica: [r_cyl, beta, z]
+      // Pubblica: [r_cyl, beta, z, t_send]
       auto haptic_msg = std_msgs::msg::Float64MultiArray();
       haptic_msg.data.insert(haptic_msg.data.end(), current_pov_ref_.begin(),
                              current_pov_ref_.end());
+      haptic_msg.data.push_back(this->get_clock()->now().seconds());
       haptic_ref_pub_->publish(haptic_msg);
     } else {
       current_pov_vel_ = {0.0, 0.0, 0.0};
@@ -487,6 +506,8 @@ private:
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr
       haptic_ref_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr peg_live_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr latency_pub_;
+  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr echo_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   // State — MODO MPC

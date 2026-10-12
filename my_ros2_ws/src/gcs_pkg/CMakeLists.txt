@@ -40,6 +40,7 @@ install(PROGRAMS
   ${PROJECT_NAME}/keyboard_client.py
   ${PROJECT_NAME}/fake_publisher.py
   ${PROJECT_NAME}/PX4_odom_publisher.py
+  ${PROJECT_NAME}/dji_pub.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

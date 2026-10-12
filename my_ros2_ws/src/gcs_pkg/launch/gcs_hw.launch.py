@@ -139,7 +139,43 @@ def launch_setup(context, *args, **kwargs):
         condition=IfCondition(LaunchConfiguration('enable_rviz'))
     )
 
-    return [supervisor_node, fake_publisher_node, data_logger, rviz_node]
+    # NODO: DJI PUBLISHER (usato per esperimenti con drone reale tracciato da OptiTrack)
+    dji_publisher_node = Node(
+        package='gcs_pkg',
+        executable='dji_pub.py',
+        name='dji_publisher_node',
+        output='screen',
+        parameters=[{
+            'use_sim_time': False,
+            'dji_id': LaunchConfiguration('dji_id'),
+            'dji_topic': LaunchConfiguration('dji_topic'),
+            'takeoff_alt_1': takeoff_alt_1,
+            'guardrone_start_x': drone_x,
+            'guardrone_start_y': drone_y,
+            'guardrone_start_z': drone_z,
+            'peg_start_x': peg_x,
+            'peg_start_y': peg_y,
+            'peg_start_z': peg_z,
+            'cam_offset_x': cam_x,
+            'cam_offset_y': cam_y,
+            'cam_offset_z': cam_z,
+            'fov_h_deg': fov_h_deg,
+            'fov_v_deg': fov_v_deg,
+        }],
+    )
+
+    use_dji_val = LaunchConfiguration('use_dji').perform(context).strip().lower() in ('true', '1')
+    use_fake_val = LaunchConfiguration('use_fake_supervisor').perform(context).strip().lower() in ('true', '1')
+
+    nodes = [data_logger, rviz_node]
+    if use_dji_val:
+        nodes.append(dji_publisher_node)
+    elif use_fake_val:
+        nodes.append(fake_publisher_node)
+    else:
+        nodes.append(supervisor_node)
+
+    return nodes
 
 
 def generate_launch_description():
@@ -154,6 +190,12 @@ def generate_launch_description():
         # --- Modalità Esecuzione ---
         DeclareLaunchArgument('use_fake_supervisor', default_value='false',
                               description='Se true, avvia fake_publisher invece del supervisor vero per testare il drone singolo'),
+        DeclareLaunchArgument('use_dji', default_value='true',
+                              description='Se true, avvia dji_pub per tracciare il target reale tramite OptiTrack'),
+        DeclareLaunchArgument('dji_id', default_value='3',
+                              description='ID OptiTrack del corpo rigido DJI'),
+        DeclareLaunchArgument('dji_topic', default_value='',
+                              description='Topic OptiTrack esplicito (se vuoto, usa /optitrack/body_<dji_id>/odometry)'),
         DeclareLaunchArgument('enable_rviz', default_value='true',
                               description='Avvia RViz nella GCS'),
         

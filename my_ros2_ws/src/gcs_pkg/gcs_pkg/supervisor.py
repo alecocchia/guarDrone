@@ -495,7 +495,7 @@ class SupervisorNode(Node):
             # DRONE 1 (CAMERA): Mantiene lo stesso PoV (raggio e beta attuali), centrato (z=0, yaw=0)
             if not self.drone_target_sent:
                 r_act, beta_act, _ = self.compute_actual_pov_target()
-                self.publish_pov_target(r_act, beta_act, 0.0, 0.0)
+                self.publish_pov_target(r_act, beta_act-0.2, 0.0, 0.0)
                 self.drone_target_sent = True
 
             # DRONE 2 (INTERACTION): Target avvicinamento a 2 m dalla parete
@@ -528,7 +528,7 @@ class SupervisorNode(Node):
             yaw_is_aligned = abs(min_angle(d2_yaw_enu - yaw_target)) < 0.15
 
             if d2_dist < 0.2 and yaw_is_aligned and self._operator_confirmed:
-                self.get_logger().info("Drone interaction a 2m dal muro + allineato + conferma operatore. Passo ad INTERACTION.")
+                self.get_logger().info("Drone interaction allineato e pronto per interagire + conferma operatore. Passo ad INTERACTION.")
                 self.transition_to_state('INTERACTION')
             elif d2_dist < 0.2 and yaw_is_aligned and not self._operator_confirmed:
                 if self.msg_cnt == 0:
@@ -541,10 +541,10 @@ class SupervisorNode(Node):
 
             # DRONE 1 (CAMERA): Inquadra in basso a destra (60% semi-FoV), raggio r = 1.5 m, stesso beta
             if not self.drone_target_sent:
-                r_target = 1.5
-                _, beta_act, _ = self.compute_actual_pov_target()
-                h_frac = 0.6
-                v_frac = 0.6
+                r_act, beta_act, _ = self.compute_actual_pov_target()
+                r_target = r_act
+                h_frac = 0.7
+                v_frac = 0.7
                 yaw_off, z_off = self.compute_decentered_pov(r_target, h_frac, v_frac)
                 self.publish_pov_target(r_target, beta_act, z_off, yaw_off)
                 self.drone_target_sent = True
@@ -563,8 +563,8 @@ class SupervisorNode(Node):
 
             # DRONE 1 (CAMERA): Mantiene inquadratura decentrata in basso a destra (60%), ma allarga raggio a r = 2.0 m
             if not self.drone_target_sent:
-                r_target = 2.0
-                _, beta_act, _ = self.compute_actual_pov_target()
+                r_act, beta_act, _ = self.compute_actual_pov_target()
+                r_target = r_act - 0.2
                 h_frac = 0.6
                 v_frac = 0.6
                 yaw_off, z_off = self.compute_decentered_pov(r_target, h_frac, v_frac)
@@ -612,9 +612,10 @@ class SupervisorNode(Node):
 
             # DRONE 1 (CAMERA): Torna a centrare il drone osservato (z=0, yaw=0) a raggio r = 2.0 m
             if not self.drone_target_sent:
-                r_target = 2.0
-                _, beta_act, _ = self.compute_actual_pov_target()
-                self.publish_pov_target(r_target, beta_act, 0.0, 0.0)
+                r_act, beta_act, _ = self.compute_actual_pov_target()
+                r_target = r_act + 0.3
+                beta_target = beta_act + 0.5
+                self.publish_pov_target(r_target, beta_target, 0.0, 0.0)
                 self.drone_target_sent = True
 
             # DRONE 2 (INTERACTION): Posa target RETURN_HOME

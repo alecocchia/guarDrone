@@ -164,6 +164,7 @@ class Logger(Node):
         self.delta_p_sensor  = []
         self.delta_yaw       = []
         self.solve_time      = []
+        self.haptic_latency_ms = []
 
         # Stato drone peg (ENU) — da fake_publisher (sim) / admittance_planner (real)
         self.peg_actual_pos      = []
@@ -213,6 +214,7 @@ class Logger(Node):
         self.last_peg_ref_vel         = [0.0, 0.0, 0.0]
         self.last_peg_ref_omega_z     = 0.0
         self.last_solve_time       = 0.0
+        self.last_haptic_latency_ms = 0.0
 
         # ------------------------------------------------------------------ #
         #  QoS                                                                 #
@@ -287,6 +289,7 @@ class Logger(Node):
         self.create_subscription(Bool, '/mpc_enabled',    self.cb_task_start,   qos_latched)
         self.create_subscription(String, '/supervisor/state', self.cb_supervisor_state, qos_latched)
         self.create_subscription(Float64, '/mpc_solve_time', self.cb_solve_time, 10)
+        self.create_subscription(Float64, '/haptic_latency_ms', self.cb_haptic_latency, 10)
 
         # Monitoraggio Kill Switch / Disarm da radiocomando per entrambi i droni
         self.create_subscription(
@@ -481,6 +484,9 @@ class Logger(Node):
             '/optimal_drone_pose',
             '/camera_ref_pose',
             '/supervisor/state',
+            '/haptic_ref',
+            '/haptic_ref_echo',
+            '/haptic_latency_ms',
         ]
         if self.ft_topic and self.ft_topic not in topics_to_record:
             topics_to_record.append(self.ft_topic)
@@ -548,6 +554,9 @@ class Logger(Node):
 
     def cb_solve_time(self, msg: Float64):
         self.last_solve_time = float(msg.data)
+
+    def cb_haptic_latency(self, msg: Float64):
+        self.last_haptic_latency_ms = float(msg.data)
 
     def cb_vehicle_status(self, msg: VehicleStatus, drone_name: str, armed_flag_attr: str):
         """Intercetta il Kill da radiocomando o disarm imprevisto per chiudere il log."""
@@ -621,6 +630,7 @@ class Logger(Node):
         self.peg_ref_vel.append(list(self.last_peg_ref_vel))
         self.peg_ref_omega_z.append(self.last_peg_ref_omega_z)
         self.solve_time.append(self.last_solve_time)
+        self.haptic_latency_ms.append(self.last_haptic_latency_ms)
 
         self.last_log_time = t_now
 
@@ -730,6 +740,7 @@ class Logger(Node):
             acc=acc, ang_acc=ang_acc, jerk=jerk, snap=snap,
             mass=self.mass,
             solve_time=np.asarray(self.solve_time),
+            haptic_latency_ms=np.asarray(self.haptic_latency_ms),
             task_start_time=np.array([t_start_rel]),
             task_end_time=np.array([t_end_rel]),
             phase_times=np.array(phase_times, dtype=float),

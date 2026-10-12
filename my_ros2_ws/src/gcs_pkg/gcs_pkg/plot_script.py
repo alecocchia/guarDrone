@@ -26,7 +26,7 @@ from utils_pkg.utils_np import wrap_pi, cylindrical_to_cartesian
 
 def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, fignum=None, task_start=-1.0, task_end=-1.0, phases=None, haptic_intervals=None):
     """Generazione grafici ad alta leggibilità con palette moderna Tableau, griglia discreta e marker eleganti."""
-    plt.rcParams.update({"text.usetex": use_tex, "font.family": "serif", "axes.ymargin": 0.15})
+    plt.rcParams.update({"text.usetex": use_tex, "font.family": "serif", "axes.ymargin": 0.6})
     if phases is None and hasattr(myPlot, 'default_phases'):
         phases = myPlot.default_phases
     if haptic_intervals is None and hasattr(myPlot, 'default_haptic_intervals'):
@@ -905,6 +905,41 @@ def main():
             myPlot(t, fig19_data,
                    [f"Solve Time [ms] (Mean: {mean_st:.2f} ms, Max: {max_st:.2f} ms, Ts limit: {ts_ms:.0f} ms)"],
                    "MPC Solver Execution Time & Timing Jitter", ncols=1, use_tex=args.tex, block=block, fignum=19, task_start=task_start, task_end=task_end)
+
+    # 2b. HAPTIC TELEOPERATION NETWORK LATENCY & JITTER (RTT / 2)
+    if indata('haptic_latency_ms'):
+        lat_raw = np.asarray(data['haptic_latency_ms']).squeeze()
+        # Filtra solo i campioni validi (> 0, registrati quando il falcon invia comandi)
+        lat_valid = lat_raw[lat_raw > 0.0]
+
+        if len(lat_valid) > 0:
+            mean_lat = float(np.mean(lat_valid))
+            std_lat  = float(np.std(lat_valid))
+            min_lat  = float(np.min(lat_valid))
+            max_lat  = float(np.max(lat_valid))
+            p95_lat  = float(np.percentile(lat_valid, 95))
+            p99_lat  = float(np.percentile(lat_valid, 99))
+            lat_step_diff = float(np.mean(np.abs(np.diff(lat_valid)))) if len(lat_valid) > 1 else 0.0
+
+            report_lines.append("\n" + "-" * 70)
+            report_lines.append(" 2b. HAPTIC TELEOPERATION NETWORK LATENCY & JITTER (RTT / 2)")
+            report_lines.append("-" * 70)
+            report_lines.append(f"Campioni latenza analizzati: {len(lat_valid)}")
+            report_lines.append(f"Latenza Media Unidirezionale: {mean_lat:.2f} ms")
+            report_lines.append(f"Jitter di Rete (Std Dev)   : {std_lat:.2f} ms")
+            report_lines.append(f"Minimo / Massimo           : {min_lat:.2f} ms / {max_lat:.2f} ms")
+            report_lines.append(f"Step-to-Step Jitter        : {lat_step_diff:.2f} ms")
+            report_lines.append(f"Percentile 95%             : {p95_lat:.2f} ms")
+            report_lines.append(f"Percentile 99%             : {p99_lat:.2f} ms")
+
+            # --- FIGURE 20: Haptic Network Latency ---
+            lat_threshold_ms = 20.0
+            fig20_data = [
+                {'sim': lat_raw, 'ref': lat_threshold_ms}
+            ]
+            myPlot(t, fig20_data,
+                   [f"One-Way Latency [ms] (Mean: {mean_lat:.2f} ms, Max: {max_lat:.2f} ms, Threshold: {lat_threshold_ms:.0f} ms)"],
+                   "Haptic Teleoperation Network Latency (RTT/2) & Jitter", ncols=1, use_tex=args.tex, block=block, fignum=20, task_start=task_start, task_end=task_end)
 
     # 3. TRACKING PERFORMANCE (in Missione)
     if indata('r_cyl') and indata('online_cyl_ref'):

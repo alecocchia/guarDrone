@@ -82,7 +82,7 @@ def run_standalone_test(sim_time=30.0, plot_save_path=None, save_gif=False):
     # 2. Parametri tempo e orizzonte
     Hz = 100.0
     ts = 1.0 / Hz          # 10 ms
-    N_horiz = 15         # Orizzonte di predizione (150 ms)
+    N_horiz = 100         # Orizzonte di predizione (150 ms)
     Tp = N_horiz * ts
     n_steps = int(sim_time / ts)
 
@@ -134,29 +134,78 @@ def run_standalone_test(sim_time=30.0, plot_save_path=None, save_gif=False):
     p_obj = p_A.copy()
 
     # 4. Pesi della funzione di costo — formulazione cartesiana
-    # Range cartesiani: errore massimo atteso su x, y, z [m] e yaw [rad]
-    X_CART = 0.2
-    Y_CART = 0.2
-    Z_CART = 0.2
-    Y_CYL  = np.pi / 3   
-    
-    V = np.array([0.3, 0.3, 0.3])
-    ANG_DOT = np.array([0.15, 0.15, 0.3])
-    ACC = np.array([0.4, 0.4, 0.4])
-    ACC_ANG = np.array([0.4, 0.4, 0.8])
-    
+    # =========================================================================
+    # 1. SCALE FISICHE (Denominatori Regola di Bryson)
+    # =========================================================================
+    X_CART     = 0.2                          # [m] tolleranza errore posizione piano XY
+    Y_CART     = 0.2                          # [m]
+    Z_CART     = 0.2                          # [m] tolleranza errore quota
+    Y_CYL      = np.pi / 4.0                  # [rad] tolleranza puntamento yaw (~45 deg)
+    V          = np.array([0.3, 0.3, 0.2])    # [m/s] velocità max attesa
+    ANG_DOT    = np.array([0.2, 0.2, 0.3])    # [rad/s] velocità angolare max
+    ACC        = np.array([0.2, 0.2, 0.2])    # [m/s^2] accelerazione max
+    ACC_ANG    = np.array([0.4, 0.4, 0.6])    # [rad/s^2] accelerazione angolare max
+    JERK       = np.array([5.0, 5.0, 5.0])    # [m/s^3]
+    SNAP       = np.array([15.0, 15.0, 15.0]) # [m/s^4]
+
+    # =========================================================================
+    # 2. SELEZIONE PARAMETRICA DEI PESI (Proporzioni relative su PesoVis)
+    # =========================================================================
     PesoVis = 10.0
-    PesoX   = PesoVis
-    PesoY   = PesoVis
-    PesoZ   = PesoVis
-    PesoYaw = PesoVis
-    PesoVel    = PesoVis / 10
-    PesoAngVel = PesoVis / 50
-    PesoAcc    = PesoVis / 20
-    PesoAngAcc = PesoVis / 100
-    PesoForce  = PesoVis / 100
-    PesoTorque = PesoForce 
-    # Q cartesiana: [ex, ey, ez, yaw_err]
+    PesoX = PesoY = PesoZ = PesoYaw = PesoVis
+
+    # Modalità di test (identiche a MPC_planner_node.py)
+    is_controller = True
+    use_mbe = True
+
+    if not is_controller:
+        # ---------------------------------------------------------------------
+        # CASO 1: PLANNER (setpoint pos/vel a PX4)
+        # ---------------------------------------------------------------------
+        print("[MPC Tuning] Modalità: PLANNER (Controllo PX4: Pos/Vel)")
+        PesoVel    = PesoVis / 5.0   
+        PesoAngVel = PesoVis / 50.0
+        PesoAcc    = PesoVis / 30.0   
+        PesoAngAcc = PesoVis / 100.0
+        PesoJerk   = PesoVis / 100.0
+        PesoSnap   = PesoVis / 100.0
+        PesoForce  = PesoVis / 100.0  
+        PesoTorque = PesoVis / 100.0
+        scale_e = [10.0, 10.0, 10.0, 2.0, 1.0, 1.0, 1.0] # Vis, Vel, AngVel, Acc, AngAcc, Jerk, Snap
+
+    elif use_mbe:
+        # ---------------------------------------------------------------------
+        # CASO 2: CONTROLLER WRENCH CON MBE (disturbi compensati via feedforward)
+        # ---------------------------------------------------------------------
+        print("[MPC Tuning] Modalità: CONTROLLER + MBE (Feedforward: ON)")
+        PesoVel    = PesoVis / 3.0   
+        PesoAngVel = PesoVis / 3.0
+        PesoAcc    = PesoVis / 20.0
+        PesoAngAcc = PesoVis / 20.0
+        PesoJerk   = PesoVis / 100.0
+        PesoSnap   = PesoVis / 100.0
+        PesoForce  = PesoVis / 10.0   
+        PesoTorque = PesoVis / 10.0
+        scale_e = [5.0, 5.0, 5.0, 1.0, 1.0, 1.0, 1.0] # Vis, Vel, AngVel, Acc, AngAcc, Jerk, Snap
+
+    else:
+        # ---------------------------------------------------------------------
+        # CASO 3: CONTROLLER WRENCH SENZA MBE 
+        # ---------------------------------------------------------------------
+        print("[MPC Tuning] Modalità: CONTROLLER (MBE: OFF)")
+        PesoVel    = PesoVis / 5.0
+        PesoAngVel = PesoVis / 10.0
+        PesoAcc    = PesoVis / 10.0
+        PesoAngAcc = PesoVis / 100.0
+        PesoJerk   = PesoVis / 100.0
+        PesoSnap   = PesoVis / 100.0
+        PesoForce  = PesoVis / 10.0
+        PesoTorque = PesoVis / 10.0
+        scale_e = [5.0, 5.0, 5.0, 2.0, 1.0, 1.0, 1.0]
+
+    # =========================================================================
+    # 3. COSTRUZIONE MATRICI Q, R, Q_e
+    # =========================================================================
     Q_cart = np.diag([
         PesoX   / X_CART**2,
         PesoY   / Y_CART**2,
@@ -167,17 +216,27 @@ def run_standalone_test(sim_time=30.0, plot_save_path=None, save_gif=False):
     Q_ang_dot = np.diag([PesoAngVel] * 3) / np.array(ANG_DOT)**2
     Q_acc     = np.diag([PesoAcc] * 3) / np.array(ACC)**2
     Q_acc_ang = np.diag([PesoAngAcc] * 3) / np.array(ACC_ANG)**2
-    R_f   = np.diag([PesoForce / u_f_max**2])
+    Q_jerk    = np.diag([PesoJerk] * 3) / np.array(JERK)**2
+    Q_snap    = np.diag([PesoSnap] * 3) / np.array(SNAP)**2
+
+    R_f   = np.diag([PesoForce / 0.5**2])
     R_tau = np.diag([
-        PesoTorque / u_tau_x**2,
-        PesoTorque / u_tau_y**2,
-        PesoTorque / u_tau_z**2
+        PesoTorque / 0.2**2,
+        PesoTorque / 0.2**2,
+        PesoTorque / 0.5**2
     ])
     R   = ca.diagcat(R_f, R_tau)
-    Q   = ca.diagcat(Q_cart, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
-    Q_e = ca.diagcat(10 * Q_cart, 10 * Q_vel, 10 * Q_ang_dot, 1 * Q_acc, 1 * Q_acc_ang)
+    Q   = ca.diagcat(Q_cart, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
+    Q_e = ca.diagcat(
+        scale_e[0] * Q_cart,
+        scale_e[1] * Q_vel,
+        scale_e[2] * Q_ang_dot,
+        scale_e[3] * Q_acc,
+        scale_e[4] * Q_acc_ang,
+        scale_e[5] * Q_jerk,
+        scale_e[6] * Q_snap
+    )
 
-        
     u_min = np.array([0.0, -u_tau_x, -u_tau_y, -u_tau_z])
     u_max = np.array([u_f_max, u_tau_x, u_tau_y, u_tau_z])
 

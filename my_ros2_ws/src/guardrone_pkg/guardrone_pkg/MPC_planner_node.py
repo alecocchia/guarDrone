@@ -131,7 +131,7 @@ class MpcPlannerNode(Node):
         # === Tempo/Orizzonte ===
         self.Hz = 100.0
         self.ts = 1.0/self.Hz             # 10 ms
-        self.N_horiz = 30           # Orizzonte di predizione (numero di campioni) # SIMULAZIONE CONTROLLER
+        self.N_horiz = 50           # Orizzonte di predizione (numero di campioni) # SIMULAZIONE CONTROLLER
         self.Tp = self.N_horiz * self.ts  # Tempo totale dell'orizzonte 
 
         self.path_pub_counter = 0  # Contatore per limitare la frequenza di pubblicazione del path
@@ -280,6 +280,7 @@ class MpcPlannerNode(Node):
         self.start_subscription = self.create_subscription(PoseStamped, '/peg_pose', self.start_callback, 10)
         self.pov_target_sub = self.create_subscription(Float64MultiArray, '/pov_target', self.pov_target_callback, 10)
         self.haptic_ref_sub = self.create_subscription(Float64MultiArray, '/haptic_ref', self.haptic_ref_callback, 10)
+        self.haptic_echo_pub = self.create_publisher(Float64, '/haptic_ref_echo', 10)
 
         # Haptic state
         self.haptic_pov = None
@@ -603,11 +604,17 @@ class MpcPlannerNode(Node):
                 float(self.pov_target[2]), self.pov_yaw_offset]))
 
     def haptic_ref_callback(self, msg: Float64MultiArray):
-        # Formato atteso: [r, beta, z_rel]
+        # Formato atteso: [r, beta, z_rel] (opzionale t_send in data[3])
         if len(msg.data) >= 3:
             self.haptic_pov = np.array(msg.data[0:3], dtype=float)  # [r, beta, z_rel]
             self.haptic_timestamp = self.get_clock().now()
             self.pov_target = self.haptic_pov.copy()
+
+            # Eco del timestamp per stima della latenza di rete (RTT)
+            if len(msg.data) >= 4:
+                echo_msg = Float64()
+                echo_msg.data = float(msg.data[3])
+                self.haptic_echo_pub.publish(echo_msg)
 
     def joy_ref_callback(self, msg: Float64MultiArray):
         # Formato atteso: [r, beta, z_rel]
@@ -669,14 +676,14 @@ class MpcPlannerNode(Node):
         # =========================================================================
         X_CART     = 0.2                          # [m] tolleranza errore posizione piano XY
         Y_CART     = 0.2                          # [m]
-        Z_CART     = 0.2                          # [m] tolleranza errore quota
+        Z_CART     = 0.15                          # [m] tolleranza errore quota
         Y_CYL      = np.pi / 4.0                  # [rad] tolleranza puntamento yaw (~45 deg)
-        V          = np.array([0.3, 0.3, 0.2])    # [m/s] velocità max attesa
-        ANG_DOT    = np.array([0.2, 0.2, 0.3])  # [rad/s] velocità angolare max
+        V          = np.array([0.2, 0.2, 0.2])    # [m/s] velocità max attesa
+        ANG_DOT    = np.array([0.15, 0.15, 0.4])  # [rad/s] velocità angolare max
         ACC        = np.array([0.2, 0.2, 0.2])    # [m/s^2] accelerazione max
-        ACC_ANG    = np.array([0.4, 0.4, 0.6])    # [rad/s^2] accelerazione angolare max
-        JERK       = np.array([5.0, 5.0, 5.0]) # [m/s^3]
-        SNAP       = np.array([15.0, 15.0, 15.0]) # [m/s^4]
+        ACC_ANG    = np.array([0.2, 0.2, 0.6])    # [rad/s^2] accelerazione angolare max
+        JERK       = np.array([4.0, 4.0, 4.0]) # [m/s^3]
+        SNAP       = np.array([20.0, 20.0, 20.0]) # [m/s^4]
 
         # =========================================================================
         # 2. SELEZIONE PARAMETRICA DEI PESI (Proporzioni relative su PesoVis)
@@ -704,15 +711,15 @@ class MpcPlannerNode(Node):
             # CASO 2: CONTROLLER WRENCH CON MBE (disturbi compensati via feedforward)
             # ---------------------------------------------------------------------
             self.get_logger().info("[MPC Tuning] Modalità: CONTROLLER + MBE (Feedforward: ON)")
-            PesoVel    = PesoVis / 4.0   
-            PesoAngVel = PesoVis / 4.0
-            PesoAcc    = PesoVis / 15.0
-            PesoAngAcc = PesoVis / 15.0
-            PesoJerk   = PesoVis / 50.0
-            PesoSnap   = PesoVis / 50.0
+            PesoVel    = PesoVis / 5.0   
+            PesoAngVel = PesoVis / 5.0
+            PesoAcc    = PesoVis / 2.0
+            PesoAngAcc = PesoVis / 2.0
+            PesoJerk   = PesoVis / 20.0
+            PesoSnap   = PesoVis / 20.0
             PesoForce  = PesoVis / 10.0   
             PesoTorque = PesoVis / 10.0
-            scale_e = [5.0, 5.0, 5.0, 1.0, 1.0,1.0,1.0] # Vis, Vel, AngVel, Acc, AngAcc, Jerk, Snap
+            scale_e = [8.0, 8.0, 8.0, 1.0, 1.0,1.0,1.0] # Vis, Vel, AngVel, Acc, AngAcc, Jerk, Snap
 
         else:
             # ---------------------------------------------------------------------
@@ -726,7 +733,7 @@ class MpcPlannerNode(Node):
             PesoJerk   = PesoVis / 100.0
             PesoSnap   = PesoVis / 100.0
             PesoForce  = PesoVis / 10.0
-            PesoTorque = PesoVis / 10.0
+            PesoTorque = PesoVis / 5.0
             scale_e = [5.0, 5.0, 5.0, 2.0, 1.0,1.0,1.0]
 
         # =========================================================================
