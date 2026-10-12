@@ -600,10 +600,12 @@ def main():
 
     # --- FIGURE 11: Peg External Forces ---
     if indata('peg_ext_force'):
+        # Esclude picchi isolati di fine simulazione (> 15N) per preservare la scala dei contatti
+        f_disp = np.clip(data['peg_ext_force'], -15.0, 15.0)
         fig11_data = [
-            {'sim': data['peg_ext_force'][:, 0], 'ref': 0.0},
-            {'sim': data['peg_ext_force'][:, 1], 'ref': 0.0},
-            {'sim': data['peg_ext_force'][:, 2], 'ref': 0.0}
+            {'sim': f_disp[:, 0], 'ref': 0.0},
+            {'sim': f_disp[:, 1], 'ref': 0.0},
+            {'sim': f_disp[:, 2], 'ref': 0.0}
         ]
         myPlot(t, fig11_data, 
                ["Force X (Sensor) [N]", "Force Y (Sensor) [N]", "Force Z (Sensor) [N]"], 
@@ -620,7 +622,7 @@ def main():
                ["Torque X (Sensor) [Nm]", "Torque Y (Sensor) [Nm]", "Torque Z (Sensor) [Nm]"], 
                "Peg External Contact Torques (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=121, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
 
-    # --- FIGURE 12: Admittance delta_p (spostamento di ammettenza in ENU) ---
+    # --- FIGURE 122: Admittance delta_p (spostamento di ammettenza in ENU) ---
     if indata('delta_p'):
         dp = data['delta_p']
         dp_norm = np.linalg.norm(dp, axis=1)
@@ -634,7 +636,7 @@ def main():
                [r"$\Delta p_x$ [m] (ENU)", r"$\Delta p_y$ [m] (ENU)", r"$\Delta p_z$ [m] (ENU)",
                 r"$\|\Delta p\|$ [m]"],
                "Admittance Displacement $\\Delta p$ (ENU frame)",
-               ncols=2, use_tex=args.tex, block=block, fignum=13, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
+               ncols=2, use_tex=args.tex, block=block, fignum=122, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
 
     # --- FIGURE 12b: delta_p in terna SENSORE ---
     if indata('delta_p_sensor'):
@@ -682,12 +684,17 @@ def main():
                 ax13[1].axvspan(t_h_s, t_h_e, color='#a855f7', alpha=0.15, label='Haptic Interaction' if idx_h == 0 else None, zorder=0)
         ax13[0].plot(t, fext_norm, 'r-', linewidth=1.5, label=r'$\|F_{ext}\|$ [N]')
         ax13[0].set_ylabel(r'$\|F_{ext}\|$ [N]')
+        # Limita y per visualizzare chiaramente la forza di contatto (max ~5N) senza che il picco di arresto a 800N schiacci tutto
+        f_p99 = np.percentile(fext_norm, 99.0) if len(fext_norm) > 0 else 5.0
+        ax13[0].set_ylim(-0.2, max(6.0, min(20.0, f_p99 * 1.5)))
         ax13[0].legend(loc='upper right')
         ax13[0].grid(True, alpha=0.3)
         ax13[0].set_title("Contact Force Norm")
         ax13[1].plot(t, dp_norm, 'b-', linewidth=1.5, label=r'$\|\Delta p\|$ [m]')
         ax13[1].set_xlabel('Time [s]')
         ax13[1].set_ylabel(r'$\|\Delta p\|$ [m]')
+        dp_p99 = np.percentile(dp_norm, 99.0) if len(dp_norm) > 0 else 0.1
+        ax13[1].set_ylim(-0.02, max(0.15, min(0.5, dp_p99 * 1.5)))
         ax13[1].legend(loc='upper right')
         ax13[1].grid(True, alpha=0.3)
         ax13[1].set_title("Admittance Displacement Norm")
