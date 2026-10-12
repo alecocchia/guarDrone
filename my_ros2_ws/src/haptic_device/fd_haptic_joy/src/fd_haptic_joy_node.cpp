@@ -36,7 +36,7 @@ public:
   // Costanti interne del nodo non configurabili da launchfile (come #DEFINE ma con tipo)
   static constexpr double DT = 0.01;
   static constexpr double JOY_SCALE = 15.0;
-  static constexpr double ALPHA = 3.0;
+  static constexpr double ALPHA = 6.0;
   static constexpr double ACTIVATION_RATIO = 1.0;
   static constexpr double ACTIVATION_RATIO_CAM = 0.3;
 
@@ -44,7 +44,7 @@ public:
     // Parametri molla aptica
     this->declare_parameter("k_spring", 50.0);
     this->declare_parameter("b_damping", 10.0);
-    this->declare_parameter("max_force", 15.0);
+    this->declare_parameter("max_force", 10.0);
     this->declare_parameter("deadband", 0.005);
 
     // Parametri integrazione PoV cilindrico (GuarDrone)
@@ -56,7 +56,6 @@ public:
     this->declare_parameter("fov_h", 80.0);
     this->declare_parameter("fov_v", 60.0);
     this->declare_parameter("r_min_safety", 1.5); // distanza minima di sicurezza [m]
-    this->declare_parameter("k_repulsive", 1.0);
     this->declare_parameter("max_repulsive_force", 15.0);
 
     // Parametri teleoperazione Peg Drone
@@ -287,10 +286,10 @@ private:
 
     // Parametri campo potenziale
     double r_min = this->get_parameter("r_min_safety").as_double();
-    double k_rep = this->get_parameter("k_repulsive").as_double();
+    double max_rep = this->get_parameter("max_repulsive_force").as_double();
+    double k_rep = max_rep/(std::exp(alpha)-1);
     double act_ratio = ACTIVATION_RATIO;
     double act_ratio_cam = ACTIVATION_RATIO_CAM;
-    double max_rep = this->get_parameter("max_repulsive_force").as_double();
 
     // Parametri Campo Visivo (FoV)
     double fov_h = this->get_parameter("fov_h").as_double();
@@ -302,7 +301,7 @@ private:
     double r_actual = actual_pov_[0]; // r_cyl [m]
     double dist_r_min = r_actual - r_min; // >0 se sicuro, <0 se violato
     double f_rep_r = repulsive_force(dist_r_min, r_min, act_ratio, k_rep,
-                                     alpha / 2, max_rep);
+                                     alpha, max_rep);
 
     // 2. Asse verticale z_cyl: forza repulsiva se ci si avvicina ai limiti verticali del FoV
     double z_act = actual_pov_[2];
