@@ -40,7 +40,7 @@ initial_poses:
   drone_y: 0.0
   drone_z: 0.0
   drone_yaw: 0.0
-  peg_x: 0.0
+  peg_x: 1.0
   peg_y: 0.0
   peg_z: 0.0
   peg_yaw: -1.57
