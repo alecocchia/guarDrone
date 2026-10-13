@@ -192,7 +192,7 @@ def generate_launch_description():
                               description='Se true, avvia fake_publisher invece del supervisor vero per testare il drone singolo'),
         DeclareLaunchArgument('use_dji', default_value='true',
                               description='Se true, avvia dji_pub per tracciare il target reale tramite OptiTrack'),
-        DeclareLaunchArgument('dji_id', default_value='3',
+        DeclareLaunchArgument('dji_id', default_value='4',
                               description='ID OptiTrack del corpo rigido DJI'),
         DeclareLaunchArgument('dji_topic', default_value='',
                               description='Topic OptiTrack esplicito (se vuoto, usa /optitrack/body_<dji_id>/odometry)'),

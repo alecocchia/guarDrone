@@ -62,7 +62,7 @@ class DJIPublisherNode(Node):
         # =====================================================================
         # PARAMETRI
         # =====================================================================
-        self.declare_parameter('dji_id', 1)
+        self.declare_parameter('dji_id', 4)
         self.declare_parameter('dji_topic', '')
         self.declare_parameter('takeoff_alt_1', 1.50)
         self.declare_parameter('guardrone_start_x', 0.0)
