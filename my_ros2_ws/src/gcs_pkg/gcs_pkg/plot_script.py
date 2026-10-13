@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys
+import os, sys, re
 import argparse, numpy as np
 
 # Risolve potenziale conflitto namespace per mpl_toolkits (mplot3d / Axes3D) prima di importare pyplot
@@ -24,9 +24,161 @@ for p in [current_dir, os.path.join(ws_src_dir, 'utils_pkg'), '/root/my_ros2_ws/
 
 from utils_pkg.utils_np import wrap_pi, cylindrical_to_cartesian
 
-def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, fignum=None, task_start=-1.0, task_end=-1.0, phases=None, haptic_intervals=None):
+# Mappatura dei nomi file dei plot (coerenti con i nomi usati in VIDEO_HOVERING)
+FIG_NAMES = {
+    1: "3D",
+    2: "RP",
+    3: "VEL",
+    4: "POS",
+    5: "CYL_POV",
+    6: "YAW",
+    7: "CYL_POV_ERR",
+    8: "DERIVATIVE_NORMS",
+    9: "CONTROL_WRENCH",
+    10: "REPULSIVE_FORCES",
+    11: "ACC",
+    12: "SENSOR_FORCES",
+    122: "INT_ADMITTANCE_ENU",
+    131: "INT_ADMITTANCE_SENSOR",
+    13: "SENSOR_NORM",
+    14: "INT_POS",
+    15: "INT_VEL",
+    16: "MBE",
+    17: "APF",
+    19: "SOLVE_TIME",
+}
+
+# Mappatura stili grafici condivisi per ciascuna fase della missione FSM
+PHASE_STYLE_MAP = {
+    'WAIT_TAKEOFF':        {'color': '#94a3b8', 'linestyle': ':',  'label': 'Wait Takeoff'},
+    'ARM_OFFBOARD':        {'color': '#64748b', 'linestyle': ':',  'label': 'Arm & Offboard'},
+    'TAKEOFF_MONITOR':     {'color': '#0284c7', 'linestyle': '--', 'label': 'Takeoff'},
+    'HOVERING':            {'color': '#2563eb', 'linestyle': '--', 'label': 'Hovering'},
+    'APPROACH':            {'color': '#f59e0b', 'linestyle': '--', 'label': 'Approach'},
+    'INTERACTION':         {'color': '#16a34a', 'linestyle': '-',  'label': 'Interaction'},
+    'HOME':                {'color': '#2563eb', 'linestyle': '--', 'label': 'Home'},
+    'MISSION_START':       {'color': '#f59e0b', 'linestyle': '--', 'label': 'Mission Start'},
+    'INSPECTION_START':    {'color': '#16a34a', 'linestyle': '-',  'label': 'Inspection Start'},
+    'INSPECTION_END':      {'color': '#9333ea', 'linestyle': '--', 'label': 'Inspection End'},
+    'MISSION_PREPARATION': {'color': '#f59e0b', 'linestyle': '--', 'label': 'Mission Prep'},
+    'MISSION':             {'color': '#16a34a', 'linestyle': '-',  'label': 'Mission'},
+    'DETACHMENT':          {'color': '#9333ea', 'linestyle': '--', 'label': 'Detachment'},
+    'RETURN_HOME':         {'color': '#2563eb', 'linestyle': '--', 'label': 'Return Home'},
+    'LANDING':             {'color': '#dc2626', 'linestyle': '--', 'label': 'Landing'},
+    'EMERGENCY':           {'color': '#b91c1c', 'linestyle': '-.', 'label': 'Emergency'},
+    'Mission Start':       {'color': '#2ca02c', 'linestyle': '--', 'label': 'Mission Start'},
+    'Mission End':         {'color': '#7f7f7f', 'linestyle': ':',  'label': 'Mission End'},
+}
+FALLBACK_COLORS = ['#0284c7', '#f59e0b', '#16a34a', '#9333ea', '#2563eb', '#dc2626', '#64748b']
+
+def sanitize_filename(text):
+    """Estrae un suffisso pulito e descrittivo per il file dal nome dell'etichetta (es. 'Cam X [m]' -> 'cam_x')."""
+    s = text.split('[')[0].split('(')[0].strip()
+    s = re.sub(r'\\[a-zA-Z]+', '', s)  # Rimuove comandi LaTeX prima della sanitizzazione
+    s = re.sub(r'[^a-zA-Z0-9_]+', '_', s).strip('_').lower()
+    return s
+
+def export_legend(handles, labels, out_path, fmt_opts, ncol=None, max_width=7.2):
+    """Esporta un file PDF/PNG contenente esclusivamente la legenda condivisa, ritagliata a filo per LaTeX."""
+    if not handles or not labels:
+        return
+    n = len(handles)
+    if ncol is None:
+        ncol = min(n, 6)
+    fig_leg = plt.figure(figsize=(max_width, 0.45))
+    fig_leg.patch.set_facecolor('#ffffff')
+    fig_leg.legend(
+        handles, labels,
+        loc='center',
+        ncol=ncol,
+        frameon=True,
+        facecolor='white',
+        framealpha=0.95,
+        edgecolor='#cbd5e1',
+        fontsize=8.5,
+        handlelength=1.5,
+        handletextpad=0.5,
+        columnspacing=1.0,
+        borderpad=0.3
+    )
+    fig_leg.savefig(out_path, bbox_inches='tight', pad_inches=0.02, **fmt_opts)
+    plt.close(fig_leg)
+
+def plot_single_quantity(time, item, label, task_start=-1.0, task_end=-1.0, phases=None, haptic_intervals=None, mpc_intervals=None, use_tex=True):
+    """Genera una singola figura calibrata per colonna LaTeX (3.5x2.3 pollici) con font a scala nativa 1:1."""
+    # Configura il font serif e mathtext 'cm' (Computer Modern) per garantire resa identica a LaTeX
+    plt.rcParams.update({"text.usetex": use_tex, "font.family": "serif", "mathtext.fontset": "cm", "axes.ymargin": 0.4, "figure.max_open_warning": 100})
+    fig, ax = plt.subplots(figsize=(3.5, 2.3))
+    fig.patch.set_facecolor('#ffffff')
+    c_actual = '#1f77b4'
+    c_ref = '#d62728'
+    c_start = '#2ca02c'
+
+    time_plot = time[:len(item['sim'])]
+
+    if mpc_intervals:
+        for idx_m, (t_m_s, t_m_e) in enumerate(mpc_intervals):
+            ax.axvspan(t_m_s, t_m_e, color='#facc15', alpha=0.10, label='MPC' if idx_m == 0 else None, zorder=0)
+
+    if haptic_intervals:
+        for idx_h, h_item in enumerate(haptic_intervals):
+            if len(h_item) >= 4:
+                t_h_start, t_h_end, h_color, h_label = h_item[:4]
+            else:
+                t_h_start, t_h_end = h_item[:2]
+                h_color = '#ef4444'
+                h_label = 'Haptic'
+            ax.axvspan(t_h_start, t_h_end, color=h_color, alpha=0.15, label=h_label if idx_h == 0 else None, zorder=0)
+
+    ax.plot(time_plot, item['sim'], color=c_actual, label='Actual', linewidth=1.6, zorder=3)
+
+    if 'ref' in item and item['ref'] is not None:
+        ref_data = item['ref']
+        if np.isscalar(ref_data):
+            ax.axhline(y=ref_data, color=c_ref, linestyle='--', label='Ref', linewidth=1.2, alpha=0.85, zorder=2)
+        else:
+            ax.plot(time_plot, ref_data[:len(time_plot)], color=c_ref, linestyle='--', label='Ref', linewidth=1.2, alpha=0.85, zorder=2)
+
+    if phases:
+        for idx_p, (pt, pname) in enumerate(phases):
+            st = PHASE_STYLE_MAP.get(pname, {
+                'color': FALLBACK_COLORS[idx_p % len(FALLBACK_COLORS)],
+                'linestyle': '--',
+                'label': pname
+            })
+            if pt >= 0:
+                ax.axvline(x=pt, color=st['color'], linestyle=st['linestyle'],
+                           linewidth=1.1, alpha=0.75, label=st['label'])
+    elif task_start > 0:
+        ax.axvline(x=task_start, color=c_start, linestyle='--', linewidth=1.1, alpha=0.75, label='Mission Start')
+        if task_end > 0 and task_end < float(time[-1]):
+            ax.axvline(x=task_end, color='#dc2626', linestyle='--', linewidth=1.1, alpha=0.75, label='Landing')
+
+    ax.set_title(label, fontsize=9.5, fontweight='normal', color='#0f172a', pad=3)
+    ax.set_xlabel('Time [s]', fontsize=8.5, color='#334155')
+    ax.tick_params(axis='both', which='both', labelsize=8.0, colors='#334155')
+    ax.grid(True, linestyle='--', alpha=0.45, color='#94a3b8')
+
+    for spine in ax.spines.values():
+        spine.set_color('#cbd5e1')
+        spine.set_linewidth(0.8)
+
+    handles, labels_leg = ax.get_legend_handles_labels()
+    pri_dict = {}
+    for h, l in zip(handles, labels_leg):
+        if l in ('Actual', 'Ref', 'Reference', 'MPC', 'Haptic') and l not in pri_dict:
+            pri_dict[l] = h
+    if pri_dict:
+        ax.legend(list(pri_dict.values()), list(pri_dict.keys()),
+                  loc='best', fontsize=7.5, frameon=True, facecolor='white', framealpha=0.92,
+                  edgecolor='#cbd5e1', borderpad=0.25, handlelength=1.2)
+
+    plt.tight_layout(pad=0.3)
+    return fig
+
+def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, fignum=None, task_start=-1.0, task_end=-1.0, phases=None, haptic_intervals=None, filenames=None):
     """Generazione grafici ad alta leggibilità con palette moderna Tableau, griglia discreta e marker eleganti."""
-    plt.rcParams.update({"text.usetex": use_tex, "font.family": "serif", "axes.ymargin": 0.6})
+    plt.rcParams.update({"text.usetex": use_tex, "font.family": "serif", "mathtext.fontset": "cm", "axes.ymargin": 0.7})
     if phases is None and hasattr(myPlot, 'default_phases'):
         phases = myPlot.default_phases
     if haptic_intervals is None and hasattr(myPlot, 'default_haptic_intervals'):
@@ -37,11 +189,12 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
     fig, axes = plt.subplots(nrows, ncols, figsize=(12.5, 3.0 * nrows + 0.6), squeeze=False, num=fignum)
     fig.patch.set_facecolor('#ffffff')
     if fignum is not None:
+        title_suffix = f" ({FIG_NAMES[fignum]})" if fignum in FIG_NAMES else ""
         try:
-            fig.canvas.manager.set_window_title(f"Figure {fignum}: {title}")
+            fig.canvas.manager.set_window_title(f"Figure {fignum}{title_suffix}: {title}")
         except AttributeError:
             try:
-                fig.canvas.set_window_title(f"Figure {fignum}: {title}")
+                fig.canvas.set_window_title(f"Figure {fignum}{title_suffix}: {title}")
             except Exception:
                 pass
     axes = axes.flatten()
@@ -52,29 +205,6 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
     c_start = '#2ca02c'   # Emerald green
     c_end = '#7f7f7f'     # Slate gray
     
-    # Mappatura stili grafici per ciascuna fase della missione FSM
-    phase_style_map = {
-        'WAIT_TAKEOFF':        {'color': '#94a3b8', 'linestyle': ':',  'label': 'Wait Takeoff'},
-        'ARM_OFFBOARD':        {'color': '#64748b', 'linestyle': ':',  'label': 'Arm & Offboard'},
-        'TAKEOFF_MONITOR':     {'color': '#0284c7', 'linestyle': '--', 'label': 'Takeoff'},
-        'HOVERING':            {'color': '#2563eb', 'linestyle': '--', 'label': 'Hovering'},
-        'APPROACH':            {'color': '#f59e0b', 'linestyle': '--', 'label': 'Approach'},
-        'INTERACTION':         {'color': '#16a34a', 'linestyle': '-',  'label': 'Interaction'},
-        'HOME':                {'color': '#2563eb', 'linestyle': '--', 'label': 'Home'},
-        'MISSION_START':       {'color': '#f59e0b', 'linestyle': '--', 'label': 'Mission Start'},
-        'INSPECTION_START':    {'color': '#16a34a', 'linestyle': '-',  'label': 'Inspection Start'},
-        'INSPECTION_END':      {'color': '#9333ea', 'linestyle': '--', 'label': 'Inspection End'},
-        'MISSION_PREPARATION': {'color': '#f59e0b', 'linestyle': '--', 'label': 'Mission Prep'},
-        'MISSION':             {'color': '#16a34a', 'linestyle': '-',  'label': 'Mission'},
-        'DETACHMENT':          {'color': '#9333ea', 'linestyle': '--', 'label': 'Detachment'},
-        'RETURN_HOME':         {'color': '#2563eb', 'linestyle': '--', 'label': 'Return Home'},
-        'LANDING':             {'color': '#dc2626', 'linestyle': '--', 'label': 'Landing'},
-        'EMERGENCY':           {'color': '#b91c1c', 'linestyle': '-.', 'label': 'Emergency'},
-        'Mission Start':       {'color': '#2ca02c', 'linestyle': '--', 'label': 'Mission Start'},
-        'Mission End':         {'color': '#7f7f7f', 'linestyle': ':',  'label': 'Mission End'},
-    }
-    fallback_colors = ['#0284c7', '#f59e0b', '#16a34a', '#9333ea', '#2563eb', '#dc2626', '#64748b']
-
     # Identifica gli intervalli temporali in cui l'MPC è attivo per l'ombreggiatura gialla
     # (escluse le fasi preparatorie/decollo e atterraggio/emergenza)
     NON_MPC_PHASES = {'WAIT_EKF', 'WAIT_START', 'WAIT_TAKEOFF', 'ARM_OFFBOARD', 'TAKEOFF_MONITOR',
@@ -96,6 +226,21 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
     elif task_start > 0:
         t_end_val = task_end if (task_end > task_start and task_end < float(time[-1])) else float(time[-1])
         mpc_intervals.append((task_start, t_end_val))
+
+    # Registrazione dati per salvataggio figure singole (formato LaTeX 1-colonna)
+    if hasattr(myPlot, 'registry'):
+        myPlot.registry.append({
+            'fignum': fignum,
+            'time': time,
+            'data_list': data_list,
+            'labels': labels,
+            'filenames': filenames,
+            'task_start': task_start,
+            'task_end': task_end,
+            'phases': phases,
+            'haptic_intervals': haptic_intervals,
+            'mpc_intervals': mpc_intervals,
+        })
 
     for i in range(n):
         ax = axes[i]
@@ -132,8 +277,8 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
         # Indicatori di transizione delle fasi di missione
         if phases:
             for idx_p, (pt, pname) in enumerate(phases):
-                st = phase_style_map.get(pname, {
-                    'color': fallback_colors[idx_p % len(fallback_colors)],
+                st = PHASE_STYLE_MAP.get(pname, {
+                    'color': FALLBACK_COLORS[idx_p % len(FALLBACK_COLORS)],
                     'linestyle': '--',
                     'label': pname
                 })
@@ -148,7 +293,7 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
             if task_end > 0 and task_end < float(time[-1]):
                 ax.axvline(x=task_end, color='#dc2626', linestyle='--', linewidth=1.3, alpha=0.75, label='Landing')
         
-        ax.set_title(labels[i], fontsize=10.5, fontweight='semibold', color='#0f172a', pad=4)
+        ax.set_title(labels[i], fontsize=10.5, fontweight='normal', color='#0f172a', pad=4)
         ax.set_xlabel('Time [s]', fontsize=9, color='#334155')
         ax.tick_params(axis='both', which='both', labelsize=8.5, colors='#334155')
         ax.grid(True, linestyle='--', alpha=0.45, color='#94a3b8')
@@ -169,16 +314,15 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
             if label not in handles_dict and label and not label.startswith('_'):
                 handles_dict[label] = handle
 
-    # Margine superiore e posizionamento legenda adattivi
-    if len(handles_dict) > 5:
-        top_rect = 0.79 if nrows == 1 else 0.86
-        leg_y = 0.88 if nrows == 1 else 0.925
-    else:
-        top_rect = 0.83 if nrows == 1 else 0.89
-        leg_y = 0.89 if nrows == 1 else 0.93
-    title_y = 0.98 if nrows == 1 else 0.99
-
+    # Margine superiore e posizionamento legenda adattivi (senza suptitle principale)
     if handles_dict:
+        if len(handles_dict) > 5:
+            top_rect = 0.88 if nrows == 1 else 0.92
+            leg_y = 0.99
+        else:
+            top_rect = 0.91 if nrows == 1 else 0.94
+            leg_y = 0.99
+
         fig.legend(
             list(handles_dict.values()),
             list(handles_dict.keys()),
@@ -191,8 +335,9 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
             edgecolor='#cbd5e1',
             fontsize=8.5
         )
+    else:
+        top_rect = 0.98
 
-    fig.suptitle(title, fontsize=13.0, fontweight='bold', color='#0f172a', y=title_y)
     plt.tight_layout(rect=[0, 0.02, 1, top_rect])
     
     if block:
@@ -232,6 +377,7 @@ def main():
                     help="[m] Soglia minima filtro spaziale 3D per hovering (default: 0.08, 0 per disattivare)")
     ap.add_argument("--smooth-window-3d", type=int, default=21,
                     help="Finestra media mobile traiettoria 3D (default: 21, <=1 per disattivare)")
+    ap.add_argument("--no-single", action="store_true", help="Disattiva il salvataggio dei singoli grafici per LaTeX")
     args = ap.parse_args()
 
     try:
@@ -251,6 +397,7 @@ def main():
     mass = data['mass'] if indata('mass') else 2.0
     g = 9.80665
     block = not args.all and not args.save # Se vogliamo sequenziale, block=True a ogni plot
+    myPlot.registry = []
     task_start = float(np.asarray(data['task_start_time']).flat[0]) if indata('task_start_time') else -1.0
     if args.task_start is not None:   # argomento CLI sovrascrive il valore del log
         task_start = args.task_start
@@ -382,10 +529,10 @@ def main():
     ax1.set_facecolor('#ffffff')
 
     try:
-        fig1.canvas.manager.set_window_title("Figure 1: 3D Drones Trajectories (World Frame ENU)")
+        fig1.canvas.manager.set_window_title(f"Figure 1 ({FIG_NAMES[1]}): 3D Drones Trajectories (World Frame ENU)")
     except AttributeError:
         try:
-            fig1.canvas.set_window_title("Figure 1: 3D Drones Trajectories (World Frame ENU)")
+            fig1.canvas.set_window_title(f"Figure 1 ({FIG_NAMES[1]}): 3D Drones Trajectories (World Frame ENU)")
         except Exception:
             pass
 
@@ -420,7 +567,6 @@ def main():
     ax1.set_xlabel('X [m]', fontsize=10, labelpad=8)
     ax1.set_ylabel('Y [m]', fontsize=10, labelpad=8)
     ax1.set_zlabel('Z [m]', fontsize=10, labelpad=8)
-    ax1.set_title('3D Drones Trajectories in World Frame (ENU)', fontsize=13, fontweight='bold', pad=15, color='#0f172a')
     ax1.legend(loc='upper right', frameon=True, facecolor='white', framealpha=0.92, edgecolor='#cbd5e1', fontsize=8.5)
     ax1.grid(True, linestyle='--', alpha=0.45, color='#94a3b8')
 
@@ -449,8 +595,9 @@ def main():
         {'sim': data['rpy'][:, 0], 'ref': data['pref_rpy'][:, 0]},
         {'sim': data['rpy'][:, 1], 'ref': data['pref_rpy'][:, 1]}
     ]
-    myPlot(t, fig_rpy_data, ["Roll [rad]", "Pitch [rad]"], 
-           "Drone Orientation (Roll/Pitch)", ncols=2, use_tex=args.tex, block=block, fignum=2, task_start=task_start, task_end=task_end)
+    myPlot(t, fig_rpy_data, [r"$\phi\ [\mathrm{rad}]$", r"$\theta\ [\mathrm{rad}]$"], 
+           "Drone Orientation (Roll/Pitch)", ncols=2, use_tex=args.tex, block=block, fignum=2,
+           task_start=task_start, task_end=task_end, filenames=["roll", "pitch"])
 
     # --- FIGURE 3: Velocities ---
     fig_vel_data = [
@@ -461,9 +608,10 @@ def main():
         {'sim': data['omega'][:, 1], 'ref': data['omegaref'][:, 1]},
         {'sim': data['omega'][:, 2], 'ref': data['omegaref'][:, 2]}
     ]
-    myPlot(t, fig_vel_data, ["Vel X [m/s]", "Vel Y [m/s]", "Vel Z [m/s]", 
-                  "Omega X [rad/s]", "Omega Y [rad/s]", "Omega Z [rad/s]"], 
-           "Drone Velocities vs MPC Reference", ncols=3, use_tex=args.tex, block=block, fignum=3, task_start=task_start, task_end=task_end)
+    myPlot(t, fig_vel_data, [r"$v_x\ [\mathrm{m/s}]$", r"$v_y\ [\mathrm{m/s}]$", r"$v_z\ [\mathrm{m/s}]$", 
+                             r"$\omega_x\ [\mathrm{rad/s}]$", r"$\omega_y\ [\mathrm{rad/s}]$", r"$\omega_z\ [\mathrm{rad/s}]$"], 
+           "Drone Velocities vs MPC Reference", ncols=3, use_tex=args.tex, block=block, fignum=3,
+           task_start=task_start, task_end=task_end, filenames=["vel_x", "vel_y", "vel_z", "omega_x", "omega_y", "omega_z"])
 
     # --- FIGURE 4: Riferimento Cartesiano Camera vs Posizione Effettiva Camera ---
     # Usiamo direttamente p_cam e p_cam_target salvati dal logger.py
@@ -473,8 +621,11 @@ def main():
         {'sim': data['p_cam'][:, 1], 'ref': data['p_cam_target'][:, 1]},
         {'sim': data['p_cam'][:, 2], 'ref': data['p_cam_target'][:, 2]}
     ]
-    myPlot(t, fig_cart_ref_data, ["Cam X [m]", "Cam Y [m]", "Cam Z [m]"], 
-           "Camera Cartesian Position vs Derived Target", ncols=3, use_tex=args.tex, block=block, fignum=4, task_start=task_start, task_end=task_end)
+    # Titoli in notazione matematica LaTeX per le coordinate cartesiane della telecamera
+    myPlot(t, fig_cart_ref_data,
+           [r"$p_{\mathrm{cam}, x}\ [\mathrm{m}]$", r"$p_{\mathrm{cam}, y}\ [\mathrm{m}]$", r"$p_{\mathrm{cam}, z}\ [\mathrm{m}]$"], 
+           "Camera Cartesian Position vs Derived Target", ncols=3, use_tex=args.tex, block=block, fignum=4,
+           task_start=task_start, task_end=task_end, filenames=["cam_x", "cam_y", "cam_z"])
 
     # --- FIGURE 5: Coordinate Cilindriche (r_cyl, beta, z) vs Riferimento ---
     # Allineamento dell'azimut per evitare che ref e sim si sdoppino di 2*pi nel plot
@@ -491,10 +642,12 @@ def main():
         {'sim': beta_sim_unwrapped, 'ref': beta_ref_aligned},
         {'sim': data['z_cyl'],'ref': data['online_cyl_ref'][:, 2]},
     ]
+    # Titoli in notazione matematica LaTeX per Coordinate Cilindriche PoV
     myPlot(t, fig4_data,
-           ["Distance r_cyl [m]", "Azimuth beta [rad]", "Elevation z [m]"],
+           [r"$r_{\mathrm{cyl}}\ [\mathrm{m}]$", r"$\beta\ [\mathrm{rad}]$", r"$z_{\mathrm{cyl}}\ [\mathrm{m}]$"],
            "Cylindrical PoV Tracking (World Frame)",
-           ncols=3, use_tex=args.tex, block=block, fignum=5, task_start=task_start, task_end=task_end)
+           ncols=3, use_tex=args.tex, block=block, fignum=5,
+           task_start=task_start, task_end=task_end, filenames=["distance_r_cyl", "azimuth_beta", "elevation_z"])
 
     # --- FIGURE 6: Yaw Tracking (puntamento verso oggetto) ---
     # yaw_err_cyl è già loggato direttamente dall'MPC (wrap_pi applicato correttamente)
@@ -509,10 +662,12 @@ def main():
         {'sim': yaw_actual,               'ref': yaw_desired},
         {'sim': data['yaw_err_cyl'],      'ref': yaw_offset_ref},
     ]
+    # Titoli in notazione matematica LaTeX per Yaw e Errore di Yaw
     myPlot(t, fig5_data,
-           ["Yaw Actual vs Desired [rad]", "Yaw Error [rad]"],
+           [r"$\psi\ [\mathrm{rad}]$", r"$e_{\psi}\ [\mathrm{rad}]$"],
            "Yaw Tracking: Drone Pointing Target",
-           ncols=2, use_tex=args.tex, block=block, fignum=6, task_start=task_start, task_end=task_end)
+           ncols=2, use_tex=args.tex, block=block, fignum=6,
+           task_start=task_start, task_end=task_end, filenames=["yaw", "yaw_error"])
 
     # --- FIGURE 6 (fignum=7): Errori di Tracking Primari (Cilindrici & Yaw) ---
     err_r   = np.abs(data['r_cyl']    - data['online_cyl_ref'][:, 0])
@@ -528,13 +683,16 @@ def main():
         {'sim': err_z,     'ref': 0.0},
         {'sim': err_yaw,   'ref': 0.0},
     ]
+    # Titoli in notazione matematica LaTeX per Errori di Tracking
     myPlot(t, fig6_data,
-           ["Distance Error |r_cyl_err| [m]",
-            "Azimuth Error |beta_err| [rad]", 
-            "Elevation Error |z_err| [m]",
-            "Yaw Error |yaw_err| [rad]"],
+           [r"$|e_r|\ [\mathrm{m}]$",
+            r"$|e_\beta|\ [\mathrm{rad}]$", 
+            r"$|e_z|\ [\mathrm{m}]$",
+            r"$|e_\psi|\ [\mathrm{rad}]$"],
            "Primary Tracking Errors (Cylindrical & Yaw)",
-           ncols=2, use_tex=args.tex, block=block, fignum=7, task_start=task_start, task_end=task_end)
+           ncols=2, use_tex=args.tex, block=block, fignum=7,
+           task_start=task_start, task_end=task_end,
+           filenames=["distance_error_r_cyl_err", "azimuth_error_beta_err", "elevation_error_z_err", "yaw_error_yaw_err"])
 
     # --- FIGURE 7: Dynamic States Errors & Derivatives ---
     err_vel = np.linalg.norm(data['v'] - data['vref'], axis=1)
@@ -611,17 +769,6 @@ def main():
                ["Force X (Sensor) [N]", "Force Y (Sensor) [N]", "Force Z (Sensor) [N]"], 
                "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=12, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
 
-    # --- FIGURE 11b: Peg External Torques ---
-    if indata('peg_ext_torque'):
-        fig11b_data = [
-            {'sim': data['peg_ext_torque'][:, 0], 'ref': 0.0},
-            {'sim': data['peg_ext_torque'][:, 1], 'ref': 0.0},
-            {'sim': data['peg_ext_torque'][:, 2], 'ref': 0.0}
-        ]
-        myPlot(t, fig11b_data, 
-               ["Torque X (Sensor) [Nm]", "Torque Y (Sensor) [Nm]", "Torque Z (Sensor) [Nm]"], 
-               "Peg External Contact Torques (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=121, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
-
     # --- FIGURE 122: Admittance delta_p (spostamento di ammettenza in ENU) ---
     if indata('delta_p'):
         dp = data['delta_p']
@@ -654,19 +801,6 @@ def main():
                "Admittance Displacement in Sensor Frame",
                ncols=2, use_tex=args.tex, block=block, fignum=131, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
 
-    # --- FIGURE 12c: Admittance delta_yaw (rotazione di ammettenza) ---
-    if indata('delta_yaw'):
-        dyaw_rad = data['delta_yaw']
-        dyaw_deg = np.degrees(dyaw_rad)
-        fig12c_data = [
-            {'sim': dyaw_rad, 'ref': 0.0},
-            {'sim': dyaw_deg, 'ref': 0.0}
-        ]
-        myPlot(t, fig12c_data,
-               [r"$\Delta\psi$ [rad]", r"$\Delta\psi$ [deg]"],
-               "Admittance Yaw Displacement $\\Delta\\psi$",
-               ncols=2, use_tex=args.tex, block=block, fignum=132, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
-
     # --- FIGURE 13: Confronto ||delta_p|| vs ||F_ext|| ---
     if indata('delta_p') and indata('peg_ext_force'):
         dp_norm  = np.linalg.norm(data['delta_p'], axis=1)
@@ -674,7 +808,7 @@ def main():
         fig13, ax13 = plt.subplots(2, 1, figsize=(12, 6), sharex=True,
                                    num=13)
         try:
-            fig13.canvas.manager.set_window_title("Figure 13: Admittance vs Contact Force")
+            fig13.canvas.manager.set_window_title(f"Figure 13 ({FIG_NAMES[13]}): Admittance vs Contact Force")
         except Exception:
             pass
         if haptic_peg_intervals:
@@ -698,38 +832,7 @@ def main():
         ax13[1].legend(loc='upper right')
         ax13[1].grid(True, alpha=0.3)
         ax13[1].set_title("Admittance Displacement Norm")
-        fig13.suptitle("Admittance Effect: Contact Force vs Position Deviation", fontsize=14)
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        if block:
-            plt.show()
-
-    # --- FIGURE 13b: Confronto delta_yaw vs tau_yaw (Sensor X) ---
-    if indata('delta_yaw') and indata('peg_ext_torque'):
-        tau_x = data['peg_ext_torque'][:, 0]
-        dyaw_deg = np.degrees(data['delta_yaw'])
-        fig13b, ax13b = plt.subplots(2, 1, figsize=(12, 6), sharex=True, num=133)
-        try:
-            fig13b.canvas.manager.set_window_title("Figure 13b: Admittance Yaw vs Contact Torque")
-        except Exception:
-            pass
-        if haptic_peg_intervals:
-            for idx_h, item in enumerate(haptic_peg_intervals):
-                t_h_s, t_h_e = item[0], item[1]
-                ax13b[0].axvspan(t_h_s, t_h_e, color='#a855f7', alpha=0.15, label='Haptic Interaction' if idx_h == 0 else None, zorder=0)
-                ax13b[1].axvspan(t_h_s, t_h_e, color='#a855f7', alpha=0.15, label='Haptic Interaction' if idx_h == 0 else None, zorder=0)
-        ax13b[0].plot(t, tau_x, 'm-', linewidth=1.5, label=r'$\tau_x$ [Nm]')
-        ax13b[0].set_ylabel(r'$\tau_x$ (Sensor X / Yaw) [Nm]')
-        ax13b[0].legend(loc='upper right')
-        ax13b[0].grid(True, alpha=0.3)
-        ax13b[0].set_title(r"Contact Torque $\tau_x$ (Sensor X / Drone Yaw axis)")
-        ax13b[1].plot(t, dyaw_deg, 'c-', linewidth=1.5, label=r'$\Delta\psi$ [deg]')
-        ax13b[1].set_xlabel('Time [s]')
-        ax13b[1].set_ylabel(r'$\Delta\psi$ [deg]')
-        ax13b[1].legend(loc='upper right')
-        ax13b[1].grid(True, alpha=0.3)
-        ax13b[1].set_title(r"Admittance Yaw Deviation $\Delta\psi$")
-        fig13b.suptitle(r"Rotational Admittance Effect: Contact Torque $\tau_x$ vs $\Delta\psi$", fontsize=14)
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        plt.tight_layout(rect=[0, 0.02, 1, 0.98])
         if block:
             plt.show()
 
@@ -932,15 +1035,6 @@ def main():
             report_lines.append(f"Percentile 95%             : {p95_lat:.2f} ms")
             report_lines.append(f"Percentile 99%             : {p99_lat:.2f} ms")
 
-            # --- FIGURE 20: Haptic Network Latency ---
-            lat_threshold_ms = 20.0
-            fig20_data = [
-                {'sim': lat_raw, 'ref': lat_threshold_ms}
-            ]
-            myPlot(t, fig20_data,
-                   [f"One-Way Latency [ms] (Mean: {mean_lat:.2f} ms, Max: {max_lat:.2f} ms, Threshold: {lat_threshold_ms:.0f} ms)"],
-                   "Haptic Teleoperation Network Latency (RTT/2) & Jitter", ncols=1, use_tex=args.tex, block=block, fignum=20, task_start=task_start, task_end=task_end)
-
     # 3. TRACKING PERFORMANCE (in Missione)
     if indata('r_cyl') and indata('online_cyl_ref'):
         mask_trk = np.ones(len(t), dtype=bool)
@@ -1012,17 +1106,107 @@ def main():
         }
         fig_nums = plt.get_fignums()
         for i in fig_nums:
+            # Nome personalizzato del plot (es. 3D, RP, VEL) come da convenzione VIDEO_HOVERING
+            plot_name = FIG_NAMES.get(i, f"plot_fig_{i}")
             for fmt in args.formats:
                 sub_dir = os.path.join(args.out_dir, fmt)
                 os.makedirs(sub_dir, exist_ok=True)
-                out_path = os.path.join(sub_dir, f"plot_fig_{i}.{fmt}")
+                out_path = os.path.join(sub_dir, f"{plot_name}.{fmt}")
                 plt.figure(i).savefig(out_path, **fmt_opts[fmt])
+
+        # --- Salvataggio singoli grafici per LaTeX (1 grandezza per figura, formato colonna IEEE 3.5x2.3 in) ---
+        if not args.no_single:
+            for entry in getattr(myPlot, 'registry', []):
+                fignum = entry['fignum']
+                f_name = FIG_NAMES.get(fignum, f"plot_fig_{fignum}")
+                fn_list = entry.get('filenames') or [None] * len(entry['labels'])
+                for idx, (data_item, lbl, fn_custom) in enumerate(zip(entry['data_list'], entry['labels'], fn_list)):
+                    s_name = fn_custom or sanitize_filename(lbl) or f"var_{idx+1}"
+                    fig_s = plot_single_quantity(
+                        entry['time'], data_item, lbl,
+                        task_start=entry['task_start'], task_end=entry['task_end'],
+                        phases=entry['phases'], haptic_intervals=entry['haptic_intervals'],
+                        mpc_intervals=entry['mpc_intervals'], use_tex=args.tex
+                    )
+                    for fmt in args.formats:
+                        sub_single = os.path.join(args.out_dir, fmt, "single")
+                        os.makedirs(sub_single, exist_ok=True)
+                        fig_s.savefig(os.path.join(sub_single, f"{f_name}_{s_name}.{fmt}"), **fmt_opts[fmt])
+                        # Se il plot è lo yaw, salva anche l'alias per retrocompatibilità LaTeX
+                        if f_name == "YAW" and s_name == "yaw":
+                            fig_s.savefig(os.path.join(sub_single, f"YAW_yaw_actual_vs_desired.{fmt}"), **fmt_opts[fmt])
+                    plt.close(fig_s)
+
+            # Singoli grafici per Figura 13 (SENSOR_NORM)
+            if indata('delta_p') and indata('peg_ext_force'):
+                fig13_items = [
+                    ({'sim': np.linalg.norm(data['peg_ext_force'], axis=1), 'ref': None}, r"$\|F_{ext}\|$ [N]", "contact_force_norm"),
+                    ({'sim': np.linalg.norm(data['delta_p'], axis=1), 'ref': None}, r"$\|\Delta p\|$ [m]", "admittance_displacement_norm")
+                ]
+                for data_item, lbl, s_name in fig13_items:
+                    fig_s = plot_single_quantity(
+                        t, data_item, lbl,
+                        task_start=task_start, task_end=task_end,
+                        phases=phases, haptic_intervals=myPlot.haptic_peg_intervals,
+                        mpc_intervals=entry['mpc_intervals'] if 'entry' in locals() else None, use_tex=args.tex
+                    )
+                    for fmt in args.formats:
+                        sub_single = os.path.join(args.out_dir, fmt, "single")
+                        os.makedirs(sub_single, exist_ok=True)
+                        fig_s.savefig(os.path.join(sub_single, f"SENSOR_NORM_{s_name}.{fmt}"), **fmt_opts[fmt])
+                    plt.close(fig_s)
+
+        # --- Generazione legende dedicate standalone (phases_legend e common_legend) per LaTeX ---
+        from matplotlib.lines import Line2D
+        from matplotlib.patches import Patch
+
+        phase_handles, phase_labels = [], []
+        if (indata('task_start_time') and float(data['task_start_time']) > 0) or phases:
+            phase_handles.append(Patch(facecolor='#facc15', alpha=0.35, edgecolor='none', label='MPC Active'))
+            phase_labels.append('MPC Active')
+        if haptic_gd_intervals or haptic_peg_intervals:
+            phase_handles.append(Patch(facecolor='#ef4444', alpha=0.35, edgecolor='none', label='Haptic Active'))
+            phase_labels.append('Haptic Active')
+
+        seen_phases = set()
+        if phases:
+            for pt, pname in phases:
+                st = PHASE_STYLE_MAP.get(pname, {'color': '#2563eb', 'linestyle': '--', 'label': pname})
+                lbl = st['label']
+                if lbl not in seen_phases:
+                    seen_phases.add(lbl)
+                    phase_handles.append(Line2D([0], [0], color=st['color'], linestyle=st['linestyle'],
+                                                linewidth=1.3, label=lbl))
+                    phase_labels.append(lbl)
+        elif task_start > 0:
+            phase_handles.append(Line2D([0], [0], color='#2ca02c', linestyle='--', linewidth=1.3, label='Mission Start'))
+            phase_labels.append('Mission Start')
+            if task_end > 0:
+                phase_handles.append(Line2D([0], [0], color='#dc2626', linestyle='--', linewidth=1.3, label='Landing'))
+                phase_labels.append('Landing')
+
+        common_handles = [
+            Line2D([0], [0], color='#1f77b4', linewidth=1.6, label='Actual'),
+            Line2D([0], [0], color='#d62728', linestyle='--', linewidth=1.3, label='Reference'),
+        ] + phase_handles
+        common_labels = ['Actual', 'Reference'] + phase_labels
+
+        for fmt in args.formats:
+            opts = fmt_opts[fmt].copy()
+            opts.pop("bbox_inches", None)
+            for dest_dir in [os.path.join(args.out_dir, fmt), os.path.join(args.out_dir, fmt, "single")]:
+                os.makedirs(dest_dir, exist_ok=True)
+                export_legend(phase_handles, phase_labels, os.path.join(dest_dir, f"phases_legend.{fmt}"), opts)
+                export_legend(common_handles, common_labels, os.path.join(dest_dir, f"common_legend.{fmt}"), opts)
 
         # --- PDF multi-pagina: tutti i grafici in un unico file scrollabile nella cartella madre ---
         from matplotlib.backends.backend_pdf import PdfPages
         multipage_path = os.path.join(args.out_dir, "all_figures.pdf")
         with PdfPages(multipage_path) as pdf:
-            for i in fig_nums:
+            # Salvataggio nel pdf rispettando l'ordine sequenziale definito in FIG_NAMES
+            order_keys = list(FIG_NAMES.keys())
+            sorted_fig_nums = sorted(fig_nums, key=lambda n: order_keys.index(n) if n in order_keys else 1000 + n)
+            for i in sorted_fig_nums:
                 pdf.savefig(plt.figure(i), bbox_inches="tight")
         print(f"Grafici salvati in: {os.path.abspath(args.out_dir)} | Formati: {args.formats}")
         for fmt in args.formats:

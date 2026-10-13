@@ -715,8 +715,8 @@ class MpcPlannerNode(Node):
             PesoAngVel = PesoVis / 5.0
             PesoAcc    = PesoVis / 2.0
             PesoAngAcc = PesoVis / 2.0
-            PesoJerk   = PesoVis / 20.0
-            PesoSnap   = PesoVis / 20.0
+            PesoJerk   = PesoVis / 10.0
+            PesoSnap   = PesoVis / 10.0
             PesoForce  = PesoVis / 10.0   
             PesoTorque = PesoVis / 10.0
             scale_e = [8.0, 8.0, 8.0, 1.0, 1.0,1.0,1.0] # Vis, Vel, AngVel, Acc, AngAcc, Jerk, Snap
