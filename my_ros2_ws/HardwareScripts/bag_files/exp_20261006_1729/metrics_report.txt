@@ -1,7 +1,7 @@
 ======================================================================
              EXPERIMENT METRICS & BENCHMARK REPORT
 ======================================================================
-File log          : /root/my_ros2_ws/HardwareScripts/bag_files/exp_20261006_1729/hw_run.mat
+File log          : /home/aleco/guarDrone/my_ros2_ws/HardwareScripts/bag_files/exp_20261006_1729/hw_run.mat
 Campioni totali   : 2583
 Durata totale     : 105.80 s
 Tempo missione    : 82.70 s (da t=16.19s a t=98.88s)
