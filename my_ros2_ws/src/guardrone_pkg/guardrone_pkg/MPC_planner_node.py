@@ -131,7 +131,7 @@ class MpcPlannerNode(Node):
         # === Tempo/Orizzonte ===
         self.Hz = 100.0
         self.ts = 1.0/self.Hz             # 10 ms
-        self.N_horiz = 50           # Orizzonte di predizione (numero di campioni) # SIMULAZIONE CONTROLLER
+        self.N_horiz = 30           # Orizzonte di predizione (numero di campioni) # SIMULAZIONE CONTROLLER
         self.Tp = self.N_horiz * self.ts  # Tempo totale dell'orizzonte 
 
         self.path_pub_counter = 0  # Contatore per limitare la frequenza di pubblicazione del path
@@ -671,19 +671,18 @@ class MpcPlannerNode(Node):
 
     def configure_mpc(self):
 
+
         # =========================================================================
         # 1. SCALE FISICHE (Denominatori Regola di Bryson)
         # =========================================================================
         X_CART     = 0.2                          # [m] tolleranza errore posizione piano XY
         Y_CART     = 0.2                          # [m]
-        Z_CART     = 0.15                          # [m] tolleranza errore quota
+        Z_CART     = 0.2                          # [m] tolleranza errore quota
         Y_CYL      = np.pi / 4.0                  # [rad] tolleranza puntamento yaw (~45 deg)
-        V          = np.array([0.2, 0.2, 0.2])    # [m/s] velocità max attesa
-        ANG_DOT    = np.array([0.15, 0.15, 0.4])  # [rad/s] velocità angolare max
+        V          = np.array([0.3, 0.3, 0.2])    # [m/s] velocità max attesa
+        ANG_DOT    = np.array([0.2, 0.2, 0.3])  # [rad/s] velocità angolare max
         ACC        = np.array([0.2, 0.2, 0.2])    # [m/s^2] accelerazione max
-        ACC_ANG    = np.array([0.2, 0.2, 0.6])    # [rad/s^2] accelerazione angolare max
-        JERK       = np.array([4.0, 4.0, 4.0]) # [m/s^3]
-        SNAP       = np.array([20.0, 20.0, 20.0]) # [m/s^4]
+        ACC_ANG    = np.array([0.4, 0.4, 0.6])    # [rad/s^2] accelerazione angolare max
 
         # =========================================================================
         # 2. SELEZIONE PARAMETRICA DEI PESI (Proporzioni relative su PesoVis)
@@ -700,26 +699,22 @@ class MpcPlannerNode(Node):
             PesoAngVel = PesoVis / 50.0
             PesoAcc    = PesoVis / 30.0   
             PesoAngAcc = PesoVis / 100.0
-            PesoJerk   = PesoVis / 100.0
-            PesoSnap   = PesoVis / 100.0
             PesoForce  = PesoVis / 100.0  
             PesoTorque = PesoVis / 100.0
-            scale_e = [10.0, 10.0, 10.0, 2.0, 1.0,1.0,1.0] # Vis, Vel, AngVel, Acc, AngAcc, Jerk, Snap
+            scale_e = [10.0, 10.0, 10.0, 2.0, 1.0] # Vis, Vel, AngVel, Acc, AngAcc
 
         elif self.use_mbe:
             # ---------------------------------------------------------------------
             # CASO 2: CONTROLLER WRENCH CON MBE (disturbi compensati via feedforward)
             # ---------------------------------------------------------------------
             self.get_logger().info("[MPC Tuning] Modalità: CONTROLLER + MBE (Feedforward: ON)")
-            PesoVel    = PesoVis / 5.0   
-            PesoAngVel = PesoVis / 5.0
-            PesoAcc    = PesoVis / 2.0
-            PesoAngAcc = PesoVis / 2.0
-            PesoJerk   = PesoVis / 10.0
-            PesoSnap   = PesoVis / 10.0
+            PesoVel    = PesoVis / 10.0   
+            PesoAngVel = PesoVis / 10.0
+            PesoAcc    = PesoVis / 20.0
+            PesoAngAcc = PesoVis / 20.0
             PesoForce  = PesoVis / 10.0   
             PesoTorque = PesoVis / 10.0
-            scale_e = [8.0, 8.0, 8.0, 1.0, 1.0,1.0,1.0] # Vis, Vel, AngVel, Acc, AngAcc, Jerk, Snap
+            scale_e = [5.0, 5.0, 5.0, 1.0, 1.0]
 
         else:
             # ---------------------------------------------------------------------
@@ -730,11 +725,9 @@ class MpcPlannerNode(Node):
             PesoAngVel = PesoVis / 10.0
             PesoAcc    = PesoVis / 10.0
             PesoAngAcc = PesoVis / 100.0
-            PesoJerk   = PesoVis / 100.0
-            PesoSnap   = PesoVis / 100.0
             PesoForce  = PesoVis / 10.0
-            PesoTorque = PesoVis / 5.0
-            scale_e = [5.0, 5.0, 5.0, 2.0, 1.0,1.0,1.0]
+            PesoTorque = PesoVis / 10.0
+            scale_e = [5.0, 5.0, 5.0, 2.0, 1.0]
 
         # =========================================================================
         # 3. COSTRUZIONE MATRICI Q, R, Q_e
@@ -749,8 +742,6 @@ class MpcPlannerNode(Node):
         Q_ang_dot = np.diag([PesoAngVel] * 3) / np.array(ANG_DOT)**2
         Q_acc     = np.diag([PesoAcc] * 3) / np.array(ACC)**2
         Q_acc_ang = np.diag([PesoAngAcc] * 3) / np.array(ACC_ANG)**2
-        Q_jerk    = np.diag([PesoJerk] * 3) / np.array(JERK)**2
-        Q_snap    = np.diag([PesoSnap] * 3) / np.array(SNAP)**2
 
         R_f   = np.diag([PesoForce / 0.5**2])
         R_tau = np.diag([
@@ -759,15 +750,13 @@ class MpcPlannerNode(Node):
             PesoTorque / 0.5**2
         ])
         R   = ca.diagcat(R_f, R_tau)
-        Q   = ca.diagcat(Q_cart, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang, Q_jerk, Q_snap)
+        Q   = ca.diagcat(Q_cart, Q_vel, Q_ang_dot, Q_acc, Q_acc_ang)
         Q_e = ca.diagcat(
             scale_e[0] * Q_cart,
             scale_e[1] * Q_vel,
             scale_e[2] * Q_ang_dot,
             scale_e[3] * Q_acc,
-            scale_e[4] * Q_acc_ang,
-            scale_e[5] * Q_jerk,
-            scale_e[6] * Q_snap
+            scale_e[4] * Q_acc_ang
         )
 
         u_min = np.array([0.0, -self.U_TAU_X, -self.U_TAU_Y, -self.U_TAU_Z])
