@@ -32,6 +32,10 @@
 !fd_sdk_vendor/
 !fd_sdk_vendor/**
 
+# Tesi di Laurea
+!Tesi_Cocchia/
+!Tesi_Cocchia/**
+
 # ==========================================
 # 4. RI-BLOCCA LE SCHIFEZZE (Dentro le aree sbloccate)
 # ==========================================

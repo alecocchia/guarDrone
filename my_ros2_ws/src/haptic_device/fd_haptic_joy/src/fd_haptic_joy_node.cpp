@@ -37,7 +37,7 @@ public:
   // Costanti interne del nodo non configurabili da launchfile (come #DEFINE ma con tipo)
   static constexpr double DT = 0.01;
   static constexpr double JOY_SCALE = 15.0;
-  static constexpr double ALPHA = 6.0;
+  static constexpr double ALPHA = 2.0;
   static constexpr double ACTIVATION_RATIO = 1.0;
   static constexpr double ACTIVATION_RATIO_CAM = 0.3;
 

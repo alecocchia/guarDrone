@@ -1,0 +1,103 @@
+\documentclass[12pt, twoside]{report}
+\usepackage[a4paper, margin=3.3cm]{geometry}
+\usepackage[english]{babel}
+\addto\captionsitalian{\renewcommand{\abstractname}{Abstract}}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{ragged2e}
+\usepackage{hyperref}
+\usepackage{booktabs} %per tabelle
+\usepackage{siunitx}
+
+%per diagrammi
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, fit, backgrounds}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{lipsum}
+\usepackage{fancyhdr}
+\usepackage[backend=biber, style=numeric]{biblatex}
+\usepackage{csquotes}
+%\bibliographystyle{unsrt}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\graphicspath{ {./images/} }
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+
+\lstset{style=mystyle}
+\addbibresource{references.bib}
+\fancyhead[LE, RO]{\thepage}
+\fancyhead[RE]{\leftmark}
+\fancyhead[LO]{\rightmark}
+%\fancyfoot[LE, RO]{\thepage}
+\fancyfoot[CO, CE]{}
+
+% STEP 1: include the package
+\usepackage{uninafrontespizio}
+% STEP 2: Front-page configuration
+\Universita{Università degli Studi di Napoli Federico II}
+\Facolta{Scuola Politecnica e delle Scienze di Base}
+\Dipartimento{Dipartimento di Ingegneria Elettrica e Tecnologie dell'Informazione}
+\CorsoDiLaurea{Corso di Laurea Magistrale in Automazione e Robotica}
+%\AnnoAccademico{Anno Accademico 2022-2023}
+\Titolo{A mpc-based two-drone teleoperation architecture for exocentric vision}
+\Relatore{Mario \textsc{Selvaggio}}
+\Correlatori{Marco \textsc{Cognetti} \\Simone \textsc{D'Angelo}}
+\RelatoreLabel{Relatore} %optional, default: Relatore
+\Candidato{Alessandro \textsc{Cocchia}} %only one candidate is currently supported
+%\CandidatoLabel{Candidata} %optional, default: Candidato
+\Matricola{P38/000154}
+\Logo{logo-federico-II.pdf} %path to logo image
+\LogoWidth{4cm} %optional, default: 3cm
+\LogoPosition{below-uni} % or top, or below-title, or above-title, or no-logo
+
+
+
+\begin{document}
+    % STEP 3: use \makefrontpage and/or \makefrontpagealt
+    \input{frontespizio}
+    \nocite{*}
+    \pagestyle{empty}
+    \tableofcontents
+    %\pagestyle{fancy}
+    \input{capitoli/Abstract}
+    \chapter{Introduction}
+    \input{capitoli/Introduction}
+    \chapter{State of the Art}
+    \input{capitoli/State_of_Art}
+    \chapter{System description}
+    \input{capitoli/capitolo3}
+    \chapter{Control architecture}
+    \input{capitoli/capitolo4}
+    \chapter{Software and Hardware Implementation}
+    \input{capitoli/capitolo5}
+    \chapter{Simulation and Experimental Results}
+    \input{capitoli/capitolo6}
+    \chapter{Conclusions and Future Works}
+    \input{capitoli/conclusions}
+    \printbibliography
+\end{document}

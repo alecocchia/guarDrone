@@ -46,6 +46,7 @@ FIG_NAMES = {
     16: "MBE",
     17: "APF",
     19: "SOLVE_TIME",
+    20: "HAPTIC_LATENCY",
 }
 
 # Mappatura stili grafici condivisi per ciascuna fase della missione FSM
@@ -134,10 +135,11 @@ def plot_single_quantity(time, item, label, task_start=-1.0, task_end=-1.0, phas
 
     if 'ref' in item and item['ref'] is not None:
         ref_data = item['ref']
+        ref_lbl = item.get('ref_label', 'Ref')
         if np.isscalar(ref_data):
-            ax.axhline(y=ref_data, color=c_ref, linestyle='--', label='Ref', linewidth=1.2, alpha=0.85, zorder=2)
+            ax.axhline(y=ref_data, color=c_ref, linestyle='--', label=ref_lbl, linewidth=1.2, alpha=0.85, zorder=2)
         else:
-            ax.plot(time_plot, ref_data[:len(time_plot)], color=c_ref, linestyle='--', label='Ref', linewidth=1.2, alpha=0.85, zorder=2)
+            ax.plot(time_plot, ref_data[:len(time_plot)], color=c_ref, linestyle='--', label=ref_lbl, linewidth=1.2, alpha=0.85, zorder=2)
 
     if phases:
         for idx_p, (pt, pname) in enumerate(phases):
@@ -165,8 +167,9 @@ def plot_single_quantity(time, item, label, task_start=-1.0, task_end=-1.0, phas
 
     handles, labels_leg = ax.get_legend_handles_labels()
     pri_dict = {}
+    valid_priorities = {'Actual', 'Ref', 'Reference', 'Upper Limit', 'Upper limit', 'Limit', 'MPC', 'Haptic'}
     for h, l in zip(handles, labels_leg):
-        if l in ('Actual', 'Ref', 'Reference', 'MPC', 'Haptic') and l not in pri_dict:
+        if (l in valid_priorities or l == item.get('ref_label')) and l not in pri_dict:
             pri_dict[l] = h
     if pri_dict:
         ax.legend(list(pri_dict.values()), list(pri_dict.keys()),
@@ -269,10 +272,12 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
         # Plot riferimento
         if 'ref' in data_list[i] and data_list[i]['ref'] is not None:
             ref_data = data_list[i]['ref']
+            default_ref_lbl = 'Ref' if np.isscalar(ref_data) else 'Reference'
+            ref_lbl = data_list[i].get('ref_label', default_ref_lbl)
             if np.isscalar(ref_data):
-                ax.axhline(y=ref_data, color=c_ref, linestyle='--', label='Ref', linewidth=1.3, alpha=0.85, zorder=2)
+                ax.axhline(y=ref_data, color=c_ref, linestyle='--', label=ref_lbl, linewidth=1.3, alpha=0.85, zorder=2)
             else:
-                ax.plot(time_plot, ref_data[:len(time_plot)], color=c_ref, linestyle='--', label='Reference', linewidth=1.3, alpha=0.85, zorder=2)
+                ax.plot(time_plot, ref_data[:len(time_plot)], color=c_ref, linestyle='--', label=ref_lbl, linewidth=1.3, alpha=0.85, zorder=2)
 
         # Indicatori di transizione delle fasi di missione
         if phases:
@@ -700,10 +705,10 @@ def main():
     
     fig7_data = [
         {'sim': err_vel, 'ref': 0}, {'sim': err_omega, 'ref': 0}, 
-        {'sim': np.linalg.norm(data['acc'], axis=1), 'ref': 0},
-        {'sim': np.linalg.norm(data['ang_acc'], axis=1), 'ref': 0}, 
-        {'sim': np.linalg.norm(data['jerk'], axis=1), 'ref': 0}, 
-        {'sim': np.linalg.norm(data['snap'], axis=1), 'ref': 0}
+        {'sim': np.linalg.norm(data['acc'], axis=1), 'ref': None},
+        {'sim': np.linalg.norm(data['ang_acc'], axis=1), 'ref': None}, 
+        {'sim': np.linalg.norm(data['jerk'], axis=1), 'ref': None}, 
+        {'sim': np.linalg.norm(data['snap'], axis=1), 'ref': None}
     ]
     myPlot(t, fig7_data, ["Norm Vel Error [m/s]", "Norm Omega Error [rad/s]", "Norm Acc [m/s^2]",
                "Norm AngAcc [rad/s^2]", "Norm Jerk [m/s^3]", "Norm Snap [m/s^4]"], 
@@ -898,20 +903,28 @@ def main():
     # --- FIGURE 17: Violazioni dei vincoli di sicurezza (Distanza Minima e FoV Camera) ---
     if indata('r_cyl'):
         r_min = 1.0      # [m] distanza minima di sicurezza da target
-        s_r = np.maximum(0.0, r_min - data['r_cyl'])
+        if indata('s_r'):
+            s_r = np.asarray(data['s_r']).flatten()
+        else:
+            s_r = np.maximum(0.0, r_min - data['r_cyl'])
 
-        # Parametri FoV camera (default standard OakD-Lite: 68.98° H, 51.74° V)
-        fov_h_deg = float(data['fov_h']) if indata('fov_h') else 68.98
-        fov_v_deg = float(data['fov_v']) if indata('fov_v') else 51.74
+        # Parametri FoV camera (default standard OakD-Lite / hardware launch)
+        fov_h_deg = float(data['fov_h']) if indata('fov_h') else 69.0
+        fov_v_deg = float(data['fov_v']) if indata('fov_v') else 42.0
         fov_h_half_deg = fov_h_deg / 2.0
         fov_v_half_deg = fov_v_deg / 2.0
 
         # 1. Violazione FoV Orizzontale: deviazione angolare yaw oltre la semi-apertura orizzontale
-        yaw_err_deg = np.degrees(np.abs(data['yaw_err_cyl'])) if indata('yaw_err_cyl') else np.zeros_like(s_r)
-        s_fov_h = np.maximum(0.0, yaw_err_deg - fov_h_half_deg)
+        if indata('s_fov_h'):
+            s_fov_h = np.asarray(data['s_fov_h']).flatten()
+        else:
+            yaw_err_deg = np.degrees(np.abs(data['yaw_err_cyl'])) if indata('yaw_err_cyl') else np.zeros_like(s_r)
+            s_fov_h = np.maximum(0.0, yaw_err_deg - fov_h_half_deg)
 
         # 2. Violazione FoV Verticale: elevazione theta_v oltre la semi-apertura verticale
-        if indata('z_cyl'):
+        if indata('s_fov_v'):
+            s_fov_v = np.asarray(data['s_fov_v']).flatten()
+        elif indata('z_cyl'):
             r_safe = np.where(data['r_cyl'] > 1e-4, data['r_cyl'], 1e-4)
             theta_v_deg = np.degrees(np.arctan2(np.abs(data['z_cyl']), r_safe))
             s_fov_v = np.maximum(0.0, theta_v_deg - fov_v_half_deg)
@@ -919,9 +932,9 @@ def main():
             s_fov_v = np.zeros_like(s_r)
 
         fig17_data = [
-            {'sim': s_r,     'ref': 0.0},
-            {'sim': s_fov_h, 'ref': 0.0},
-            {'sim': s_fov_v, 'ref': 0.0},
+            {'sim': s_r,     'ref': 0.0, 'ref_label': 'Upper Limit'},
+            {'sim': s_fov_h, 'ref': 0.0, 'ref_label': 'Upper Limit'},
+            {'sim': s_fov_v, 'ref': 0.0, 'ref_label': 'Upper Limit'},
         ]
         labels17 = [
             f"Distance Violation $s_r$ [m] ($r_{{min}}$={r_min:.1f} m)",
@@ -1003,7 +1016,7 @@ def main():
 
             # --- FIGURE 19: MPC Solve Time ---
             fig19_data = [
-                {'sim': st_raw, 'ref': ts_ms}
+                {'sim': st_raw, 'ref': ts_ms, 'ref_label': 'Upper Limit'}
             ]
             myPlot(t, fig19_data,
                    [f"Solve Time [ms] (Mean: {mean_st:.2f} ms, Max: {max_st:.2f} ms, Ts limit: {ts_ms:.0f} ms)"],
@@ -1034,6 +1047,15 @@ def main():
             report_lines.append(f"Step-to-Step Jitter        : {lat_step_diff:.2f} ms")
             report_lines.append(f"Percentile 95%             : {p95_lat:.2f} ms")
             report_lines.append(f"Percentile 99%             : {p99_lat:.2f} ms")
+
+            # --- FIGURE 20: Haptic Teleoperation Network Latency ---
+            lat_plot = np.where(lat_raw > 0.0, lat_raw, np.nan)
+            fig20_data = [
+                {'sim': lat_plot, 'ref': mean_lat, 'ref_label': 'Mean Latency'}
+            ]
+            myPlot(t, fig20_data,
+                   [f"One-Way Network Latency [ms] (Mean: {mean_lat:.1f} ms, Median: {float(np.median(lat_valid)):.1f} ms)"],
+                   "Haptic Teleoperation Network Latency & Jitter", ncols=1, use_tex=args.tex, block=block, fignum=20, task_start=task_start, task_end=task_end, filenames=["latency"])
 
     # 3. TRACKING PERFORMANCE (in Missione)
     if indata('r_cyl') and indata('online_cyl_ref'):

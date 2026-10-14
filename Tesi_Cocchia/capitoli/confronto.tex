@@ -1,0 +1,58 @@
+Ognuno dei controllori mostrati presenta caratteristiche differenti, ma ciò che ci interessa è verificare il soddisfacimento dei requisiti di partenza, e quindi delle specifiche di controllo, comprendendo i vantaggi e gli svantaggi che sorgono nell'adozione di un controllore piuttosto che di un altro.
+Le specifiche di controllo da soddisfare su $x_1$ sono date da:
+\begin{itemize}
+    \item $x_1 \rightarrow x_{1,d}$;
+    \item $T_{a,2\%} \le 10$\ giorni;
+    \item $S\% \le 0.15\%$ (sovraelongazione quasi assente),
+\end{itemize}
+con $x_{1,d}=10$ (metà della carrying capacity delle prede).
+\\In realtà, solo nel caso del controllo lineare, è stato scelto come riferimento la prima coordinata del punto di equilibrio instabile $x_{eq,1}$, in quanto la progettazione di un controllo lineare funziona solo nei pressi del punto di equilibrio attorno al quale si è effettuata la linearizzazione; allontanandosi troppo, la linearizzazione perde di senso.
+\\Dalla figura (\ref{fig:confronto}) è possibile osservare che ognuno di questi controlli funziona in condizioni nominali, ossia quando l'impianto non è affetto da incertezze parametriche e non ha disturbi in ingresso. In particolare, $SMC$ e $FBL$ producono un'uscita del sistema praticamente indistinguibile (le due curve, gialla e rossa, sono sovrapposte); l'$SMC$ produce un'uscita leggermente più "pronta", mentre il controllo lineare produce un'uscita con una sovraelongazione ben visibile ma rispetta tutto sommato il tempo di assestamento richiesto (per quanto, ricordiamo, il valore di regime richiesto sia diverso e più vicino alle condizioni iniziali rispetto agli altri controlli). La vera differenza può essere notata nell'ingresso di controllo $u$: il controllo lineare parte da un valore molto più elevato di $u$ , mentre gli altri controlli mantengono valori più contenuti. Tuttavia, è ben visibile il chattering che caratterizza l'$SMC$ nella sua versione base e che viene invece abbattuto con l'aggiunta della regolarizzazione.
+\begin{figure}[h]
+    \centering
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{Immagini/Confronto/x1_nominale_plot.eps}
+    \end{subfigure}
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{Immagini/Confronto/controllo_nominale_plot.eps}
+    \end{subfigure}
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{Immagini/Confronto/errore_nominale_plot.eps}
+    \end{subfigure}
+    \caption{Confronto tra i controllori in assenza di incertezza parametrica e disturbi}
+    \label{fig:confronto}
+\end{figure}
+\newpage
+\section{Presenza di disturbo}
+Nel caso in cui nel sistema entri anche del disturbo additivo su $x_2$, i controllori hanno mostrato comportamenti differenti: il sistema lineare ha reagito piuttosto bene, aumentando leggermente sovraelongazione e tempo di assestamento e presentando sempre piccole oscillazioni a regime. Il controllo con la $FBL$ ha prodotto un'uscita, come nel caso precedente, quasi indistinguibile da quella dello $SMC$ nella sua versione base. Le differenze si notano, però, nella legge di controllo: quella dello $SMC$ presenta oscillazioni ad alta frequenza, mentre quella della $FBL$ è più armoniosa. Anche ponendo una banda di isteresi nello $SMC$ la legge di controllo continua ad avere lo stesso andamento, ma il tempo di assestamento si riduce leggermente. 
+\begin{figure}[h]
+    \centering
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{Immagini/Confronto/x1_disturbo_plot.eps}
+    \end{subfigure}
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{Immagini/Confronto/controllo_disturbo_plot.eps}
+    \end{subfigure}
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{Immagini/Confronto/errore_disturbo_plot.eps}
+    \end{subfigure}
+    \caption{Confronto tra i controllori in presenza di disturbo sinusoidale}
+    \label{fig:confronto_disturbo}
+\end{figure}
+\newpage
+\subsection{Presenza di incertezza}
+Nel caso in cui sia presente incertezza su $f$, quello che succede è che l'uscita del sistema si porta a regime in tutti i casi, ad eccezione della $FBL$: tuttavia, aggiungendo un'azione integrale, il sistema riesce a recuperare l'incertezza ed a portare l'uscita al valore di regime, seppur con un tempo di assestamento molto più elevato (40 giorni). Questo riflette il fatto che la FBL è il controllo più sensibile a variazioni del modello. Lo SMC riesce invece a recuperare l'incertezza facilmente mantenendo soddisfatte le specifiche di regime e transitorie; SMC ed SMC regolarizzato hanno andamenti di fatto coincidenti per quanto riguarda l'uscita (e quindi l'errore di regolazione). La grossa differenza sta sempre nell'andamento della legge di controllo $u$, che presenta chattering nel primo caso.
+\begin{figure}[h]
+    \centering
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{Immagini/Confronto/x1_incertezza_plot.eps}
+    \end{subfigure}
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{Immagini/Confronto/controllo_incertezza_plot.eps}
+    \end{subfigure}
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{Immagini/Confronto/errore_incertezza_plot.eps}
+    \end{subfigure}
+    \caption{Confronto tra i controllori in presenza di incertezza parametrica su $f$}
+    \label{fig:confronto_incertezza}
+\end{figure}

@@ -82,9 +82,7 @@ def generate_launch_description():
         # --- Limiti di sicurezza e distanze ---
         DeclareLaunchArgument('r_min_safety', default_value='1.0',
                               description='Distanza minima di sicurezza dal target [m]'),
-        DeclareLaunchArgument('k_repulsive', default_value='1.0',
-                              description='Guadagno forza repulsiva barriera'),
-        DeclareLaunchArgument('max_repulsive_force', default_value='15.0',
+        DeclareLaunchArgument('max_repulsive_force', default_value='10.0',
                               description='Forza repulsiva massima consentita [N]'),
 
         # --- Velocità teleoperazione (GuarDrone) ---
