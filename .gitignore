@@ -49,6 +49,14 @@ PX4-Autopilot/
 # Cartelle e file di log/bag di SIMULAZIONE (NON tracciati su Git)
 my_ros2_ws/SimulationScripts/bag_files/
 
+# Log ed esperimenti Hardware: mantieni solo .mat, .csv, .py, .txt (ignora grafici, video, ecc.)
+my_ros2_ws/HardwareScripts/bag_files/**
+!my_ros2_ws/HardwareScripts/bag_files/**/
+!my_ros2_ws/HardwareScripts/bag_files/**/*.mat
+!my_ros2_ws/HardwareScripts/bag_files/**/*.csv
+!my_ros2_ws/HardwareScripts/bag_files/**/*.py
+!my_ros2_ws/HardwareScripts/bag_files/**/*.txt
+
 # Registrazioni ROS 2 (rosbag, database SQLite3 / MCAP)
 **/rosbag*/
 rosbag*/
@@ -59,4 +67,5 @@ rosbag*/
 __pycache__/
 *.pyc
 *.tar.gz
+
 
