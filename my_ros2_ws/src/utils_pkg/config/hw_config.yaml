@@ -10,8 +10,8 @@ camera:
   cam_roll: 0.0       # Rotazione roll [rad]
   cam_pitch: 0.0      # Rotazione pitch [rad]
   cam_yaw: 0.0        # Rotazione yaw [rad]
-  fov_h_deg: 85.2     # FOV orizzontale [deg]
-  fov_v_deg: 58.0     # FOV verticale [deg]
+  fov_h_deg: 69.4     # FOV orizzontale [deg] (RGB)
+  fov_v_deg: 42.5     # FOV verticale [deg] (RGB)
 
 # Parametri End-Effector / Peg
 peg:

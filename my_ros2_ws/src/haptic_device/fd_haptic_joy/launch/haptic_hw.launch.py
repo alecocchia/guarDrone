@@ -108,7 +108,7 @@ def generate_launch_description():
                               description='Coefficiente smorzamento viscoso virtuale'),
         DeclareLaunchArgument('deadband', default_value='0.008',
                               description='Deadband joystick [m]'),
-        DeclareLaunchArgument('max_force', default_value='15.0',
+        DeclareLaunchArgument('max_force', default_value='10.0',
                               description='Saturazione forza hardware Falcon [N]'),
 
         fd_launch,

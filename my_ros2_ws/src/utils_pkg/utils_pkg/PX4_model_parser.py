@@ -1,10 +1,18 @@
+import math
 import os
 import re
 import xml.etree.ElementTree as ET
 
 class PX4ModelParser:
-    def __init__(self, px4_path='/root/PX4-Autopilot'):
-        self.px4_path = px4_path
+    def __init__(self, px4_path=None):
+        if px4_path is not None:
+            self.px4_path = px4_path
+        elif os.path.exists('/root/PX4-Autopilot'):
+            self.px4_path = '/root/PX4-Autopilot'
+        else:
+            cur = os.path.abspath(__file__)
+            root_dir = os.path.abspath(os.path.join(cur, '../../../../../PX4-Autopilot'))
+            self.px4_path = root_dir if os.path.exists(root_dir) else '/root/PX4-Autopilot'
         self.models_dir = os.path.join(self.px4_path, 'Tools/simulation/gz/models')
         self.airframes_dir = os.path.join(self.px4_path, 'ROMFS/px4fmu_common/init.d-posix/airframes')
 
@@ -128,13 +136,20 @@ class PX4ModelParser:
                     if cam_tag is not None:
                         hfov_tag = cam_tag.find("horizontal_fov")
                         if hfov_tag is not None:
-                            fov_h = float(hfov_tag.text) * 180.0 / 3.14159
-                            fov_v = fov_h * (480.0/640.0) 
+                            fov_h_rad = float(hfov_tag.text)
+                            fov_h = math.degrees(fov_h_rad)
+                            w = 640.0
+                            h = 480.0
                             img_tag = cam_tag.find("image")
                             if img_tag is not None:
-                                w = float(img_tag.find("width").text)
-                                h = float(img_tag.find("height").text)
-                                fov_v = fov_h * (h/w)
+                                w_tag = img_tag.find("width")
+                                h_tag = img_tag.find("height")
+                                if w_tag is not None and h_tag is not None:
+                                    w = float(w_tag.text)
+                                    h = float(h_tag.text)
+                            # Formula pinhole trigonometrica esatta (modello camera prospettica)
+                            fov_v_rad = 2.0 * math.atan((h / w) * math.tan(fov_h_rad / 2.0))
+                            fov_v = math.degrees(fov_v_rad)
 
             # 2. Processa i motori
             for plugin in model_tag.findall(".//plugin[@name='gz::sim::systems::MulticopterMotorModel']"):
