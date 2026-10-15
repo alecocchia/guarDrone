@@ -249,7 +249,7 @@ def generate_launch_description():
         DeclareLaunchArgument('camera_topic',
                               default_value=str(topics_cfg.get('camera_topic', '/camera/camera/color/image_raw/compressed')),
                               description='Topic camera da registrare nel rosbag'),
-        DeclareLaunchArgument('r_min_safety', default_value='1.0',
+        DeclareLaunchArgument('r_min_safety', default_value='1.50',
                               description='Distanza minima di sicurezza dal target per APF [m]'),
         OpaqueFunction(function=launch_setup)
     ])

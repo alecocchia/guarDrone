@@ -170,9 +170,9 @@ def configure_mpc(model : AcadosModel, x0, p_target, Tf, ts, W, W_e,
     
     # Vincoli sullo stato:
     # - Z (hard): idx 2 → drone non va sotto il suolo
-    ocp.constraints.idxbx = np.array([2])
-    ocp.constraints.lbx = np.array([-0.2])
-    ocp.constraints.ubx = np.array([100.0])
+    #ocp.constraints.idxbx = np.array([2])
+    #ocp.constraints.lbx = np.array([-0.2])
+    #ocp.constraints.ubx = np.array([100.0])
 
     # Vincoli sugli ingressi (Spinta e Coppie)
     # Ora usiamo i parametri passati dinamicamente dal nodo per coerenza fisica
@@ -182,8 +182,8 @@ def configure_mpc(model : AcadosModel, x0, p_target, Tf, ts, W, W_e,
 
     ocp.solver_options.integrator_type = 'ERK'
     ocp.solver_options.qp_solver = 'PARTIAL_CONDENSING_HPIPM'
-    ocp.solver_options.hpipm_mode = 'SPEED'            # Tolleranze KKT rilassate (~1e-4) per real-time 100 Hz
-    ocp.solver_options.qp_solver_iter_max = 15         # Tetto massimo iterazioni QP solver per evitare ritardi (WCET)
+    #ocp.solver_options.hpipm_mode = 'SPEED'            # Tolleranze KKT rilassate (~1e-4) per real-time 100 Hz
+    #ocp.solver_options.qp_solver_iter_max = 15         # Tetto massimo iterazioni QP solver per evitare ritardi (WCET)
     #ocp.solver_options.qp_solver_cond_N = 5 # Scommentare per abilitare un condensing parziale per velocizzare ulteriormente (fake, non funziona)
     ocp.solver_options.nlp_solver_type = 'SQP_RTI'
     #ocp.solver_options.globalization = 'MERIT_BACKTRACKING'
