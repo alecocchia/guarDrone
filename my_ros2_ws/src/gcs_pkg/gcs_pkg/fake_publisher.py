@@ -568,8 +568,8 @@ class FakePublisherNode(Node):
             if not self.interaction_started:
                 self.interaction_started = True
                 # Inquadra in basso a destra (60%) e raggio r = 1.5 m
-                _, beta_act, _ = self.compute_actual_pov_target()
-                r_target = 1.5
+                r_act, beta_act, _ = self.compute_actual_pov_target()
+                r_target = r_act
                 h_frac = 0.6
                 v_frac = 0.6
                 yaw_off, z_off = self.compute_decentered_pov(r_target, h_frac, v_frac)
@@ -590,8 +590,8 @@ class FakePublisherNode(Node):
             if not self.detachment_started:
                 self.detachment_started = True
                 # Torna a centrare l'inquadratura (z=0, yaw=0) mantenendo r = 1.5 m
-                _, beta_act, _ = self.compute_actual_pov_target()
-                r_target = 1.5
+                r_act, beta_act, _ = self.compute_actual_pov_target()
+                r_target = r_act
                 self.publish_pov_target(r_target, beta_act, 0.0, 0.0)
 
                 detach_target = self.fake_peg_pos + self.peg_delta_detachment
@@ -613,8 +613,8 @@ class FakePublisherNode(Node):
             if not self.return_home_started:
                 self.return_home_started = True
                 # Torna a centrare l'inquadratura (z=0, yaw=0) con raggio allargato a r = 2.0 m
-                _, beta_act, _ = self.compute_actual_pov_target()
-                r_target = 2.0
+                r_act, beta_act, _ = self.compute_actual_pov_target()
+                r_target = r_act
                 self.publish_pov_target(r_target, beta_act, 0.0, 0.0)
 
                 home_target = np.array([
