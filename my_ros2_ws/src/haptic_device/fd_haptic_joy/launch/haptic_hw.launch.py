@@ -61,7 +61,6 @@ def generate_launch_description():
             'fov_v': fov_v,
             # Sicurezza arena reale: distanza minima consentita e guadagni del campo potenziale
             'r_min_safety': r_min_safety,
-            'k_repulsive': LaunchConfiguration('k_repulsive'),
             'max_repulsive_force': LaunchConfiguration('max_repulsive_force'),
         }]
     )
