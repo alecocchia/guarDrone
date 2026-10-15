@@ -391,17 +391,17 @@ class DJIPublisherNode(Node):
         if phase_name == 'HOVERING':
             self.publish_pov_target(r_act, beta_act, 0.0, 0.0)
         elif phase_name == 'APPROACH':
-            self.publish_pov_target(r_act + 0.5, beta_act, 0.0, 0.0)
+            self.publish_pov_target(r_act, beta_act, 0.0, 0.0)
         elif phase_name == 'INTERACTION':
-            r_target = r_act - 0.5
+            r_target = r_act
             h_frac = 0.70
             v_frac = 0.70
             yaw_off, z_off = self.compute_decentered_pov(r_target, h_frac, v_frac)
             self.publish_pov_target(r_target, beta_act, z_off, yaw_off)
         elif phase_name == 'DETACHMENT':
-            self.publish_pov_target(r_act+0.5, beta_act, 0.0, 0.0)
+            self.publish_pov_target(r_act, beta_act, 0.0, 0.0)
         elif phase_name == 'RETURN_HOME':
-            self.publish_pov_target(+0,5, beta_act, 0.0, 0.0)
+            self.publish_pov_target(r_act, beta_act, 0.0, 0.0)
 
     def _publish_state_if_changed(self):
         """Pubblica lo stato della FSM su /supervisor/state per il logger."""
