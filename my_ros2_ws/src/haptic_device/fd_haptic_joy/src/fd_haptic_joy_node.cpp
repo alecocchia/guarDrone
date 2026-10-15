@@ -57,7 +57,7 @@ public:
     this->declare_parameter("fov_h", 80.0);
     this->declare_parameter("fov_v", 60.0);
     this->declare_parameter("r_min_safety", 1.5); // distanza minima di sicurezza [m]
-    this->declare_parameter("max_repulsive_force", 15.0);
+    this->declare_parameter("max_repulsive_force", 10.0);
 
     // Parametri teleoperazione Peg Drone
     this->declare_parameter("v_pan_max", 0.5);
@@ -216,7 +216,7 @@ private:
 
   /**
    * Calcola la forza repulsiva data la distanza dal bordo e la distanza
-   * massima. Forza = 0 se dist > d_activation Forza cresce esponenzialmente da
+   * massima. Forza = 0 se dist > d_activation, Forza cresce esponenzialmente da
    * 0 a max quando dist va da d_activation a 0
    */
   // dist = distanza attuale dal vincolo

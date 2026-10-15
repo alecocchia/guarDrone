@@ -78,7 +78,7 @@ The overall system is built on a distributed software architecture using ROS2. T
 
     % Colonna 4 (x=13): Firmware Basso Livello (PX4)
     \node[px4] at (13, 2) (px4_obs) {PX4 Autopilot\\};
-    \node[px4] at (13, 0) (px4_ins) {PX4 Autopilot\\(Position PID)};
+    \node[px4] at (13, 0) (px4_ins) {PX4 Autopilot\\(cascaded PID)};
 
     % Colonna 5 (x=17): Piattaforme Fisiche
     \node[hardware] at (17, 2) (drone_obs) {Observer\\UAV};

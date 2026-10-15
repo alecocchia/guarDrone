@@ -28,7 +28,7 @@ For the real-world experiments, the hardware implementation focuses entirely on 
         \includegraphics[width=\linewidth]{Immagini/Capitolo5/guardrone_front.jpg}
     \label{fig:placeholder}
     \end{subfigure}
-    \caption{Top and front views of real custom Drone used for Observer UAV}
+    \caption{Top and front views of real custom octocopter used for Observer UAV}
 \end{figure}
 \textcolor{red}{\textit {Aggiungere delle frecce/etichette che indicano la Pixhawk e la LattePanda. ***}}.
 \\Due to technical hardware constraints, the physical Inspection Drone is substituted by a manually piloted DJI quadrotor. This manually driven vehicle acts strictly as a dynamic physical target. This setup effectively tests the robustness of the observer's NMPC tracking capabilities and the human operator's haptic override in a dynamic scenario.
@@ -213,10 +213,10 @@ To guarantee deterministic execution within the $10\text{ ms}$ control cycle on 
     where $\mathbf{J}_k$ is the Jacobian of the residual vector. This avoids evaluating computationally expensive second-order model derivatives while guaranteeing a positive semi-definite Hessian.
     \item \textbf{Real-Time Iteration (SQP-RTI):} Instead of iterating until full numerical convergence, the solver performs a single Sequential Quadratic Programming (SQP) iteration per timestep using the Real-Time Iteration (RTI) scheme. The computation is split into two phases:
     \begin{enumerate}
-        \item \textit{Preparation Phase:} Executed in the background before the state measurement is available. The system equations are linearized, sensitivities are integrated, and the multi-stage Quadratic Program (QP) is prepared and partially condensed.
-        \item \textit{Feedback Phase:} As soon as the updated state estimate is received from odometry, it is injected as the initial condition constraint. The QP is solved immediately, and the first optimal control input $\mathbf{u}_0 = [F_z, \boldsymbol{\tau}^\top]^\top$ is published to the PX4 autopilot, minimizing feedback delay.
+        \item \textit{Preparation Phase:} Executed in the background before the state measurement is available. The system equations are linearized, and the multi-stage Quadratic Program (QP) is prepared and partially condensed.
+        \item \textit{Feedback Phase:} As soon as the updated state estimate is received from odometry, it is used as the initial condition constraint. The QP is solved immediately, and the first optimal control input $\mathbf{u}_0 = [F_z, \boldsymbol{\tau}^\top]^\top$ is published to the PX4 autopilot, minimizing feedback delay.
     \end{enumerate}
-    \item \textbf{QP Subproblem Solver (HPIPM):} The resulting linearized QP is solved using \texttt{HPIPM} (High-Performance Interior Point Method) over the \texttt{BLASFEO} linear algebra library. A partial condensing approach is applied to balance sparsity and matrix dimensions. The QP solver is configured in \texttt{SPEED} mode with a maximum of 15 interior-point iterations (\texttt{qp\_solver\_iter\_max = 15}), strictly bounding the worst-case execution time well below $10\text{ ms}$ (averaging $\sim 2.5\text{ ms}$).
+    \item \textbf{QP Subproblem Solver (HPIPM):} The resulting linearized QP is solved using \texttt{HPIPM} (High-Performance Interior Point Method) over the \texttt{BLASFEO} linear algebra library. A partial condensing approach is applied to balance sparsity and matrix dimensions. The QP solver is configured in \texttt{SPEED} mode with a maximum of 15 interior-point iterations, strictly bounding the worst-case execution time well below $10\text{ ms}$.
 \end{itemize}
 
 \subsection{Online disturbance compensation via MBE}

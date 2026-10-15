@@ -902,15 +902,20 @@ def main():
 
     # --- FIGURE 17: Violazioni dei vincoli di sicurezza (Distanza Minima e FoV Camera) ---
     if indata('r_cyl'):
-        r_min = 1.0      # [m] distanza minima di sicurezza da target
+        if indata('r_min'):
+            r_min = float(data['r_min'])
+        else:
+            # Fallback dinamico: in simulazione r_min_safety è 1.5 m (fov_v > 45 deg), in hardware è 1.0 m
+            r_min = 1.5 if (indata('fov_v') and float(data['fov_v']) > 45.0) else 1.0
+
         if indata('s_r'):
             s_r = np.asarray(data['s_r']).flatten()
         else:
             s_r = np.maximum(0.0, r_min - data['r_cyl'])
 
-        # Parametri FoV camera (default standard OakD-Lite / hardware launch)
+        # Parametri FoV camera (default standard OakD-Lite sim: 68.98 / 54.52 deg, hardware: 69 / 42 deg)
         fov_h_deg = float(data['fov_h']) if indata('fov_h') else 69.0
-        fov_v_deg = float(data['fov_v']) if indata('fov_v') else 42.0
+        fov_v_deg = float(data['fov_v']) if indata('fov_v') else (54.5 if fov_h_deg < 75.0 else 42.0)
         fov_h_half_deg = fov_h_deg / 2.0
         fov_v_half_deg = fov_v_deg / 2.0
 
@@ -921,15 +926,30 @@ def main():
             yaw_err_deg = np.degrees(np.abs(data['yaw_err_cyl'])) if indata('yaw_err_cyl') else np.zeros_like(s_r)
             s_fov_h = np.maximum(0.0, yaw_err_deg - fov_h_half_deg)
 
-        # 2. Violazione FoV Verticale: elevazione theta_v oltre la semi-apertura verticale
+        # 2. Violazione FoV Verticale: elevazione theta_v proiettata lungo l'asse ottico r*cos(yaw_dev) coerente con fd_haptic_joy_node
         if indata('s_fov_v'):
             s_fov_v = np.asarray(data['s_fov_v']).flatten()
         elif indata('z_cyl'):
             r_safe = np.where(data['r_cyl'] > 1e-4, data['r_cyl'], 1e-4)
-            theta_v_deg = np.degrees(np.arctan2(np.abs(data['z_cyl']), r_safe))
+            yaw_dev = np.abs(data['yaw_err_cyl']) if indata('yaw_err_cyl') else np.zeros_like(r_safe)
+            # Distanza proiettata sull'asse ottico della telecamera: r * cos(yaw_dev)
+            cos_yaw = np.maximum(np.cos(yaw_dev), 0.05)
+            theta_v_deg = np.degrees(np.arctan2(np.abs(data['z_cyl']), r_safe * cos_yaw))
             s_fov_v = np.maximum(0.0, theta_v_deg - fov_v_half_deg)
         else:
             s_fov_v = np.zeros_like(s_r)
+
+        # Mascheramento pre-missione (fase a terra / decollo) e post-missione (atterraggio)
+        if task_start > 0:
+            mask_pre = (t < task_start)
+            s_r[mask_pre] = 0.0
+            s_fov_h[mask_pre] = 0.0
+            s_fov_v[mask_pre] = 0.0
+        if task_end > 0 and task_end < float(t[-1]):
+            mask_post = (t > task_end)
+            s_r[mask_post] = 0.0
+            s_fov_h[mask_post] = 0.0
+            s_fov_v[mask_post] = 0.0
 
         fig17_data = [
             {'sim': s_r,     'ref': 0.0, 'ref_label': 'Upper Limit'},
@@ -944,7 +964,8 @@ def main():
         myPlot(t, fig17_data, labels17,
                "Safety Distance and Camera FoV Constraint Violations",
                ncols=3, use_tex=args.tex, block=block, fignum=17,
-               task_start=task_start, task_end=task_end)
+               task_start=task_start, task_end=task_end,
+               filenames=["distance_violation_s_r", "horiz_fov_violation_s__fov_h", "vert_fov_violation_s__fov_v"])
 
 
     # --- GENERAZIONE REPORT METRICHE COMPLETO (Benchmark, Jitter, Tracking) ---

@@ -80,7 +80,7 @@ def generate_launch_description():
                               description='FoV verticale reale [deg] (default 42.0 per RealSense D435 Depth)'),
 
         # --- Limiti di sicurezza e distanze ---
-        DeclareLaunchArgument('r_min_safety', default_value='1.0',
+        DeclareLaunchArgument('r_min_safety', default_value='1.5',
                               description='Distanza minima di sicurezza dal target [m]'),
         DeclareLaunchArgument('max_repulsive_force', default_value='10.0',
                               description='Forza repulsiva massima consentita [N]'),

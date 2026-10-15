@@ -117,6 +117,7 @@ def launch_setup(context, *args, **kwargs):
             'ft_topic': LaunchConfiguration('peg_ft_topic'),
             'fov_h': fov_h_deg,
             'fov_v': fov_v_deg,
+            'r_min': LaunchConfiguration('r_min_safety'),
             # Drone di interazione: namespace PX4 e offset spawn
             'peg_px4_ns':  'px4_1',
             'peg_start_x': peg_x,
@@ -248,6 +249,8 @@ def generate_launch_description():
         DeclareLaunchArgument('camera_topic',
                               default_value=str(topics_cfg.get('camera_topic', '/camera/camera/color/image_raw/compressed')),
                               description='Topic camera da registrare nel rosbag'),
+        DeclareLaunchArgument('r_min_safety', default_value='1.0',
+                              description='Distanza minima di sicurezza dal target per APF [m]'),
         OpaqueFunction(function=launch_setup)
     ])
 

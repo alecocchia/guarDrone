@@ -87,11 +87,13 @@ class Logger(Node):
         start_y = self.get_parameter('start_y').value
         start_z = self.get_parameter('start_z').value
 
-        # Parametri FoV camera
+        # Parametri FoV camera e soglia distanza minima di sicurezza APF
         self.declare_parameter('fov_h', 68.98)
         self.declare_parameter('fov_v', 51.74)
+        self.declare_parameter('r_min', 1.5)
         self.fov_h = float(self.get_parameter('fov_h').value)
         self.fov_v = float(self.get_parameter('fov_v').value)
+        self.r_min = float(self.get_parameter('r_min').value)
 
         # Setup Static TF Broadcaster
         from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
@@ -710,6 +712,7 @@ class Logger(Node):
             haptic_rep_force=np.asarray(self.haptic_rep_force),
             fov_h=self.fov_h,
             fov_v=self.fov_v,
+            r_min=self.r_min,
             haptic_active=np.asarray(self.haptic_active),
             haptic_guardrone_active=np.asarray(self.haptic_guardrone_active),
             haptic_peg_active=np.asarray(self.haptic_peg_active),
