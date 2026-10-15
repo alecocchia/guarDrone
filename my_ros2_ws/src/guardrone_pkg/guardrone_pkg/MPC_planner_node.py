@@ -131,7 +131,7 @@ class MpcPlannerNode(Node):
         # === Tempo/Orizzonte ===
         self.Hz = 100.0
         self.ts = 1.0/self.Hz             # 10 ms
-        self.N_horiz = 10           # Orizzonte di predizione (numero di campioni) # SIMULAZIONE CONTROLLER
+        self.N_horiz = 13           # Orizzonte di predizione (numero di campioni) # SIMULAZIONE CONTROLLER
         self.Tp = self.N_horiz * self.ts  # Tempo totale dell'orizzonte 
 
         self.path_pub_counter = 0  # Contatore per limitare la frequenza di pubblicazione del path
@@ -680,8 +680,8 @@ class MpcPlannerNode(Node):
         Z_CART     = 0.2                          # [m] tolleranza errore quota
         Y_CYL      = np.pi / 4.0                  # [rad] tolleranza puntamento yaw (~45 deg)
         V          = np.array([0.3, 0.3, 0.2])    # [m/s] velocità max attesa
-        ANG_DOT    = np.array([0.3, 0.3, 0.4])  # [rad/s] velocità angolare max
-        ACC        = np.array([0.4, 0.4, 0.3])    # [m/s^2] accelerazione max
+        ANG_DOT    = np.array([0.2, 0.2, 0.3])  # [rad/s] velocità angolare max
+        ACC        = np.array([0.2, 0.2, 0.2])    # [m/s^2] accelerazione max
         ACC_ANG    = np.array([0.4, 0.4, 0.6])    # [rad/s^2] accelerazione angolare max
 
         # =========================================================================
@@ -708,10 +708,10 @@ class MpcPlannerNode(Node):
             # CASO 2: CONTROLLER WRENCH CON MBE (disturbi compensati via feedforward)
             # ---------------------------------------------------------------------
             self.get_logger().info("[MPC Tuning] Modalità: CONTROLLER + MBE (Feedforward: ON)")
-            PesoVel    = PesoVis / 8.0   
-            PesoAngVel = PesoVis / 8.0
-            PesoAcc    = PesoVis / 20.0
-            PesoAngAcc = PesoVis / 20.0
+            PesoVel    = PesoVis / 10.0   
+            PesoAngVel = PesoVis / 10.0
+            PesoAcc    = PesoVis / 17.5
+            PesoAngAcc = PesoVis / 17.5
             PesoForce  = PesoVis / 10.0   
             PesoTorque = PesoVis / 10.0
             scale_e = [5.0, 5.0, 5.0, 1.0, 1.0]
