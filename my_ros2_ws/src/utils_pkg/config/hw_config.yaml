@@ -15,7 +15,7 @@ camera:
 
 # Parametri End-Effector / Peg
 peg:
-  peg_z_offset: 0.22  # Offset Z della punta dell'end-effector dal CoM del drone di interazione [m]
+  peg_z_offset: 0.0  # Offset Z della punta dell'end-effector dal CoM del drone di interazione [m]
 
   # Spostamento relativo del peg durante APPROACH [m] (rispetto alla posa di hovering)
   approach:
@@ -40,7 +40,7 @@ initial_poses:
   drone_y: 0.0
   drone_z: 0.0
   drone_yaw: 0.0
-  peg_x: 1.0
+  peg_x: 0.0
   peg_y: 0.0
   peg_z: 0.0
   peg_yaw: -1.57
