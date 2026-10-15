@@ -1,0 +1,44 @@
+======================================================================
+             EXPERIMENT METRICS & BENCHMARK REPORT
+======================================================================
+File log          : /root/my_ros2_ws/HardwareScripts/bag_files/exp_20261015_1609/hw_run.mat
+Campioni totali   : 1740
+Durata totale     : 70.48 s
+Tempo missione    : 54.20 s (da t=16.29s a t=70.48s)
+
+----------------------------------------------------------------------
+ 1. SAMPLING PERIOD & REAL-TIME CLOCK JITTER (delta_t)
+----------------------------------------------------------------------
+Frequenza media nominale : 24.67 Hz
+Delta_t medio            : 40.53 ms
+Jitter Campionamento (Std): 40.13 ms
+Delta_t Min / Max        : 20.01 ms / 284.68 ms
+
+----------------------------------------------------------------------
+ 2. MPC SOLVER PERFORMANCE & TIMING JITTER
+----------------------------------------------------------------------
+Campioni solve analizzati: 1341
+Periodo nominale (Ts)    : 10.0 ms (100 Hz)
+Tempo Medio Solve        : 1.83 ms  (Carico medio CPU: 18.3%)
+Deviazione Standard (Jit): 0.86 ms
+Minimo / Massimo         : 1.24 ms / 7.32 ms
+Step-to-Step Jitter      : 0.70 ms (variazione media passo-passo)
+Percentile 95%           : 3.80 ms
+Percentile 99%           : 5.10 ms
+Overrun (> 10 ms)         : 0 / 1341 (0.00%)
+
+----------------------------------------------------------------------
+ 3. TRACKING PERFORMANCE SUMMARY (in Missione)
+----------------------------------------------------------------------
+Errore Raggio (r_cyl)    : RMS = 0.2860 m | Max = 1.0219 m
+Errore Azimut (beta)     : RMS = 0.0960 rad (5.50 deg) | Max = 0.2267 rad
+Errore Quota (z_cyl)     : RMS = 0.1569 m | Max = 1.2193 m
+Errore Yaw               : RMS = 0.0620 rad (3.55 deg) | Max = 0.2004 rad
+
+----------------------------------------------------------------------
+ 4. CONSTRAINT VIOLATIONS SUMMARY (in Mission)
+----------------------------------------------------------------------
+Violazione Distanza Minima (r_min=1.5m)  : Max = 0.0000 m (NESSUNA)
+Violazione FoV Orizzontale (lim=35°) : Max = 0.00 deg (NESSUNA)
+Violazione FoV Verticale   (lim=21°) : Max = 7.53 deg (VIOLATO!)
+======================================================================

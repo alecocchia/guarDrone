@@ -682,7 +682,7 @@ class MpcPlannerNode(Node):
         V          = np.array([0.3, 0.3, 0.2])    # [m/s] velocità max attesa
         ANG_DOT    = np.array([0.3, 0.3, 0.4])  # [rad/s] velocità angolare max
         ACC        = np.array([0.4, 0.4, 0.3])    # [m/s^2] accelerazione max
-        ACC_ANG    = np.array([0.5, 0.5, 0.6])    # [rad/s^2] accelerazione angolare max
+        ACC_ANG    = np.array([0.4, 0.4, 0.6])    # [rad/s^2] accelerazione angolare max
 
         # =========================================================================
         # 2. SELEZIONE PARAMETRICA DEI PESI (Proporzioni relative su PesoVis)
