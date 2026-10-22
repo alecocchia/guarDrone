@@ -2,32 +2,168 @@
 %\\Spesso in queste situazioni si preferisce delegare un certo grado di autonomia al robot ed all'occorrenza l'essere umano può intervenire facendo teleoperazione.
 %\\Lo scenario pensato è quello di 2 droni, di cui uno deve compiere un task che è stato pensato come peg-in-hole, ad all'interno di un pilone di un ponte, e l'altro deve fornire un punto di vista all'essere umano inquadrando costantemente l'altro drone.
 %\\ I droni sono entrambi quadricotteri, per cui sottoattuati per loro natura nello spazio 3D. Per questo motivo il problema viene affrontato nel seguente modo: entrambi i droni prevedono l'utilizzo di PX4 come firmware per la gestione di basso livello; il drone che effettua il task viene controllato in posizione, usando i controllori di bordo standard di PX4; l'altro drone è controllato direttamente in thrust e torque e pianifica in real-time una traiettoria ottima tramite un framework MPC in modo da ottimizzare diversi obiettivi, tenendo conto allo stesso tempo dei vincoli di attuazione del drone. Nel contempo l'operatore umano può effettuare teleoperazione in 2 modi possibili: agendo sul drone che osserva, cambiandone ad esempio il punto di vista dinamicamente, o agendo sul drone che effettua il task, ad esempio proprio per effettuare egli stesso il task di inserzione. 
-
-Nowadays, aerial robotics has become an established tool for operations in hazardous and degraded environments. The use of Unmanned Aerial Vehicles (UAVs) allows for the substitution of human operators in high-risk areas, which is particularly relevant for the inspection and maintenance of aging civil infrastructure. In these scenarios, robotic platforms are deployed to collect data and perform non-destructive measurements, reducing human exposure to dangerous conditions while accessing confined or structurally compromised spaces.
-Despite the push towards full autonomy, unstructured real-world environments often require a human-in-the-loop architecture. In such systems, the robot handles low-level stabilization and task execution, while the human operator provides high-level cognitive decision-making skills. To operate effectively, the remote pilot requires a high degree of situational awareness. Relying exclusively on an onboard (egocentric) camera often limits this awareness, especially during close-proximity operations or physical interactions with the environment. This is even more true when having a fixed camera over an underactuated drone. An exocentric point of view, provided by an external observer, maximizes the operator's understanding of the spatial relationship between the interacting robot, the structural constraints, and potential obstacles. Furthermore, to prevent motion sickness and ensure the transmitted video stream is usable for remote decision-making, the observer platform must guarantee smooth and stable camera framing.
+Nowadays, aerial robotics has become an important tool for operations in hazardous and degraded environments and still widely explored by research. The use of Unmanned Aerial Vehicles (UAVs) allows for the substitution of human operators in high-risk areas, which is particularly relevant for the inspection and maintenance of aging civil infrastructure. In these scenarios, robotic platforms are deployed to collect data and perform non-destructive measurements, reducing human exposure to dangerous conditions while accessing confined or structurally compromised spaces.
+Despite the push towards full autonomy, unstructured real-world environments often require a human-in-the-loop architecture for monitoring and execution assessment of a given task. In such systems, the robot handles low-level stabilization and task execution, while the human operator provides high-level cognitive decision-making skills. To operate effectively, the remote pilot requires a high degree of situational awareness. Relying exclusively on an onboard (egocentric) camera often limits this awareness, especially during close-proximity operations or physical interactions with the environment. This is even more true when having a fixed camera over an underactuated drone. An exocentric point of view, provided by an external observer, could maximize the operator's understanding of the spatial relationship between the interacting robot, the structural constraints, and potential obstacles. Furthermore, to prevent motion sickness and ensure the transmitted video stream is usable for remote decision-making, the observer platform must guarantee smooth and stable camera framing.
 \section{Context and Motivations}
-\begin{figure}
+\begin{figure}[h]
     \centering
     \includegraphics[width=0.8\linewidth]{Immagini/Capitolo1/scenario_introduction.jpeg}
-    \caption{Scenario: observer drone frames contact inspection task performed by inspection drone; human operator can command inputs to both drones via haptic device}
-    \label{fig:placeholder}
+    \caption{Scenario: an exocentric point of view assists the human operator during a teleoperated aerial contact inspection.}
+    \label{fig:scenario_intro}
 \end{figure}
-The thesis addresses a cooperative aerial mission designed for the inspection of confined environments, such as the interior of a bridge pillar. The system relies on a dual-quadrotor setup: an inspection drone tasked with performing a controlled contact with the structure, and an observer drone tasked with providing an optimal exocentric view of the operation.
-\\To manage the unpredictability of the environment and the highest precision in inspection contact, a haptic teleoperation interface is integrated into the system, allowing the operator to intervene on two different levels. On one hand, the operator can take command of the observer drone to dynamically change the point of view in the event of occlusions, loss of situational awareness, or unforeseen obstacles. On the other hand, the operator can switch control to the inspection drone to manually guide the final contact phase, compensating for physical uncertainties that the autonomous system cannot resolve.
+The inspection of civil infrastructures, such as bridge pillars, often requires aerial platforms to establish physical contact with the environment to perform Non-Destructive Testing (NDT). 
+\\While autonomous single-UAV solutions are widely adopted, performing contact tasks relying only on onboard First-Person View (FPV) cameras presents some limitations. During close-proximity maneuvers, egocentric vision suffers from lack of depth perception and occlusions. Furthermore, if standard underactuated quadrotors are used, they must tilt to exert forces. If the camera is rigidly attached to the interacting drone, these dynamic inclinations cause continuous video shake, degrading the visual feedback and inducing motion sickness in the remote operator.
+\\Additionally, fully autonomous execution in unstructured environments is subject to unmodeled physical uncertainties, making human-in-the-loop supervision necessary. However, effective teleoperation requires high situational awareness and safety guarantees during the interaction phase. 
+\\This highlights the utility to investigate alternative perception architectures, such as exocentric (third-person) vision systems, coupled with shared-control paradigms to assist the operator in managing the physical constraints of the task.
 \section{Contributions}
-To support this shared-control paradigm, a multi-layered control and planning framework has been developed.
-The core contribution involves the control architecture for the observer UAV, which must satisfy multiple requirements: tracking an unknown and dynamic trajectory of the inspection drone, keeping the target framed, avoiding motion sickness in human operator and responding online to the viewpoint changes commanded by the operator via the haptic device.
-To achieve this despite the inherent underactuation of quadrotors, a Nonlinear Model Predictive Control (NMPC) scheme has been designed. The NMPC optimizes the camera framing while ensuring safety by respecting actuation constraints, acting directly at a thrust and torque level and minimizing higher-order time derivatives in the cost function. Moreover, to compensate for external disturbances and model mismatches, a MBE (Momentum Based Estimator) is updated online, making the control intrinsically robust.
-\\On the other hand, the inspection UAV operates using a position control strategy modified with an admittance filter to ensure a stable execution of the physical contact.
-\\Human is inserted inside the loop through bilateral teleoperation over NMPC observer UAV and unilateral teleoperation to the interacting one, bringing the framework into Shared Control.
-\\Everything is orchestrated by a FSM that decides which are the best views for the human according to FSM state and handles emergencies.
+The idea was to develop a shared-control architecture to support the inspection of a bridge pillar (fig. \ref{fig:scenario_intro}). A two-drone semi-autonomous framework was considered, with human monitoring from the ground both navigation and contact phases. To maximize situational awareness in human operator, he is provided with an \textit{exocentric} view of the scene by the Observer UAV's camera. 
+\\Due to this, the main focus was on the observer UAV, which must satisfy multiple requirements:
+\begin{itemize}
+    \item tracking an unknown and dynamic trajectory of the inspection drone;
+    \item keeping the target inside the FOV;
+    \item avoiding motion sickness in human operator;
+    \item responding online to the viewpoint changes commanded by the operator via a haptic device
+\end{itemize}
+To achieve this despite the inherent underactuation of quadrotors, a \textit{Nonlinear Model Predictive Control} (NMPC) scheme has been designed to assist the human operator with a comfortable \textit{exocentric view} of the inspection mission. The NMPC optimizes the camera framing while ensuring safety by respecting actuation constraints, acting directly at a thrust and torque level and minimizing higher-order time derivatives in the cost function. Moreover, to compensate for external disturbances and model mismatches, a \textit{Momentum Based Estimator} (MBE) is integrated in the framework and online updated, making the control intrinsically robust. 
+\\On the other hand, the inspection UAV needs to safely interact with the environment. For this reason, a position control strategy was implemented and modified with an \textit{admittance filter} to ensure a stable execution of the physical contact.
+\\Human operator can exploit:
+\begin{itemize}
+    \item haptic based teleoperation via Artificial Potential Field (APF) method, over Observer UAV;
+    \item unilateral teleoperation over the interacting UAV,
+\end{itemize}  
+bringing the framework into \textit{textit}{shared control}.
+\\The overall multi-UAV shared-control framework and its main architectural components are conceptually illustrated in Figure~\ref{fig:framework_overview}.
+\begin{figure}[htbp]
+    \centering
+    \resizebox{\textwidth}{!}{%
+    \begin{tikzpicture}[
+        >=stealth,
+        font=\sffamily,
+        thick,
+        % Node Styles
+        gcs_card/.style={rectangle, draw=gray!70!black, fill=white, thick, rounded corners=4pt, align=center, font=\small\sffamily},
+        uav_card/.style={rectangle, draw=#1!80!black, fill=#1!10, thick, rounded corners=4pt, align=center, font=\small\sffamily},
+        px4_card/.style={rectangle, draw=orange!80!black, fill=orange!15, thick, rounded corners=4pt, align=center, font=\small\sffamily},
+        env_card/.style={rectangle, draw=gray!80!black, fill=gray!15, thick, rounded corners=4pt, align=center, font=\small\sffamily},
+        groupbox/.style={rectangle, draw=#1, thick, dashed, inner sep=0.45cm, rounded corners=6pt},
+        lbl/.style={font=\scriptsize\sffamily, fill=white, inner sep=2pt, align=center}
+    ]
+
+    % =========================================================================
+    % 1. TOP TIER: GROUND CONTROL STATION (GCS)
+    % =========================================================================
+    \node[gcs_card, fill=gray!20, minimum width=3.2cm, minimum height=1.3cm] (human) at (1.6, 7.7) {
+        \textbf{Human Operator} \\
+        \scriptsize Supervision \\
+        \scriptsize Situational Awareness
+    };
+
+    \node[gcs_card, fill=gray!10, minimum width=4.4cm, minimum height=1.3cm] (haptic) at (7.0, 7.7) {
+        \textbf{Haptic Shared Control} \\
+        \scriptsize Haptic Feedback (APF)\\ \scriptsize Unilateral Teleop
+    };
+
+    \node[gcs_card, fill=purple!10, draw=purple!80!black, minimum width=4.6cm, minimum height=1.3cm] (supervisor) at (12.8, 7.7) {
+        \textbf{Mission Supervisor}\\\textbf{(FSM)} 
+    };
+
+    % Connections inside GCS
+    \draw[<->, thick] (human.east) -- node[above, font=\scriptsize\sffamily] {Motion} node[below, font=\scriptsize\sffamily] {Force} (haptic.west);
+    \draw[->, thick] (supervisor.west) -- node[above, lbl] {POV} node[below, lbl,yshift=-0.2cm] {\& State} (haptic.east);
+
+    % =========================================================================
+    % 2. MIDDLE TIER: DUAL-UAV ROBOTIC PLATFORMS
+    % =========================================================================
+
+    % --- OBSERVER UAV (guarDrone) ---
+    \node[uav_card=blue, minimum width=5.6cm, minimum height=1.5cm] (obs_ctrl) at (2.8, 3.4) {
+        \textbf{Visual Tracking NMPC (\+ MBE)}
+    };
+
+    \node[px4_card, minimum width=5.6cm, minimum height=1.0cm] (obs_px4) at (2.8, 1.2) {
+        \textbf{PX4 Autopilot Firmware} \\
+        \scriptsize Direct Thrust \& Body Torques Control $(T, \boldsymbol{\tau})$
+    };
+
+    \draw[->, thick] (obs_ctrl.south) -- node[right, lbl] {Control Inputs} (obs_px4.north);
+
+    % --- INSPECTION UAV ---
+    \node[uav_card=green, minimum width=5.6cm, minimum height=1.5cm] (ins_ctrl) at (11.6, 3.4) {
+        \textbf{Admittance Filter Planner}};
+
+    \node[px4_card, minimum width=5.6cm, minimum height=1.0cm] (ins_px4) at (11.6, 1.2) {
+        \textbf{PX4 Autopilot Firmware} \\
+        \scriptsize Cascaded Position \& Velocity Control $(\mathbf{p}_c, \mathbf{v}_c)$
+    };
+
+    \draw[->, thick] (ins_ctrl.south) -- node[right, lbl] {Compliant Setpoints} (ins_px4.north);
+
+    % =========================================================================
+    % 3. BOTTOM TIER: ENVIRONMENT
+    % =========================================================================
+    \node[env_card, minimum width=5.6cm, minimum height=0.9cm] (env) at (11.6, -0.7) {
+        \textbf{Inspected Structure / Environment} \\
+        \scriptsize (Civil Infrastructure / Bridge Pillar)
+    };
+
+    \draw[<->, thick, green!60!black] (ins_px4.south) -- node[right, lbl, text=green!60!black] {Compliant Physical Interaction} (env.north);
+
+    % =========================================================================
+    % 4. BACKGROUND CONTAINERS
+    % =========================================================================
+    \begin{scope}[on background layer]
+        % GCS
+        \node[groupbox=gray!70, fit=(human) (haptic) (supervisor), fill=gray!4] (box_gcs) {};
+        \node[above, font=\footnotesize\bfseries\sffamily\color{gray!70!black}] at (box_gcs.north) {GROUND CONTROL STATION (GCS): SUPERVISION \& SHARED CONTROL};
+
+        % Observer UAV
+        \node[groupbox=blue!80!black, fit=(obs_ctrl) (obs_px4), fill=blue!2] (box_obs) {};
+        \node[anchor=south west, font=\footnotesize\bfseries\sffamily\color{blue!80!black}] at ([xshift=-4mm, yshift=1mm]box_obs.north west) {OBSERVER UAV (\texttt{guarDrone})};
+
+        % Inspection UAV
+        \node[groupbox=green!60!black, fit=(ins_ctrl) (ins_px4), fill=green!2] (box_ins) {};
+        \node[anchor=south east, font=\footnotesize\bfseries\sffamily\color{green!60!black}] at ([xshift=-2mm, yshift=1mm]box_ins.north east) {INSPECTION UAV};
+    \end{scope}
+
+    % =========================================================================
+    % 5. INTER-LAYER CONNECTIONS
+    % =========================================================================
+
+    % 1. Haptic to Observer (Haptic feedback Shared Control)
+    \draw[->, thick] ([xshift=-1.4cm]haptic.south) -- node[above=2pt, lbl, sloped] {POV Ref} ([xshift=1.3cm]obs_ctrl.north);
+    \draw[<-, thick, dashed, red!80!black] ([xshift=-0.4cm]haptic.south) -- node[below=2pt, lbl, sloped, text=red!80!black] {APF Force Feedback} ([xshift=2.3cm]obs_ctrl.north);
+
+    % 2. Haptic to Inspection (Unilateral manual override)
+    \draw[->, thick] ([xshift=1.1cm]haptic.south) -- node[above=2pt, lbl, sloped] {Manual Commands} ([xshift=-1.4cm]ins_ctrl.north);
+
+    % 3. Supervisor to Inspection (Autonomous phase progression & waypoints)
+    \draw[->, thick] ([xshift=-0.2cm]supervisor.south) -- node[right=2pt, lbl] {Phases \& Waypoints} ([xshift=1.0cm]ins_ctrl.north);
+
+    % 4. Active Exocentric Visual Tracking (Observer -> Inspection)
+    \draw[->, line width=1.5pt, blue!80!black] (obs_ctrl.east) -- node[above=3pt, lbl, text=blue!80!black] {\textbf{Exocentric}\\\textbf{Visual Tracking}} (ins_ctrl.west);
+
+    % 5. Exocentric Video Stream (Observer -> Human Operator)
+    \draw[->, thick, blue!80!black] (box_obs.west) -- ++(-0.6, 0) |- node[pos=0.25, left, lbl, text=blue!80!black] {Exocentric Video Stream} (human.west);
+
+    \end{tikzpicture}%
+    }
+    \caption{Conceptual high-level overview of the proposed multi-UAV shared-control framework.}
+    \label{fig:framework_overview}
+\end{figure}
+\justify
+Everything is orchestrated by a Finite State Machine (FSM) that decides which are the best views for the human according to mission state and handles emergencies.
 \\To guarantee system reliability and facilitate a realistic transition to hardware, the entire high-level control architecture for both platforms has been integrated with the standard and open-source \texttt{PX4} autopilot firmware.
+\\SITL simulations in Gazebo have been developed and real preliminary experiments have been conducted.
 
 \section{Thesis Outline}
-The here presented thesis  is structured as follows. 
-Chapter 2 reviews the state of the art concerning shared control architectures, vision modalities in teleoperation, and online planning and control methods for aerial robotics. 
-Chapter 3 defines the problem statement and presents an overview of the proposed dual-UAV system architecture, detailing the exocentric vision paradigm, the contact inspection requirements, and the sequential phases of the cooperative mission. 
-Chapter 4 provides the mathematical formulation of the problem. It details the rigid body dynamics of the quadrotors, the Non-linear Model Predictive Control (NMPC) framework designed for the observer drone's visual tracking, the human-robot shared control layer, together with the mathematical generation of haptic references and the Artificial Potential Fields (APF) used to render the force feedback to the operator and the admittance control scheme utilized by the inspection drone to manage physical interactions. 
-Chapter 5 describes the software and hardware implementation of the overall framework. It covers the ROS 2 middleware integration, the PX4 flight stack interactions, the finite state machine governing the mission supervisor, and the real-time execution details of the NMPC and admittance nodes. 
-Chapter 6 presents the simulation and experimental results, validating the control framework's performance, the tracking accuracy, and the effectiveness of the haptic shared control paradigm. 
-Finally, Chapter 7 summarizes the conclusions of this work and outlines potential directions for future research.   
+The here presented thesis  is structured as follows.
+\begin{itemize}
+    \item Chapter 2 reviews the state of the art concerning shared control architectures, vision modalities in teleoperation, and online planning and control methods for aerial robotics. 
+    \item Chapter 3 defines the problem statement and presents an overview of the proposed dual-UAV system architecture, detailing the exocentric vision paradigm, the contact inspection requirements, and the sequential phases of the cooperative mission. 
+    \item Chapter 4 provides the mathematical formulation of the problem. It details the rigid body dynamics of the quadrotors, the Non-linear Model Predictive Control (NMPC) framework designed for the observer drone's visual tracking, the human-robot shared control layer, together with the mathematical generation of haptic references and the Artificial Potential Fields (APF) used to render the force feedback to the operator and the admittance control scheme utilized by the inspection drone to manage physical interactions.
+    \item Chapter 5 describes the software and hardware implementation of the overall framework. It covers the ROS 2 middleware integration, the PX4 flight stack interactions, the finite state machine governing the mission supervisor, and the real-time execution details of the NMPC and admittance nodes.
+    \item Chapter 6 presents PX4-SITL simulation, showing framework performances in a bridge scenario inside Gazebo. 
+    \item Chapter 7 presents preliminary experimental results, validating exclusively over the Observer Drone the NMPC performance, the tracking accuracy, and the effectiveness of the haptic shared control paradigm.
+    \item Finally, Chapter 8 summarizes the conclusions of this work and outlines potential directions for future research.
+\end{itemize}  
+   

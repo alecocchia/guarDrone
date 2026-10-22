@@ -35,7 +35,7 @@ where:
     \end{equation}
 \end{itemize}
 
-\section{Observer Drone: MPC-based Visual Tracking}
+\section{Observer Drone: MPC-based Geometric \\Tracking}
 The observer drone is designed to act as an active Point of View (PoV) for the human operator. This implies satisfying multiple simultaneous requirements: guaranteeing flight stability, maintaining the target drone within the camera's Field of View (FOV) at a desired mutual distance, ensuring a specific observation angle (e.g., frontal or lateral), and providing a smooth trajectory to minimize the operator's motion sickness. 
 
 \subsection{From Optimal Control to MPC}
@@ -51,36 +51,12 @@ $\begin{cases}
     \mathbf{x}(t) \in \mathcal{X}, \mathbf{u}(t) \in \mathcal{U}
 \end{cases}$
 \end{center}
-where $L(\mathbf{x,u})$ represents the stage cost over the horizon, and $\Phi(\mathbf{x}(t_0+T_f))$ represents the terminal cost. The system is subject to the continuous dynamics, initial conditions, and feasible sets for states and inputs.
+where $L(\mathbf{x,u})$ represents the stage cost over the horizon, and $\Phi(\mathbf{x}(t_0+T_f))$ represents the terminal cost. The system is subject to the continuous dynamics(eq. \ref{eq:quadrotor_model}), initial conditions, and feasible sets for states and inputs.
 \\Solving a standard OCP yields an open-loop trajectory, which is inadequate for the proposed shared-control architecture. The target drone moves dynamically, and the human operator can unpredictably alter its trajectory. Therefore, an online, closed-loop planner is required. This is achieved through Model Predictive Control (MPC).
 \\To transition from the continuous-time formulation to a tractable numerical problem, the system dynamics are discretized using an Explicit Runge-Kutta (ERK) integrator. The MPC algorithm solves the resulting discrete-time OCP over a receding prediction horizon of $N$ steps at each sampling time $T_s$, generating an optimal control sequence from which only the first element is applied to the plant. This process constantly updates the initial conditions based on state feedback, providing real-time tracking, robustness against model uncertainties, and the ability to incorporate the human operator's inputs.
 
 \subsection{NMPC Problem Formulation}
-\subsubsection{Visual References and Cylindrical Mapping}
-Since the main objective of this controller is to maintain a desired relative pose with respect to the observed drone, the choice here is to use cylindrical coordinates for positional references. From a human perspective, it is intuitive to imagine possible motions of the quadrotor as confined into a cylindrical surface, with its revolution axis passing through the target. The relative distance vector $\Delta \mathbf{p} = \mathbf{p}_{\text{cam}} - \mathbf{p}_{\text{obj}} = [\Delta x, \Delta y, \Delta z]^\top$ is directly mapped into the relative cylindrical coordinates:
-\begin{equation} \label{eq:cyl_mapping}
-\begin{aligned}
-    r_{rel} &= \sqrt{\Delta x^2 + \Delta y^2}, \\
-    \beta_{rel} &= \operatorname{atan2}(\Delta y, \Delta x), \\
-    z_{rel} &= \Delta z.
-\end{aligned}
-\end{equation}
-\begin{figure}[h!]
-    \centering
-    \includegraphics[width=0.8\linewidth]{Immagini/Capitolo3/cylindrical_drones.jpeg}
-    \caption{Cylindrical relative pose from the operator POV}
-    \label{fig:cyl_pov}
-\end{figure}
-The visual reference vector is structured as $\mathbf{y}_{\text{vis,ref}} = [r_{ref}, \beta_{ref}, z_{rel,ref}, \psi_{ref}]^\top$. Here, $r_{ref}$ and $z_{rel,ref}$ define the desired observation distance and relative height. The azimuth reference $\beta_{ref}$ provides the observation angle around the target.
-\begin{figure}[h!]
-    \centering
-    \includegraphics[width=0.8\linewidth]{Immagini/Capitolo3/drones_cyl.jpeg}
-    \caption{Cylindrical mapping of relative coordinates in XY plane}
-    \label{fig:cyl_mapping_xy}
-\end{figure}
-To maintain the target centered in the camera image plane (assuming the camera is aligned with the drone body $x$-axis), the observer drone must constantly adjust its yaw angle $\psi$. Since the relative vector $\Delta \mathbf{p}$ points from the object to the camera, the required yaw orientation to look back at the target is geometrically bound to the actual azimuth angle by the relation $\psi_{centr} = \beta_{rel} + \pi$. The desired yaw is computed as $\psi_{ref}=\psi_{centr} + \psi_{des}$, where $\psi_{des}$ is an external displacement allowed by the user to deviate from the optical center. 
-
-\subsubsection{NLS cost function}
+\subsubsection{Nonlinear Least Square Cost Function}
 In formulating the OCP, we first define the vectors of the cost terms that need to be optimized over the prediction horizon. The stage cost vector $\mathbf{y}_k$ and the terminal cost vector $\mathbf{y}_N$ are composed of the actual system states and control inputs:
 \begin{align}
     \mathbf{y}_k &= \begin{bmatrix} \mathbf{p}^T, \psi, \mathbf{v}^T, \boldsymbol{\omega}^T, \dot{\mathbf{v}}^T, \dot{\boldsymbol{\omega}}^T, \ddot{\mathbf{v}}^T, \dddot{\mathbf{v}}^T, \mathbf{u}^T \end{bmatrix}^T, \\
@@ -117,88 +93,199 @@ where $\mathbf{f}_d$ represents the explicit Runge-Kutta discretization of the q
     \mathbf{u}_k \le 
     \begin{bmatrix} U_F \\ U_{\tau x} \\ U_{\tau y} \\ U_{\tau z} \end{bmatrix}.
 \end{equation}
-While maintaining the target in the Field of View (FOV) could be treated via explicit inequality soft-constraints, the chosen approach was to handle these constraints only with haptic feedback. Therefore, visual and safety requirements are induced through the weighted and normalized tracking cost, coupled with the external Artificial Potential Fields (APF) acting on the human input. This keeps the reference fed to the MPC within the optical frustum limits, allowing the solver to focus purely on dynamically feasible and smooth trajectory generation.
-\begin{figure}[h!]
-    \centering
-    \includegraphics[width=\linewidth]{Immagini/Capitolo4/NMPC_scheme.pdf}
-    \caption{NMPC Shared Control architecture}
-    \label{fig:NMPC_scheme}
+While maintaining the target in the Field of View (FOV) could be treated via explicit inequality soft-constraints, the chosen approach was to handle these constraints only with haptic feedback. Therefore, visual and safety requirements are induced through the weighted and normalized tracking cost, coupled with the external Artificial Potential Fields (APF) (see \ref{section:APF}) acting on the human input. This keeps the reference fed to the MPC within the optical frustum limits, allowing the solver to focus purely on dynamically feasible and smooth trajectory generation.
+\begin{figure}[htbp]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+    font=\sffamily\small,
+    >= {Latex[length=3mm, width=2mm]},
+    % Definizione colori 
+    colYellow/.style={fill=yellow!20!, draw=yellow!60!black, thick},
+    colHapticBg/.style={fill=black!10!, draw=gray!80!black, dashed, thick},
+    colInnerGray/.style={fill=black!10!, draw=gray!80!black, thick},
+    colSwitch/.style={fill=black!0, draw=white!80, thick},
+    colGreen/.style={fill=green!20!olive!20!, draw=green!40!black, thick},
+    colMap/.style={fill=red!20!, draw=red!80!black!, thick},
+    colUavBg/.style={fill=orange!10!, draw=orange!80!black, dashed, thick},
+    colNmpc/.style={fill=orange!50!, draw=orange!80!black, thick},
+    colDroneBox/.style={fill=orange!22, draw=orange!80!black, thick},
+    colEkf/.style={fill=cyan!55!blue!25, draw=cyan!50!black, thick},
+    % Stile linee di connessione
+    conn/.style={->, draw=black!80, line width=0.7pt},
+    connGray/.style={->, draw=black!60, line width=0.7pt},
+    % =========================================================
+    % ICONA 1: Joystick / Haptic (Disegnata nativamente in TikZ)
+    % =========================================================
+    joystick/.pic={
+        % Base inferiore
+        \fill[black!65, rounded corners=1.5pt] (-0.52,-0.42) rectangle (0.52,-0.25);
+        % Gradino superiore base
+        \fill[black!65] (-0.32,-0.25) rectangle (0.32,-0.16);
+        % Asta
+        \draw[black!65, line width=2.4pt] (0,-0.16) -- (0,0.18);
+        % Sfera (Pomello)
+        \fill[black!65] (0,0.24) circle (0.19);
+        % Riflesso bianco sulla sfera
+        \draw[white, line width=1.1pt, line cap=round] (0.04,0.34) arc (65:145:0.11);
+    },
+    % =========================================================
+    % ICONA 2: Quadrotore con Camera (Disegnata nativamente)
+    % =========================================================
+    quadrotor/.pic={
+        \definecolor{dronebr}{RGB}{95, 50, 15}
+        % Bracci e corpo centrale
+        \fill[dronebr] (-0.75, 0.10) -- (-0.20, 0.10) -- (-0.12, 0.0) -- (0.12, 0.0) -- (0.20, 0.10) -- (0.75, 0.10) -- (0.75, 0.16) -- (-0.75, 0.16) -- cycle;
+        \fill[dronebr, rounded corners=2pt] (-0.28, 0.02) rectangle (0.28, 0.18);
+        % Motori ed eliche
+        \fill[dronebr] (-0.68, 0.16) rectangle (-0.58, 0.24);
+        \fill[dronebr] (0.58, 0.16) rectangle (0.68, 0.24);
+        \draw[dronebr, line width=1.4pt] (-0.92, 0.24) -- (-0.34, 0.24);
+        \draw[dronebr, line width=1.4pt] (0.34, 0.24) -- (0.92, 0.24);
+        % Carrelli di atterraggio
+        \draw[dronebr, line width=2pt, line cap=round] (-0.26, 0.04) -- (-0.38, -0.36);
+        \draw[dronebr, line width=2pt, line cap=round] (0.26, 0.04) -- (0.38, -0.36);
+        % Supporto e Telecamera centrale
+        \draw[dronebr, line width=1.2pt] (-0.18, -0.04) -- (0, -0.12) -- (0.18, -0.04);
+        \draw[dronebr, fill=orange!22, line width=1.2pt, rounded corners=1.5pt] (-0.14, -0.34) rectangle (0.14, -0.10);
+        \draw[dronebr, line width=1pt] (0, -0.22) circle (0.08);
+        \fill[dronebr] (0, -0.22) circle (0.04);
+    }
+]
+
+    % ---------------------------------------------------------
+    % 1. CONTENITORI TRATTEGGIATI DI SFONDO
+    % ---------------------------------------------------------
+    % Contenitore Haptic Interface
+    \node[colHapticBg, minimum width=4.4cm, minimum height=5.6cm, rounded corners] (haptic_bg) at (3.6, -1.5) {};
+    \node[text=black!65, align=center, rounded corners] at (3.6, -1.45) {\textbf{Haptic}\\[-2pt]\textbf{interface}};
+
+    % Contenitore NMPC Controlled UAV
+    \node[colUavBg, minimum width=5.4cm, minimum height=4.1cm] (uav_bg) at (14.7, 0.60) {};
+    \node[text=orange!35!black, align=center] at (14.7, 2.00) {\textbf{NMPC Controlled}\\[-2pt]\textbf{UAV}};
+
+    % ---------------------------------------------------------
+    % 2. BLOCCHI PRINCIPALI
+    % ---------------------------------------------------------
+    % Colonna Sinistra: Riferimento autonomo e Operatore Umano
+    \node[colYellow, minimum width=2.4cm, minimum height=1.5cm, align=center] (auto_ref) at (1.0, 2.2) {Autonomous\\cylindrical\\reference};
+    
+    \node[colYellow, minimum width=1.6cm, minimum height=2.4cm, align=center] (human) at (0.4, 0.0) {Human\\operator};
+
+    % Blocchi interni a Haptic Interface
+    \node[colInnerGray, minimum width=1.6cm, minimum height=1.35cm, rounded corners] (joy_box) at (2.7, 0.0) {};
+    \pic at (joy_box.center) {joystick};
+
+    \node[colInnerGray, minimum width=1.1cm, minimum height=1.15cm, font=\large, text=black!65, rounded corners] (integrator) at (4.7, 0.0) {$\dfrac{1}{s}$};
+
+    \node[colGreen, minimum width=3.5cm, minimum height=1.85cm, align=center, text=green!25!black, rounded corners] (apf) at (3.6, -3.2) {Force feedback\\Management\\(APF)};
+
+    % ---------------------------------------------------------
+    % BLOCCO SWITCH (Selettore Riferimento Autonomo / Aptico)
+    % ---------------------------------------------------------
+    \node[colSwitch, minimum width=1.0cm, minimum height=1.15cm] (switch_box) at (6.85, 0.25) {};
+    % Tratti interni di collegamento ai terminali
+    \draw[black!75, line width=0.7pt] (6.35, 0.50) -- (6.58, 0.50);
+    \draw[black!75, line width=0.7pt] (6.35, 0.00) -- (6.58, 0.00);
+    \draw[black!75, line width=0.7pt] (7.12, 0.25) -- (7.35, 0.25);
+    % Leva interna dello switch e freccia di commutazione
+    \draw[black!80, line width=1.1pt, line cap=round] (7.10, 0.25) -- (6.62, 0.46);
+    \draw[<->, >={Latex[length=1.4mm, width=1.1mm]}, black!55, line width=0.45pt] (6.72, 0.41) to[bend right=25] (6.72, 0.09);
+    % Terminali (pallini bianchi)
+    \filldraw[fill=white, draw=black!80, line width=0.7pt] (6.60, 0.50) circle (0.055);
+    \filldraw[fill=white, draw=black!80, line width=0.7pt] (6.60, 0.00) circle (0.055);
+    \filldraw[fill=white, draw=black!80, line width=0.7pt] (7.10, 0.25) circle (0.055);
+
+    % Colonna Centrale: Blocchi di Mapping
+    \node[colMap, minimum width=1.8cm, minimum height=2.4cm, align=center, rounded corners] (cyl2cart) at (10.3, 0.25) {Cylindrical\\to\\Cartesian\\mapping};
+
+    \node[colMap, minimum width=1.8cm, minimum height=2.4cm, align=center, rounded corners] (cart2cyl) at (10.3, -3.2) {Cartesian\\to\\Cylindrical\\mapping};
+
+    % Blocchi interni a NMPC Controlled UAV
+    \node[colNmpc, minimum width=1.4cm, minimum height=2.6cm, align=center, text=orange!25!black, font=\sffamily\bfseriesm] (nmpc) at (13.2, 0.25) {NMPC};
+
+    \node[colDroneBox, minimum width=2.1cm, minimum height=1.15cm] (drone_box) at (15.9, 0.25) {};
+    \pic at (drone_box.center) {quadrotor};
+
+    % Blocco EKF2 in basso a destra
+    \node[colEkf, minimum width=2.2cm, minimum height=0.95cm, align=center, rounded corners] (ekf) at (15.9, -3.2) {EKF2};
+
+    % ---------------------------------------------------------
+    % 3. FRECCE E COLLEGAMENTI
+    % ---------------------------------------------------------
+    % Interazione bidirezionale Human <-> Joystick
+    \draw[<->, draw=black!75, line width=0.7pt] (human.east) -- (joy_box.west);
+
+    % Joystick -> 1/s
+    \draw[connGray] (joy_box.east) -- (integrator.west);
+
+    % 1/s -> Ingresso inferiore dello Switch
+    \draw[conn] (integrator.east) -- (6.35, 0.00);
+
+    % Autonomous cylindrical reference -> Ingresso superiore dello Switch
+    \draw[conn] (auto_ref.east) -| (6.05, 0.50) -- (6.35, 0.50);
+
+    % Uscita Switch -> Cylindrical to Cartesian mapping
+    \draw[conn] (switch_box.east) -- node[below, pos=0.3, font=\normalsize, text=black] {$r_{\mathit{ref}}, \beta_{\mathit{ref}}, z_{\mathit{ref}}$} (cyl2cart.west);
+
+    % Cylindrical to Cartesian mapping -> NMPC
+    \draw[conn] (cyl2cart.east) -- (nmpc.west);
+
+    % NMPC -> Drone
+    \draw[->, draw=orange!40!black, line width=0.7pt] (nmpc.east) -- (drone_box.west);
+
+    % Drone -> EKF2 (anello esterno a destra)
+    \draw[conn] (drone_box.east) -- ++(0.65, 0) |- (ekf.east);
+
+    % EKF2 -> Cartesian to Cylindrical mapping
+    \draw[conn] (ekf.west) -- node[below, pos=0.62, font=\normalsize, text=black] {$x, y, z, \psi$} (cart2cyl.east);
+
+    % Diramazione da uscita EKF2 verso il basso di NMPC
+    \coordinate (ekf_branch) at (13.2, -3.2);
+    \draw[conn] (ekf_branch) -- (nmpc.south);
+
+    % Cartesian to Cylindrical mapping -> APF
+    \draw[conn] (cart2cyl.west) -- node[below, pos=0.45, font=\normalsize, text=black] {$r, \beta, z_{\mathit{rel}}$} (apf.east);
+
+    % APF -> Human operator
+    \draw[conn] (apf.west) -| (human.south);
+
+\end{tikzpicture}%
+}
+\caption{NMPC Shared Control architecture.}
+\label{fig:nmpc_shared_control_tikz}
 \end{figure}
 
 \subsection{Momentum-Based Wrench Estimator}
-Standard optimal controllers rely on a nominal dynamic model. In real flight conditions, however, a UAV is constantly subject to unmodeled external disturbances such as aerodynamic drag, ground effect, payload shifts, or ambient wind. If neglected, these disturbances introduce steady-state tracking offsets and degrade visual framing. To counteract these effects without requiring dedicated onboard force/torque sensors, the control architecture is augmented with a Momentum-Based Estimator (MBE)~\cite{ruggiero2015passivity}. This observer estimates the unmodeled external wrench purely by tracking the discrepancy between the expected and actual generalized momentum of the vehicle.
-
-\subsubsection{Physical Principle and Model Decoupling}
-The fundamental intuition behind the momentum-based observer is to isolate external disturbances by canceling out the known nominal dynamics of the system. 
-Recall from Eq.~\eqref{eq:quadrotor_model} that the translational dynamics can be expressed in terms of the linear momentum $\mathbf{p}_T = m \mathbf{v}$:
+Standard optimal controllers rely on a nominal dynamic model. In real flight conditions, however, a UAV is constantly subject to unmodeled external disturbances such as aerodynamic drag, ground effect, payload shifts, or ambient wind. If neglected, these disturbances introduce either instability or steady-state tracking offsets and degrade visual framing. To counteract these effects without requiring dedicated onboard force/torque sensors, the control architecture is augmented with a Momentum-Based Estimator (MBE)~\cite{ruggiero2015passivity}. This observer estimates the unmodeled external wrench purely by tracking the discrepancy between the expected and actual generalized momentum of the vehicle, which is defined as
 \begin{equation}
-    \dot{\mathbf{p}}_T = m \dot{\mathbf{v}} = \mathbf{F}_{\text{thrust}} - m\mathbf{g} + \mathbf{F}_{ext},
-\end{equation}
-where $\mathbf{F}_{\text{thrust}} = \mathbf{R}(\mathbf{q}) \begin{bmatrix} 0 & 0 & F_z \end{bmatrix}^\top$ is the actual control force generated by the propellers rotated into the inertial (world) frame, $m\mathbf{g}$ is the gravitational force, and $\mathbf{F}_{ext}$ accounts for all unmodeled external forces.
-\\An attempt to reconstruct $\mathbf{F}_{ext}$ from this equation would require computing the linear acceleration $\dot{\mathbf{v}}$. In practice, numerically differentiating velocity signals (or reading noisy onboard accelerometer data) introduces high-frequency noise from motor vibrations, making the resulting estimate unusable for closed-loop control.
-\\Instead, the estimator handles numerical differentiation by operating on an integral principle. To this end, we define the \textit{nominal force} acting in the physical model as:
-\begin{equation} \label{eq:F_nom}
-    \mathbf{F}_{\text{nom}} = \mathbf{F}_{\text{thrust}} - m\mathbf{g} = \mathbf{R}(\mathbf{q}) \begin{bmatrix} 0 \\ 0 \\ F_z \end{bmatrix} - m\mathbf{g}.
-\end{equation}
-It is essential to clarify the physical distinction: $\mathbf{F}_{\text{thrust}}$ is the sole active control force commanded to the actuators, whereas $\mathbf{F}_{\text{nom}}$ represents the resultant of all known modeled forces acting on the drone (actuation thrust plus gravity). The true rate of change of momentum is thus:
-\begin{equation}
-    \dot{\mathbf{p}}_T = \mathbf{F}_{\text{nom}} + \mathbf{F}_{ext}.
-\end{equation}
-The key objective of the estimator is to \textit{cancel out the nominal dynamics} $\mathbf{F}_{\text{nom}}$, leaving only the influence of the unknown disturbance $\mathbf{F}_{ext}$.
-
-\subsubsection{Observer Dynamics and Disturbance Estimation}
-To achieve this cancellation, an auxiliary state $\mathbf{I}_T \in \mathbb{R}^3$ is introduced to accumulate the expected momentum. The observer integrates the known nominal force alongside the current residual estimate $\mathbf{r}_T$ (which tracks $\mathbf{F}_{ext}$):
-
-\begin{align}
-    \dot{\mathbf{I}}_T &= \mathbf{F}_{\text{nom}} + \mathbf{r}_T, \label{eq:mbe_trans_I} \\
-    \dot{\mathbf{r}}_T &= \mathbf{K}_{1,T} \left( -\mathbf{r}_T + \mathbf{K}_{2,T} (\mathbf{p}_T - \mathbf{I}_T) \right), \label{eq:mbe_trans_r}
-\end{align}
-where $\mathbf{p}_T = m \mathbf{v}$ is the actual momentum obtained from smooth odometry.
-By defining the momentum estimation error as $\mathbf{e}_p = \mathbf{p}_T - \mathbf{I}_T$, its time derivative evaluates to:
-\begin{equation}
-    \dot{\mathbf{e}}_p = \dot{\mathbf{p}}_T - \dot{\mathbf{I}}_T = (\mathbf{F}_{\text{nom}} + \mathbf{F}_{ext}) - (\mathbf{F}_{\text{nom}} + \mathbf{r}_T) = \mathbf{F}_{ext} - \mathbf{r}_T.
-\end{equation}
-Here, the mathematical mechanism becomes apparent: the nominal model dynamics $\mathbf{F}_{\text{nom}}$ (both propeller thrust and gravity) cancel out completely. What remains in the error dynamics is solely the discrepancy between the actual disturbance $\mathbf{F}_{ext}$ and its estimate $\mathbf{r}_T$. Equations~\eqref{eq:mbe_trans_I}--\eqref{eq:mbe_trans_r} yield a stable and damped second-order linear filter that drives $\mathbf{r}_T \to \mathbf{F}_{ext}$ as a low-pass filter, completely filtering out high-frequency noise without ever computing acceleration derivatives. The diagonal gain matrices $\mathbf{K}_{1,T}$ and $\mathbf{K}_{2,T}$ are tuned to obtain a desired settling time and critical damping ratio.
-\\An identical decoupled architecture is applied to the rotational channel. In terms of angular momentum $\mathbf{p}_R = \mathbf{J} \boldsymbol{\omega}$ in the body frame, the rotational dynamics are governed by:
-\begin{equation}
-    \dot{\mathbf{p}}_R = \mathbf{J} \dot{\boldsymbol{\omega}} = \boldsymbol{\tau} - \boldsymbol{\omega} \times (\mathbf{J} \boldsymbol{\omega}) + \boldsymbol{\tau}_{ext},
-\end{equation}
-where $\boldsymbol{\tau}$ is the control torque vector commanded to the propellers, $\boldsymbol{\omega} \times (\mathbf{J} \boldsymbol{\omega})$ is the gyroscopic/Coriolis torque, and $\boldsymbol{\tau}_{ext}$ is the unmodeled disturbance torque. 
-The known nominal torque predicted by the rotational model is defined as:
-\begin{equation} \label{eq:tau_nom}
-    \boldsymbol{\tau}_{\text{nom}} = \boldsymbol{\tau} - \boldsymbol{\omega} \times (\mathbf{J} \boldsymbol{\omega}).
-\end{equation}
-The rotational observer evolves according to:
-\begin{align}
-    \dot{\mathbf{I}}_R &= \boldsymbol{\tau}_{\text{nom}} + \mathbf{r}_R, \label{eq:mbe_rot_I} \\
-    \dot{\mathbf{r}}_R &= \mathbf{K}_{1,R} \left( -\mathbf{r}_R + \mathbf{K}_{2,R} (\mathbf{p}_R - \mathbf{I}_R) \right), \label{eq:mbe_rot_r}
-\end{align}
-which cancels out the nomianl control and Coriolis torques, allowing the residual $\mathbf{r}_R$ to converge smoothly to $\boldsymbol{\tau}_{ext}$.
-
-\subsubsection{Integration into the NMPC Architecture}
-The estimated external wrench $(\hat{\mathbf{F}}_{ext}, \hat{\boldsymbol{\tau}}_{ext}) = (\mathbf{r}_T, \mathbf{r}_R)$ is evaluated online at each control step ($100\text{ Hz}$) and used directly into the NMPC solver as an online parameter vector. 
+\begin{cases}
+    \mathbf{p}_T=m\mathbf{v}\\
+    \boldsymbol{\tau}_R=J\boldsymbol{\omega}
+\end{cases}
+\end{equation} 
+\\The estimated external wrench $(\hat{\mathbf{F}}_{ext}, \hat{\boldsymbol{\tau}}_{ext})$ is evaluated online at each control step ($100\text{ Hz}$) and used directly into the NMPC solver as an online parameter vector. 
 Rather than waiting for trajectory deviations to occur and reacting through feedback error, the NMPC embeds these estimated disturbances directly into its predictive model. This generates an anticipatory feedforward action that counteracts external forces and aerodynamic torques in real time, effectively eliminating steady-state position errors and maintaining high visual tracking accuracy.
+For more mathematical details see \ref{app:implementation_details}.
 
 \section{Inspection Drone: Admittance Control for Contact}
 While the observer drone relies on an optimization-based framework to handle visual constraints, the inspection drone operates under a completely different control paradigm, made for physical interaction. Its primary objective is to transition safely from free flight to a stable contact state against a rigid structure. To achieve this, the control architecture is built upon a cascaded structure: a high-level planner generates the nominal motion, while an admittance filter dynamically adjusts this reference based on environmental feedback, ultimately feeding a compliant setpoint to the native PX4 position controller.
 \begin{figure}[h!]
     \centering
     \includegraphics[width=\linewidth]{Immagini/Capitolo4/INTERACTION_DRONE_scheme.png}
-    \caption{Planning and control scheme about Interaction UAV planning and control}
+    \caption{Planning and control scheme describing Interaction UAV architecture}
     \label{fig:placeholder}
 \end{figure}
 \subsection{High-Level Planner}
 The high-level planner is responsible for generating a nominal Cartesian trajectory, denoted as $\mathbf{x}_d(t)$, which guides the inspection drone from its initial hovering state to the target surface. This reference trajectory dictates the desired 3D position and heading over time, ensuring a smooth and bounded approach velocity. However, this planned path is purely kinematic and geometric; it assumes a free-space environment and does not account for the reaction forces that arise upon impact. During the free-flight phase, the underlying flight controller tracks $\mathbf{x}_d(t)$ precisely. Yet, if the drone were to persistently track this rigid setpoint after establishing contact with the wall, the spring force by positional error action of the position controller united with integral action would rapidly accumulate error, leading to actuator saturation, violent rebounds, and inevitable instability.
 
 \subsection{Admittance Filter}
-To safely manage the transition and maintain a stable physical interaction, an admittance control strategy is implemented. This framework renders the drone compliant to external forces by masking the rigid structure as a virtual mass-spring-damper system. The core of the admittance filter is governed by the following second-order differential equation:
+To safely manage the transition and maintain a stable physical interaction, an admittance control strategy is implemented. This framework renders the drone compliant to external forces by masking the rigid structure as a virtual mass-spring-damper system. The core of the admittance filter~\cite{siciliano2008springer} is governed by the following second-order differential equation:
 \begin{equation}
     \mathbf{M}_d \ddot{\mathbf{e}} + \mathbf{D}_d \dot{\mathbf{e}} + \mathbf{K}_d \mathbf{e} = \mathbf{F}_{ext}
 \end{equation}
 where $\mathbf{e}(t) = \mathbf{x}_c(t) - \mathbf{x}_d(t)$ represents the positional deviation between the newly generated compliant reference $\mathbf{x}_c(t)$ and the nominal planner trajectory $\mathbf{x}_d(t)$. The matrices $\mathbf{M}_d$, $\mathbf{D}_d$, and $\mathbf{K}_d$ are positive-definite diagonal matrices representing the desired virtual mass, damping, and stiffness, respectively. The vector $\mathbf{F}_{ext}$ represents the external contact force measured by the end-effector's onboard force sensor.
 \\By numerically integrating this dynamic equation in real time, the filter evaluates the necessary spatial deviation and outputs the compliant setpoint $\mathbf{x}_c(t)$. The behavior of the system is thus completely shaped by the chosen virtual parameters. During free flight, since the measured external force is zero ($\mathbf{F}_{ext} = \mathbf{0}$), the positional error $\mathbf{e}(t)$ converges to zero, and the compliant reference matches the nominal one ($\mathbf{x}_c = \mathbf{x}_d$). Upon impact, the reaction force $\mathbf{F}_{ext}$ drives the admittance dynamics, causing the compliant reference to yield backward. This dynamically adjusted setpoint $\mathbf{x}_c(t)$ is continuously fed to the standard PX4 cascaded PID controller. As a result, the drone safely absorbs the impact and maintains a steady pressure against the surface, achieving the desired contact force without destabilizing the flight dynamics.
-
-\textcolor{red}{*** IMMAGINE GAZEBO DRONE A CONTATTO ***}
 
 %%%%%%%%%%%%%%%%%%%%%%%% SHARED CONTROL %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -213,26 +300,26 @@ The proposed shared autonomy architecture allows the human operator to intervene
 \end{figure}
 Depending on the operational phase and the specific mission requirements, the user can interact with the robotic team using two distinct teleoperation modalities:
 \begin{itemize}
-    \item \textbf{Observer Control Mode:} The operator dynamically adjusts the Point of View (PoV) of the camera drone. By manipulating the haptic device, the user modifies the relative distance, relative height, and azimuth angle around the inspection target. This mode enhances situational awareness and allows the operator to inspect specific structural details without disrupting the autonomous tracking.
-    \item \textbf{Task Control Mode:} During the critical phase of physical interaction, the operator can take direct control of the inspection drone to guide the fine insertion maneuver. In this phase, the human's cognitive judgment and dexterity are coupled with the autonomous admittance filter, which guarantees physical stability upon contact with the environment.
+    \item \textbf{Observer Drone Control Mode:} The operator dynamically adjusts the Point of View of the camera drone. By manipulating the haptic device, the user modifies the relative distance, relative height, and azimuth angle around the inspection target. This mode enhances situational awareness and allows the operator to inspect specific structural details without disrupting the autonomous tracking.
+    \item \textbf{Interaction Drone Control Mode:} During the critical phase of physical interaction, the operator can take direct control of the inspection drone to guide the fine insertion maneuver. In this phase, the human's cognitive judgment and dexterity are coupled with the autonomous admittance filter, which guarantees physical stability upon contact with the environment.
 \end{itemize}
 
-\subsection{Haptic Reference Generation}
+\subsection{Reference Generation via Haptic}
 The used device, Novint Falcon, provides a physical 3D workspace of approximately $10 \times 10 \times 10$ cm, offering three translational degrees of freedom.  To mitigate the effects of sensor noise and unintentional operator tremors within this confined workspace, a nonlinear deadband with a threshold $d$ is applied to the raw input:
 \begin{equation}
     f_{\text{db}}(x, d) = 
     \begin{cases} 
       0 & \text{if } |x| < d \\
       x - \operatorname{sgn}(x)d & \text{if } |x| \geq d
-   \end{cases}
+   \end{cases},
 \end{equation}
 \begin{figure}[h!]
     \centering
     \includegraphics[width=0.5\linewidth]{Immagini/Capitolo4/Nonlinear_deadband_force.png}
     \caption{Nonlinear deadband applied on force given by the user on haptic device, $d=0.008$}
-    \label{fig:placeholder}
+    \label{fig:haptic_render}
 \end{figure}
-When operating in the observer control mode, the haptic interface is utilized to dynamically command the 3D reference for the camera drone in cylindrical coordinates[\ref{eq:cyl_mapping}].\\
+where in this case $x\in[-0.1,0.1]$ m is a generic haptic end-effector coordinate in haptic frame (\ref{fig:haptic_render})(see Appendix \ref{app:implementation_details}). When operating in the observer control mode, the haptic interface is utilized to dynamically command the 3D reference for the camera drone in cylindrical coordinates[\ref{eq:cyl_mapping}]: this provides a human intuitive commanding modality for a target tracking, in relation to what he sees and which movements he can really perform with an underactuated drone (i.e, it would be useless to use spherical coordinates for 4 DOF UAV).  
 In order to maintain consistency with the OCP formulation, the displacements of the haptic end-effector are directly mapped into reference velocities for the cylindrical variables. Specifically, the $x_h$, $y_h$, and $z_h$ inputs govern the rate of change of the radial distance $\dot{r}_{cyl}$, the azimuth orbit $\dot{\beta}$, and the relative altitude $\dot{z}_{rel}$, respectively. The position of device's end-effector in this operational space is denoted as $\mathbf{p}_h = [x_h, y_h, z_h]^\top$ and there is, clearly, the necessity to translate such small movements in bigger ones for feeding the drone with a proper reference. By introducing a generic scaling factor $K_{\text{joy}}=15$, the reference velocities imposed by the user are defined as:
 \begin{equation}
     \begin{bmatrix} \dot{r}_{cyl} \\ \dot{\beta} \\ \dot{z}_{rel} \end{bmatrix} = 
@@ -245,23 +332,28 @@ In order to maintain consistency with the OCP formulation, the displacements of 
 These velocities are numerically integrated over the control loop time step $\Delta t$ to generate the desired cylindrical reference vector. To avoid kinematic singularities and physically unfeasible setpoints, bounds are applied during the integration step: the radial distance is strictly kept above a minimum safety threshold (avoiding singularity in $r=0$), and the azimuth angle is wrapped within the $[-\pi, \pi]$ interval to ensure continuity in rotation. The resulting updated reference vector $\mathbf{y}_{\text{ref}}(t) = [r_{cyl,\text{ref}}, \beta_{\text{ref}}, z_{rel,\text{ref}}]^\top$ is then published to the MPC planner, dynamically shifting the optimal tracking objective.
 
 \subsection{Force Feedback Management}
-First of all, a base mechanical impedance is applied to provide the user with a tactile sensation of stability and centering with respect to the origin (i.e., zero imposed velocity). This behavior is modeled as a virtual spring-damper system:
+\label{section:APF}
+Force feedback has been handled with a sum of two contribution given back to the user.
+\\A base mechanical impedance is applied to provide the user with a tactile sensation of stability and centering with respect to the origin (i.e., zero imposed velocity). This behavior is modeled as a virtual spring-damper system:
 \begin{equation}
     \mathbf{F}_{\text{imp}} = -k \cdot \mathbf{p}_h - b \cdot \dot{\mathbf{p}}_h
 \end{equation}
-In addition to this base impedance, to ensure the safety of the visual tracking maneuver and prevent the observer drone from losing sight of the target or getting too close to it, a haptic force feedback based on Artificial Potential Fields (APF) is also rendered to the operator. This feedback translates undesired behaviors for the drone into a physical sensation for the human.
+In addition to this base impedance, to ensure the safety of the visual tracking maneuver and prevent the observer drone from losing sight of the target or getting too close to it, a haptic force feedback based on Artificial Potential Fields is also rendered to the operator. This feedback translates undesired behaviors for the drone into a physical sensation for the human.
 \\To do this, we need to mathematically define the physical boundaries of the camera's optical frustum and the drone's safety area. These boundaries impose spatial constraints that are continuously compared with the actual measured state $\mathbf{y}_{\text{act}} = [r_{\text{act}}, \beta_{\text{act}}, z_{\text{act}}, \psi_{\text{dev}}]^\top$, where $\psi_{\text{dev}}$ is the yaw deviation of the target from the camera's optical center.
 \\First, let us define the vertical physical limit of the camera's vision. From a top-down perspective, if the target is at a radial distance $r_{\text{act}}$, its projected depth along the camera's optical axis is $r_{\text{act}} \cos(\psi_{\text{dev}})$. Using basic trigonometry on the vertical plane, the maximum visible height from the center of the image to the top or bottom edge is defined as:
 \begin{equation}
-    z_{\max} = r_{\text{act}} \cos(\psi_{\text{dev}}) \tan\left(\frac{\text{FOV}_v}{2}\right)
+    z_{\max} = r \cos(\psi_{\text{dev}}) \tan\left(\frac{\text{FOV}_v}{2}\right)
 \end{equation}
-\begin{figure}[h!]
+\begin{figure}[htbp]
     \centering
     \includegraphics[width=\linewidth]{Immagini/Capitolo4/FOV_boundaries.png}
     \caption{Top and side views of the two drones}
     \label{fig:placeholder}
 \end{figure}
-Using $z_{\max}$, we can easily define the distances from the actual drone state to the boundaries of the image. These spatial margins are geometrically defined as follows:
+\justify
+where $FOV_v$ is a parameter denoting the maximum vertical optical aperture of the camera. 
+\\\textbf{Notice}: this is an approximation. This supposes the camera optical axes to be always parallel to world XY plane (i.e., flat drone). Since camera is rigidly mounted on Observer Drone body frame, UAV must roll and pitch in order to move. This could be avoided by bringing distance in Observer UAV's body frame, but it's acceptable for smooth desired motion.
+\\Using $z_{\max}$, we can easily define the distances from the actual drone state to the boundaries of the image. These spatial margins are geometrically defined as follows:
 \begin{align}
     \Delta r &= r_{\text{act}} - r_{\min} \\
     \Delta z_{\text{top}} &= z_{\max} - z_{\text{act}} \\
@@ -277,6 +369,7 @@ Using $z_{\max}$, we can easily define the distances from the actual drone state
 where $r_{\min}$ ensures collision avoidance, the $z$ distances represent the remaining margins from the vertical limits of the Field of View ($\text{FOV}_v$), and $\Delta \psi$ represents the distance from the horizontal limits ($\text{FOV}_h$).
 \\When any of these distances falls below a predefined activation threshold $d_{\text{act}}$, an exponential repulsive force is triggered. For a generic distance $d$, the intensity of the force is formulated as:
 \begin{equation}
+    \label{eq:repulsive_force}
     F_{\text{rep}}(d) = 
     \begin{cases} 
       0 & \text{if } d \geq d_{\text{act}} \\
@@ -288,7 +381,18 @@ where $\alpha$ is a tunable shaping factor that determines the exponential steep
 \begin{equation}
     k_{\text{rep}} = \frac{F_{\max}^{\text{rep}}}{e^\alpha - 1}
 \end{equation}
-where $k_{\text{rep}}$ scales the magnitude of the potential field and $\alpha$ determines the exponential steepness of the virtual boundary. 
+In this way, the workspace is partitioned into three distinct operational regions:
+\begin{itemize}
+    \item \textbf{Free Region ($d \geq d_{\text{act}}$):} The vehicle is well within safe operational limits. The repulsive force is identically zero ($F_{\text{rep}} = 0$), and the operator feels only the standard centering spring-damper impedance.
+    \item \textbf{Anticipatory Repulsive Buffer ($0 < d < d_{\text{act}}$):} The state enters the safety buffer. The repulsive force ramps up exponentially according to~\eqref{eq:repulsive_force}, acting as a virtual tactile barrier that warns the human pilot of the approaching boundary before any constraint violation occurs.
+    \item \textbf{Violation Region ($d \leq 0$):} The boundary has been breached. The repulsive force saturates at its maximum value $F_{\max}^{\text{rep}}$ to vigorously push the operator away from danger.
+\end{itemize}
+The specific activation thresholds $d_{\text{act}}$ adopted in this work are configured as follows:
+\begin{itemize}
+    \item For the \textbf{radial distance}, $d_{\text{act}} = r_{\min} = 1.5\text{ m}$. Thus, the repulsive force activates as soon as the standoff distance drops below $r < r_{\min} + d_{\text{act}} = 3.0\text{ m}$, providing a $1.5\text{ m}$ wide progressive warning zone before reaching the minimum collision distance $r_{\min}$.
+    \item For the \textbf{camera vertical FoV}, $d_{\text{act}} = 0.3 \cdot z_{\max}$. Consequently, the central $70\%$ of the image height represents a free visual zone ($F_z^{\text{rep}} = 0$), while tactile resistance activates only when the target enters the outer $30\%$ approaching the top or bottom image borders.
+    \item For the \textbf{camera horizontal FoV}, $d_{\text{act}} = 0.3 \cdot (\text{FOV}_h / 2)$, applying lateral correction forces only when the yaw misalignment exceeds $70\%$ of the semi-aperture.
+\end{itemize}
 \begin{figure}[h!]
     \centering
     \includegraphics[width=0.6\linewidth]{Immagini/Capitolo4/F_rep.png}

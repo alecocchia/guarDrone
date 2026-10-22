@@ -215,7 +215,7 @@ def generate_launch_description():
         DeclareLaunchArgument('peg_z',     default_value=str(pose_cfg['peg_z'])),
         DeclareLaunchArgument('peg_yaw',   default_value=str(pose_cfg.get('peg_yaw', 0.0)),
                               description='Yaw iniziale peg/interaction drone [rad]'),
-        DeclareLaunchArgument('peg_z_offset', default_value=str(peg_cfg['peg_z_offset']),
+        DeclareLaunchArgument('peg_z_offset', default_value=str(peg_cfg.get('offset_z', peg_cfg.get('peg_z_offset', 0.0))),
                               description='Offset Z della punta end-effector dal CoM [m]'),
         DeclareLaunchArgument('peg_delta_x_approach', default_value=str(peg_cfg['approach']['delta_x']),
                               description='Delta X del peg in APPROACH [m]'),

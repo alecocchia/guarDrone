@@ -1,15 +1,25 @@
 %SPIEGARE SETUP E PROBLEMI (2 droni, haptic, problemi che ci sono in quest'ambito)
 This chapter presents the architecture of the proposed two-drone framework and clarifies the main technical challenges addressed. 
-\\Aerial robotics is a fundamental tool for operating in dangerous or degraded environments. UAVs are often used to keep human operators safe while performing non-destructive measurements on civil infrastructures. However, performing contact-based tasks requires a clear understanding of the workspace. When a drone approaches a structure, onboard First-Person View (FPV) cameras suffer from extreme occlusion and lack of depth perception. 
-\\To overcome this limitation and maximize the human situational awareness, this thesis proposes an architecture centered around an active exocentric camera drone. In this setup, a second UAV acts as a target and performs the physical interaction with the environment. 
-\\The observer drone must guarantee a stable video feed, avoiding any motion sickness for the human operator. At the same time, it must track a target drone whose trajectory is not known in advance. To solve this problem despite the underactuation of quadrotors, the system relies on a Non-linear Model Predictive Control (NMPC). This controller optimizes the camera framing and supports online POV adjustments commanded by the operator via a haptic device. 
+UAVs are often used to keep human operators safe while performing non-destructive measurements on civil infrastructures. However, performing contact-based tasks requires a clear understanding of the workspace. When a drone approaches a structure, onboard First-Person View (FPV) cameras suffer from extreme occlusion and lack of depth perception. 
+\\To overcome this limitation and maximize the human situational awareness, this thesis proposes an architecture centered around an active exocentric camera drone through which the the human operator watch the scene. In this setup, a second UAV acts as a target and performs the physical interaction with the environment. 
+\\The observer drone must guarantee a stable video feed, avoiding any motion sickness for the human operator. At the same time, it must track a target drone whose trajectory is not known in advance. To solve this problem despite the underactuation of quadrotors, the system relies on a NMPC. This controller optimizes the camera framing and supports online POV adjustments commanded by the operator via a haptic device. 
 \\Finally, the whole architecture is integrated with the standard PX4 firmware. Keeping the high-level logic connected to a known and tested flight stack provides reliable low-level stabilization and makes the transition to real hardware easier.
+\section{Shared control}
+A fully autonomous operation is often unfeasible in unstructured environments. The human operator must be able to intervene during the mission. For this reason, a haptic device is integrated into the control loop. 
+\\The operator uses the haptic interface for two main purposes. The first one is to dynamically change the POV of the observer drone. This intervention is necessary in case of sudden occlusions, unexpected obstacles, or a general loss of situational awareness. The operator can move the external camera to find a better angle without interrupting the tracking task. 
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{Immagini/Capitolo3/Shared Control.jpeg}
+    \caption{Haptic-based teleoperation illustration.}
+    \label{fig:shared_control_intro}
+\end{figure}
+\\The second purpose is to take direct control of the inspection drone. During the interaction phase of the mission, the operator guides the platform to perform the non-destructive measurements in a controlled way. In this case, the human decision-making is combined with the low-level admittance filter to provide compliance to the drone, in order to maintain a stable contact with the wall.
+\\Furthermore, the haptic device provides physical feedback to the user; for this reason we speak about \textit{haptic-based teleoperation}. The mathematical limits of the camera field of view and the safety distances are translated into repulsive forces. This physical sensation prevents the operator from losing the target or crashing the drones.
 
 \section{Exocentric vision}
-Using a standard onboard First-Person View (FPV) camera for physical interaction tasks presents some limitations. An egocentric perspective naturally compromises both the safety and the overall effectiveness of the mission.
-When the inspection drone approaches a surface to make contact, the onboard camera ends up facing the wall from a very close distance. This completely blocks the Field of View (FOV). The human operator loses all environmental context, making it impossible to see surrounding obstacles or the actual position of the drone. An exocentric camera solves this simply by looking at the scene from the outside, keeping the full situational awareness intact.
+Using a standard onboard First-Person View (FPV) camera for physical interaction tasks presents some limitations. An egocentric perspective can compromise both the safety and the overall effectiveness of the mission, especially during navigation and interaction with the environment. Indeed, when the inspection drone approaches a surface to make contact, the onboard camera ends up facing the wall from a very close distance. This completely blocks the Field of View (FOV). The human operator loses all environmental context, making it impossible to see surrounding obstacles or the actual position of the drone. An exocentric camera solves this simply by looking at the scene from the outside, keeping the full situational awareness intact.
 \\Moreover, flying a drone toward a physical target using a flat, frontal 2D video feed makes it difficult to judge the remaining distance before impact. Depth perception is almost entirely lost. An observer drone tracking the operation from a lateral or isometric angle naturally restores this 3D spatial understanding, allowing the operator to clearly see the gap between the drone and the structure.
-\begin{figure}[h!]
+\begin{figure}[ht]
 \centering
 \begin{subfigure}[b]{0.49\textwidth}
     \includegraphics[width=\linewidth]{Immagini/Capitolo3/first_pov.jpg}
@@ -21,32 +31,49 @@ When the inspection drone approaches a surface to make contact, the onboard came
     \caption{Exocentric POV}
     \label{fig:third_pov_intro}
 \end{subfigure}
-\caption{Visual comparison between egocentric and exocentric views for bridge inspection task}
+\caption{Visual comparison between egocentric and exocentric views for bridge inspection task.}
 \end{figure}
 \\Another major issue is the dynamic coupling of the quadrotor. Since standard quadrotors are underactuated, they must tilt to move or apply forces against a wall. If the camera is rigidly attached to the inspection drone, it will shake with every single pitch, roll, or contact vibration. The resulting video feed becomes chaotic, degrading the inspection quality and easily causing motion sickness for the operator. By using an independent observer drone, the visual task is completely decoupled from the physical one. The MPC can then focus entirely on planning a smooth and stable camera trajectory, isolating the operator from the rough dynamics the contact drone has to face.
-\section{Shared control}
-A fully autonomous operation is often unfeasible in unstructured environments. The human operator must be able to intervene during the mission. For this reason, a haptic device is integrated into the control loop. 
-\\The operator uses the haptic interface for two main purposes. The first one is to dynamically change the Point of View (POV) of the observer drone. This intervention is necessary in case of sudden occlusions, unexpected obstacles, or a general loss of situational awareness. The operator can move the external camera to find a better angle without interrupting the tracking task. 
-\begin{figure}
-    \centering
-    \includegraphics[width=\linewidth]{Immagini/Capitolo3/Shared Control.jpeg}
-    \caption{Bilateral teleoperation illustration}
-    \label{fig:shared_control_intro}
-\end{figure}
-\\The second purpose is to take direct control of the inspection drone. During the interaction phase of the mission, the operator guides the platform to perform the non-destructive measurements in a controlled way. In this case, the human decision-making is combined with the low-level admittance filter to maintain a stable contact with the wall.
-\\Furthermore, the haptic device provides physical feedback to the user; for this reason we speak about \textit{bilateral teleoperation}. The mathematical limits of the camera field of view and the safety distances are translated into repulsive forces. This physical sensation prevents the operator from losing the target or crashing the drones.
-\section{Contact inspection}
-The execution of physical contact tasks with a multi-rotor platform introduces complexities with respect to standard free-flight navigation. When the inspection drone physically interacts with a rigid surface, such as a bridge pillar, it experiences environmental reaction forces. If the UAV is governed by a standard position controller, it will interpret the physical wall simply as a persistent position error, keeping pushing inside it. This mismatch causes the controller to aggressively increase its control input in an attempt to reach the unfeasible reference inside the wall, leading to violent inclination, actuator saturation, and potential crashes.
+
+\subsection{Visual References and Cylindrical Mapping}
+Since the main objective of observer drone is to maintain a desired relative pose with respect to the inspection drone, the choice here is to use cylindrical coordinates for positional references. From a human perspective, it is intuitive to imagine possible motions of the quadrotor as confined into a cylindrical surface, with its revolution axis passing through the target. Denoting with $\mathbf{p}_{cam}\in \mathbb{R}^3$ and $\mathbf{p}_{target}\in \mathbb{R}^3$ the cartesian position in ENU frame, respectively, of camera and target, the relative distance vector $\Delta \mathbf{p} = \mathbf{p}_{\text{cam}} - \mathbf{p}_{\text{obj}} = [\Delta x, \Delta y, \Delta z]^\top$ can be directly mapped into the relative cylindrical coordinates:
+\begin{equation} \label{eq:cyl_mapping}
+\begin{aligned}
+    r_{rel} &= \sqrt{\Delta x^2 + \Delta y^2}, \\
+    \beta_{rel} &= \operatorname{atan2}(\Delta y, \Delta x), \\
+    z_{rel} &= \Delta z.
+\end{aligned}
+\end{equation}
 \begin{figure}[h!]
     \centering
+    \includegraphics[width=0.8\linewidth]{Immagini/Capitolo3/cylindrical_drones.jpeg}
+    \caption{Cylindrical relative pose from the operator POV}
+    \label{fig:cyl_pov}
+\end{figure}
+\justify
+The visual reference vector is structured as $\mathbf{y}_{\text{vis,ref}} = [r_{ref}, \beta_{ref}, z_{rel,ref}]^\top$. Here, $r_{ref}$ and $z_{rel,ref}$ define the desired observation distance and relative height. The azimuth reference $\beta_{ref}$ provides the observation angle around the target.
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.8\linewidth]{Immagini/Capitolo3/drones_cyl.jpeg}
+    \caption{Cylindrical mapping of relative coordinates in XY plane}
+    \label{fig:cyl_mapping_xy}
+\end{figure}
+To maintain the target centered in the camera image plane (assuming the camera is aligned with the drone body $x$-axis), the observer drone must constantly adjust its yaw angle $\psi$. Since the relative vector $\Delta \mathbf{p}$ points from the object to the camera, the required yaw orientation to look back at the target is geometrically bound to the actual azimuth angle by the relation $\psi_{centr} = \beta_{rel} + \pi$. The relative yaw can be changed by imposing $\psi_{des}$: $\psi_{ref}=\psi_{centr} + \psi_{des}$, where $\psi_{des}$ is an external displacement allowed by the user to deviate from the optical center. 
+
+\section{Contact inspection}
+The execution of physical contact tasks with a multi-rotor platform introduces complexities with respect to standard free-flight navigation. When the inspection drone physically interacts with a rigid surface, such as a bridge pillar, it experiences environmental reaction forces. If the UAV is governed by a standard position controller, it will interpret the physical wall simply as a persistent position error, keeping pushing inside it. This mismatch causes the controller to aggressively increase its control input in an attempt to reach the unfeasible reference inside the wall, leading to violent inclination, actuator saturation, and potential crashes.
+\begin{figure}[htbp]
+    \centering
     \includegraphics[width=0.5\linewidth]{Immagini/Capitolo3/Drone_interaction.jpeg}
-    \caption{Drone interacting with environment; position goal behind the wall}
+    \caption{Drone interacting with environment; position goal behind the wall.}
     \label{fig:interaction_intro}
 \end{figure}
 To safely manage this interaction, the architecture implements an admittance filter that makes the drone compliant with the environment, conceptually acting as a virtual spring-damper system. Instead of rigidly tracking a static geometric setpoint, the admittance framework translates the external contact forces into a real-time modification of the desired trajectory. When the drone pushes against the surface, the filter acts, safely adjusting the position reference backwards to maintain a stable contact. 
 \\Even if admittance control ensures the low-level physical stability of the inspection drone, guiding the UAV to the exact target point remains a very delicate operation. This is where the exocentric vision framework becomes fundamental. By delegating the local contact safety to the autonomous admittance filter, the target drone's behavior becomes stable. This allows the human operator to focus entirely on the high-level contact maneuver and mission monitoring through the optimal and adapted 3D viewpoint continuously provided by the observer drone.
 
-\section{A system architecture overview}
+
+
+\section{System architecture}
 The overall system is built on a distributed software architecture using ROS2. This middleware acts as a bridge, smoothly connecting the high-level control algorithms with the low-level flight firmware. On the hardware side, both quadrotors rely on the PX4 autopilot, which manages essential tasks like state estimation and motor mixing.
 \begin{figure}[htbp]
     \centering
@@ -102,21 +129,21 @@ The overall system is built on a distributed software architecture using ROS2. T
     % ================== COLLEGAMENTI E FRECCE ==================
     
     % 1. Human <-> Haptic
-    \draw[<->, thick] (operator) -- node[right, labeltext] {Haptic Feedback\\\& Motion Input} (haptic);
+    \draw[<->, thick] (operator) -- node[left, labeltext,xshift=-1.5mm] {Haptic Feedback\\\& Motion Input} (haptic);
 
     % 2. Haptic <-> Teleop (Frecce sfalsate per evitare sovrapposizioni)
     \draw[arrow] ([yshift=2mm]haptic.east) -- node[above, labeltext] {$p_h, \dot{p}_h$} ([yshift=2mm]teleop.west);
-    \draw[arrow] ([yshift=-2mm]teleop.west) -- node[below, labeltext] {Forces} ([yshift=-2mm]haptic.east);
+    \draw[arrow] ([yshift=-2mm]teleop.west) -- node[below, labeltext,yshift=-2mm] {Forces} ([yshift=-2mm]haptic.east);
 
     % 3. Flusso Teleoperazione verso i Controllori
     % Teleop -> MPC (Deviato in alto per non toccare Supervisor)
-    \draw[arrow] ([yshift=2mm]teleop.east) -| (6.0, 1.8) -- node[above, labeltext] {$y_{ref}$} ([yshift=-2mm]mpc.west);
+    \draw[arrow] ([yshift=2mm]teleop.east) -| (6.0, 1.8) -- node[above, labeltext,yshift=1.5mm] {$y_{ref}$} ([yshift=-2mm]mpc.west);
     % Teleop -> Admittance (Linea dritta orizzontale)
     \draw[dashed_arrow] ([yshift=-2mm]teleop.east) -- node[below, labeltext] {Shared\\Control} ([yshift=-2mm]admittance.west);
 
     % 4. Comandi del Supervisor
-    \draw[dashed_arrow] (supervisor.south) -- node[right, labeltext] {State/FSM} (teleop.north);
-    \draw[dashed_arrow] (supervisor.east) -- node[above, labeltext] {State/FSM} (mpc.west);
+    \draw[dashed_arrow] (supervisor.south) -- node[right, labeltext,xshift=1mm] {State/FSM} (teleop.north);
+    \draw[dashed_arrow] (supervisor.east) -- node[above, labeltext,yshift=2.5mm] {State/FSM} (mpc.west);
     % Supervisor -> Admittance (Scende e gira verso destra)
     \draw[dashed_arrow] ([yshift=-2mm]supervisor.east) -| (6.5, 0.2) -- node[above of=2mm, labeltext] {State/FSM} ([yshift=2mm]admittance.west);
 
@@ -155,8 +182,9 @@ The brain of the exocentric observation resides in the real-time Model Predictiv
 \\A key element of this human-in-the-loop setup is the haptic interface, which creates a two-way communication channel between the operator and the robotic team. When the user moves the device, these inputs are translated into velocity commands that update the desired PoV. Simultaneously, the operator receives continuous physical feedback calculated using artificial potential fields method. Essentially, it physically guides the user to stay within safe distances and keeps the target well inside the camera's field of view.
 \\The inspection drone uses a different control strategy, specifically thought for physical interaction. Its planner generates standard position targets, which are then continuously adjusted by the admittance filter based on the forces sensed from the environment. These compliant targets are fed into the standard PX4 position controller. This dual approach perfectly balances the mission requirements: reactive and optimal visual tracking from the observer drone, paired with safe and stable contact from the inspection drone.
 
+
 \section{Mission description}
-The cooperative inspection mission is performed as a Finite State Machine (FSM), ensuring safety and reliability at each step of the operation. The mission is divided into distinct operational phases, managed by a central supervisor node and the state transitions are governed by autonomous safety checks coupled with human-in-the-loop confirmations via keyboard input. Figure \ref{fig:fsm_mission} illustrates the state transitions governing the entire system.
+The cooperative inspection mission is performed as FSM, ensuring safety and reliability at each step of the operation. The mission is divided into distinct operational phases, managed by a central supervisor node and the state transitions are governed by autonomous safety checks coupled with human-in-the-loop confirmations via keyboard input. Figure \ref{fig:fsm_mission} illustrates the state transitions governing the entire system.
 
 % Diagramma FSM
 \begin{figure}[htbp]
@@ -213,7 +241,7 @@ The cooperative inspection mission is performed as a Finite State Machine (FSM),
 
     % --- ARROWS & TRANSITIONS ---
     % Phase 1
-    \draw[arrow] (wait_ekf) -- node[above, labeltext] {EKF \\converged} (wait_takeoff);
+    \draw[arrow] (wait_ekf) -- node[above, labeltext] {EKF \\initialized} (wait_takeoff);
     \draw[arrow] (wait_takeoff) -- node[above, labeltext] {Takeoff\\authorization} (arm);
     \draw[arrow] (arm) -- node[above, labeltext] {Armed \&\\Offboard} (monitor);
     
@@ -241,8 +269,10 @@ The cooperative inspection mission is performed as a Finite State Machine (FSM),
 \end{figure}
 
 \begin{itemize}
-    \item \textbf{Phase 1: Initialization and Take-off.} The mission begins with the supervisor node awaiting the full Extended Kalman Filter (EKF) convergence for both drones (\texttt{WAIT EKF}). Upon human confirmation, the system transitions to \texttt{WAIT TAKEOFF}, verifying the MPC readiness before autonomously arming and switching both vehicles to offboard control mode (\texttt{ARM OFFBOARD}). Finally, both UAVs take off and hover at a predefined safety altitude, monitored continuously until reached (\texttt{TAKEOFF MONITOR}). 
-    \item \textbf{Phase 2: Navigation and Approach.} Once altitude is reached and the operator confirms, the system moves to the \texttt{HOVERING} state. The Inspection Drone (Drone 2) holds its starting coordinate, while the Camera Drone initiates the visual tracking via MPC, framing Drone 2 centrally. Following another operator confirmation, Obseerved Drone autonomously navigates towards the target inspection area (e.g., a position $2\text{ m}$ away from a bridge pillar) and aligns its yaw (\texttt{APPROACH}). Throughout this phase, Drone 1 actively maintains the target in the center of its Field of View (FOV).
-    \item \textbf{Phase 3: Contact Inspection and Shared Control.} After operator confirm, the system transitions into \texttt{INTERACTION}. Drone 2 advances to make physical contact with the structure. Concurrently, the supervisor commands the MPC of Drone 1 to adopt a closer and decentered Point of View (PoV) (e.g., observing Drone 2 in the bottom-right corner of the FOV), providing optimal visual context for the task. In this phase the human operator uses haptic interface, allowing for fine-grained manual scanning.
-    \item \textbf{Phase 4: Detachment and Landing.} When the inspection is concluded, an operator command triggers the \texttt{DETACHMENT} state. Drone 2 safely detaches from the wall, retreating by a predetermined distance ($1\text{ m}$), while Drone 1 widens its tracking radius to $2.0\text{ m}$, to have a larger view, while preserving the decentered PoV. Upon further clearance, the vehicles retreat to the \texttt{RETURN HOME} state: Drone 2 navigates back to its initial take-off location, and Drone 1 restores a centered PoV. Finally, the supervisor commands \texttt{LANDING}, safely bringing both drones to the ground until disarmed (\texttt{MISSION COMPLETE}). At any point during the mission, an operator ``stop" command or an offboard/arming failure triggers an immediate \texttt{EMERGENCY} state, enforcing a prompt landing.
+    \item \textbf{Phase 1: Initialization and Take-off.} The mission begins with the supervisor node checking the pose information validity for both drones (\texttt{WAIT EKF}). Upon human confirmation, the system transitions to \texttt{WAIT TAKEOFF}, verifying the MPC readiness before autonomously arming and switching both vehicles to offboard control mode (\texttt{ARM OFFBOARD}). Finally, both UAVs take off and hover at a predefined safety altitude, monitored continuously until reached (\texttt{TAKEOFF MONITOR}). 
+    \item \textbf{Phase 2: Navigation and Approach.} Once altitude is reached and the operator confirms, the system moves to the \texttt{HOVERING} state. The Inspection Drone holds its hovering position, while the Observer Drone initiates tracking via MPC, framing the drone centrally. Following another operator confirmation, Observed Drone autonomously navigates towards the target inspection area and approaches to the inspection designed area(\texttt{APPROACH}). Throughout this phase, Observer Drone actively maintains the target in the center of its FOV.
+    \item \textbf{Phase 3: Contact Inspection and Shared Control.} After operator confirm, the system transitions into \texttt{INTERACTION}. Inspection Drone advances to make physical contact with the structure. Concurrently, the supervisor commands the MPC of framing drone to adopt a closer and decentered POV (e.g., observing Drone 2 in the bottom-right corner of the FOV), providing optimal visual context for the task. In this phase the human operator uses haptic interface, allowing for fine-grained manual scanning.
+    \item \textbf{Phase 4: Detachment and Landing.} When the inspection is concluded, an operator command triggers the \texttt{DETACHMENT} state. Inpsection Drone safely detaches from the wall, retreating by a predetermined distance, while Observer Drone widens its tracking distance, to have a larger view, while preserving the decentered POV. The vehicles retreat to the \texttt{RETURN HOME} state: Inpsection Drone navigates back to its initial take-off location, and Observer Drone restores a centered PoV. Finally, the supervisor commands \texttt{LANDING}, safely bringing both drones to the ground until disarmed (\texttt{MISSION COMPLETE}). At any point during the mission, an operator ``stop" command or an offboard/arming failure triggers an immediate \texttt{EMERGENCY} state, enforcing a prompt landing.
 \end{itemize}
+At each step of the mission, human operator can intervene on both drones via teleoperation; precisely, on the Inspection Drone to perform the inspection task, on the Observer Drone to change POV.
+

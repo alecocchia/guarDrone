@@ -1,0 +1,132 @@
+\label{app:implementation_details}
+This appendix provides an overview of the low-level software implementation and configurations used for the control algorithms discussed in Chapter 5. It details the execution pipeline of the Non-linear Model Predictive Control (NMPC), the discrete-time formulation of the admittance filter, and the kinematic mapping logic embedded within the haptic interface.
+
+\section{Observer Drone: Real-Time NMPC Implementation}
+The active visual tracking task relies on the Non-linear Model Predictive Control (NMPC) scheme formalized in Chapter 4. Solving a continuous optimal control problem online on a flying platform requires a highly efficient and deterministic execution loop. To achieve real-time feasibility both in simulation and on real onboard companion computer, the mathematical modeling and discretization were performed using the CasADi symbolic framework, while the open-source package Acados was utilized to generate optimized and allocation-free C code for the solver. 
+
+\noindent The optimization algorithm runs within a dedicated ROS 2 node governed by a wall-timer, executing at a fixed frequency $f_s$. Operating an NMPC online introduces significant computational and timing challenges; therefore, specific robustness mechanisms and solver options were implemented.
+
+\subsection{Acados Solver Pipeline: ERK, SQP-RTI and HPIPM}
+To guarantee deterministic execution within the control cycle on the onboard companion computer, the optimization problem is solved using the \texttt{acados} package. The solver combines several numerical strategies to ensure fast execution:
+\begin{itemize}
+    \item \textbf{ERK Discretization and Linearization:} The continuous non-linear quadrotor model is discretized over the horizon using an Explicit Runge-Kutta 4th-order (ERK4) integrator. At each step, the dynamic constraints are linearized around the current predicted trajectory, computing the state and input sensitivities via automatic differentiation.
+    \item \textbf{Gauss-Newton Hessian Approximation:} Exploiting the Nonlinear Least Squares (NLS) form of the tracking cost defined in Chapter 4, \texttt{acados} approximates the Hessian of the Lagrangian through the Gauss-Newton method:
+    \begin{equation}
+        \mathbf{H}_k \approx \mathbf{J}_k^\top \mathbf{W} \mathbf{J}_k,
+    \end{equation}
+    where $\mathbf{J}_k$ is the Jacobian of the residual vector. This avoids evaluating computationally expensive second-order model derivatives while guaranteeing a positive semi-definite Hessian.
+    \item \textbf{Real-Time Iteration (SQP-RTI):} Instead of iterating until full numerical convergence, the solver performs a single Sequential Quadratic Programming (SQP) iteration per timestep using the Real-Time Iteration (RTI) scheme. The computation is split into two phases:
+    \begin{enumerate}
+        \item \textit{Preparation Phase:} Executed in the background before the state measurement is available. The system equations are linearized, and the multi-stage Quadratic Program (QP) is prepared and partially condensed.
+        \item \textit{Feedback Phase:} As soon as the updated state estimate is received from odometry, it is used as the initial condition constraint. The QP is solved immediately, and the first optimal control input $\mathbf{u}_0 = [F_z, \boldsymbol{\tau}^\top]^\top$ is published to the PX4 autopilot, minimizing feedback delay.
+    \end{enumerate}
+    \item \textbf{QP Subproblem Solver (HPIPM):} The resulting linearized QP is solved using \texttt{HPIPM} (High-Performance Interior Point Method) over the \texttt{BLASFEO} linear algebra library. A partial condensing approach is applied to balance sparsity and matrix dimensions. The QP solver is configured in \texttt{SPEED} mode with a maximum of 15 interior-point iterations, strictly bounding the worst-case execution time well below $10\text{ ms}$.
+\end{itemize}
+
+\subsection{Online disturbance compensation via MBE}
+A fundamental implementation detail of the control node is the real-time integration of the Momentum-Based Estimator (MBE). The estimator algorithm executes synchronously with the 100 Hz control loop. At each iteration, the currently estimated external force $F_{ext}$ and torque $\tau_{ext}$ are passed dynamically to the CasADi model via the Acados parameter vector (\texttt{model.p}). 
+
+\noindent Basically, instead of expanding the state vector of the optimization problem, which would heavily increase the computational effort, the disturbances are treated as online-updatable model parameters.
+
+\subsection{Warm-Start and Delay Compensation}
+To minimize the computational effort and reduce the number of Sequential Quadratic Programming (SQP) iterations required at each cycle, a warm-starting technique is employed. At the beginning of each 10 ms control loop, the solver is initialized with the optimal state and input trajectories computed during the previous timestep. 
+
+\noindent Despite the optimized C code, unexpected CPU loads or operating system scheduling can occasionally cause the solver execution time to exceed the 10 ms threshold. Applying an outdated control input would introduce a dangerous phase lag in the closed-loop system. To mitigate this, the node continuously measures the exact execution time of the Acados solver using high-resolution clocks. If the computation time exceeds $T_s$, the node automatically shifts the extracted optimal control array forward by the corresponding number of discrete steps, ensuring that the applied thrust and torques are strictly aligned with the current real-world time.
+
+\subsection{Safe-Switch Logic}
+As detailed in Section 5.3, the observer drone performs its initial takeoff relying on the native PX4 position controller, eventually switching to the NMPC direct actuation (thrust and torques). An aggressive switch between two different controllers can result in severe mechanical jerks, potentially destabilizing the drone.
+
+\noindent To ensure a smooth transition, a safe-switch logic governs the MPC controller introduction. Upon reaching the hovering altitude, the NMPC solver is activated in the background, computing the optimal commands based on the current state, but without publishing them to the flight controller. Concurrently, the node subscribes to the \texttt{vehicle\_torque\_setpoint} topic to monitor the actuation currently commanded by the PX4 autopilot. 
+
+\noindent The actual switch to Offboard direct actuation is authorized by the node only when both the scalar difference in thrust and the Euclidean norm of the difference in torques between the NMPC-computed commands ($T_{\text{NMPC}}$, $\tau_{\text{NMPC}}$) and the currently active PX4 outputs ($T_{\text{PX4}}$, $\tau_{\text{PX4}}$) fall below their respective predefined safety thresholds:
+$$|T_{\text{NMPC}} - T_{\text{PX4}}| < \epsilon_{T} \quad \text{and} \quad \|\tau_{\text{NMPC}} - \tau_{\text{PX4}}\|_2 < \epsilon_{\tau}$$
+where $\epsilon_{T} > 0$ and $\epsilon_{\tau} > 0$. This guarantees that all control variables are continuous at the exact moment of the handover, completely eliminating transient instability and altitude drops.
+
+\section{Observer Drone: Disturbance Estimation}
+There are several ways to en-robust a controller to model uncertainties and disturbances for a drone. The chosen approach relies on Momentum Based Estimator.
+\subsubsection{Physical Principle and Model Decoupling}
+The fundamental intuition behind the momentum-based observer is to isolate external disturbances by canceling out the known nominal dynamics of the system. Let's start focusing on linear forces; the same concepts can be extended on the angular torques. Recall from Eq.~\eqref{eq:quadrotor_model} that the translational dynamics can be expressed in terms of the linear momentum $\mathbf{p}_T = m \mathbf{v}$:
+\begin{equation}
+    \dot{\mathbf{p}}_T = m \dot{\mathbf{v}} = \mathbf{F}_{\text{thrust}} - m\mathbf{g} + \mathbf{F}_{ext},
+\end{equation}
+where $\mathbf{F}_{\text{thrust}} = \mathbf{R}(\mathbf{q}) \begin{bmatrix} 0 & 0 & F_z \end{bmatrix}^\top$ is the actual control force generated by the propellers rotated into the inertial (world) frame, $m\mathbf{g}$ is the gravitational force, and $\mathbf{F}_{ext}$ accounts for all unmodeled external forces.
+\\An attempt to reconstruct $\mathbf{F}_{ext}$ from this equation would require computing the linear acceleration $\dot{\mathbf{v}}$. In practice, numerically differentiating velocity signals (or reading noisy onboard accelerometer data) introduces high-frequency noise from motor vibrations, making the resulting estimate unusable for closed-loop control.
+\\Instead, the estimator handles numerical differentiation by operating on an integral principle. To this end, we define the \textit{nominal force} acting in the physical model as:
+\begin{equation} \label{eq:F_nom}
+    \mathbf{F}_{\text{nom}} = \mathbf{F}_{\text{thrust}} - m\mathbf{g} = \mathbf{R}(\mathbf{q}) \begin{bmatrix} 0 \\ 0 \\ F_z \end{bmatrix} - m\mathbf{g}.
+\end{equation}
+It is essential to clarify the physical distinction: $\mathbf{F}_{\text{thrust}}$ is the sole active control force commanded to the actuators, whereas $\mathbf{F}_{\text{nom}}$ represents the resultant of all known modeled forces acting on the drone (actuation thrust plus gravity). The true rate of change of momentum is thus:
+\begin{equation}
+    \dot{\mathbf{p}}_T = \mathbf{F}_{\text{nom}} + \mathbf{F}_{ext}.
+\end{equation}
+The key objective of the estimator is to \textit{cancel out the nominal dynamics} $\mathbf{F}_{\text{nom}}$, leaving only the influence of the unknown disturbance $\mathbf{F}_{ext}$.
+
+\subsubsection{Observer Dynamics and Disturbance Estimation}
+To achieve this cancellation, an auxiliary state $\mathbf{I}_T \in \mathbb{R}^3$ is introduced to accumulate the expected momentum. The observer integrates the known nominal force alongside the current residual estimate $\mathbf{r}_T$ (which tracks $\mathbf{F}_{ext}$):
+
+\begin{align}
+    \dot{\mathbf{I}}_T &= \mathbf{F}_{\text{nom}} + \mathbf{r}_T, \label{eq:mbe_trans_I} \\
+    \dot{\mathbf{r}}_T &= \mathbf{K}_{1,T} \left( -\mathbf{r}_T + \mathbf{K}_{2,T} (\mathbf{p}_T - \mathbf{I}_T) \right), \label{eq:mbe_trans_r}
+\end{align}
+where $\mathbf{p}_T = m \mathbf{v}$ is the actual momentum obtained from smooth odometry.
+By defining the momentum estimation error as $\mathbf{e}_p = \mathbf{p}_T - \mathbf{I}_T$, its time derivative evaluates to:
+\begin{equation}
+    \dot{\mathbf{e}}_p = \dot{\mathbf{p}}_T - \dot{\mathbf{I}}_T = (\mathbf{F}_{\text{nom}} + \mathbf{F}_{ext}) - (\mathbf{F}_{\text{nom}} + \mathbf{r}_T) = \mathbf{F}_{ext} - \mathbf{r}_T.
+\end{equation}
+Here: the nominal model dynamics $\mathbf{F}_{\text{nom}}$ (both propeller thrust and gravity) cancel out completely. What remains in the error dynamics is solely the discrepancy between the actual disturbance $\mathbf{F}_{ext}$ and its estimate $\mathbf{r}_T$. Equations~\eqref{eq:mbe_trans_I}--\eqref{eq:mbe_trans_r} yield a stable and damped second-order linear filter that drives $\mathbf{r}_T \to \mathbf{F}_{ext}$ as a low-pass filter. The diagonal gain matrices $\mathbf{K}_{1,T}$ and $\mathbf{K}_{2,T}$ are tuned to obtain a desired settling time and critical damping ratio.
+\\An identical decoupled architecture is applied to the rotational channel. In terms of angular momentum $\mathbf{p}_R = \mathbf{J} \boldsymbol{\omega}$ in the body frame, the rotational dynamics are governed by:
+\begin{equation}
+    \dot{\mathbf{p}}_R = \mathbf{J} \dot{\boldsymbol{\omega}} = \boldsymbol{\tau} - \boldsymbol{\omega} \times (\mathbf{J} \boldsymbol{\omega}) + \boldsymbol{\tau}_{ext},
+\end{equation}
+where $\boldsymbol{\tau}$ is the control torque vector commanded to the propellers, $\boldsymbol{\omega} \times (\mathbf{J} \boldsymbol{\omega})$ is the gyroscopic/Coriolis torque, and $\boldsymbol{\tau}_{ext}$ is the unmodeled disturbance torque. 
+The known nominal torque predicted by the rotational model is defined as:
+\begin{equation} \label{eq:tau_nom}
+    \boldsymbol{\tau}_{\text{nom}} = \boldsymbol{\tau} - \boldsymbol{\omega} \times (\mathbf{J} \boldsymbol{\omega}).
+\end{equation}
+The rotational observer evolves according to:
+\begin{align}
+    \dot{\mathbf{I}}_R &= \boldsymbol{\tau}_{\text{nom}} + \mathbf{r}_R, \label{eq:mbe_rot_I} \\
+    \dot{\mathbf{r}}_R &= \mathbf{K}_{1,R} \left( -\mathbf{r}_R + \mathbf{K}_{2,R} (\mathbf{p}_R - \mathbf{I}_R) \right), \label{eq:mbe_rot_r}
+\end{align}
+which cancels out the nominal control and Coriolis torques, allowing the residual $\mathbf{r}_R$ to converge smoothly to $\boldsymbol{\tau}_{ext}$.
+
+
+\section{Inspection Drone: Admittance Filter Node (Simulation)}
+To enable safe physical interaction and compliance when touching the environment, the simulated Inspection Drone relies on an admittance control architecture.
+
+\noindent The admittance filter is implemented as a dedicated Python ROS 2 node operating at a deterministic rate of 100 Hz. Its main purpose is to shape the vehicle's dynamic behavior, translating external contact forces, measured by the tip-mounted 1D force sensor, into compliant motion references. 
+
+\subsection{Discrete-Time Implementation and Low-Pass Force Filtering}
+The continuous second-order mass-damper-spring admittance model, defined in Chapter 3 to govern the virtual interaction dynamics, is discretized using a forward Euler integration scheme. At each control step $k$, the raw force measurements $F_{\text{raw}}[k]$ received from the sensor topic are processed using a discrete-time low-pass filter (EMA-Exponential Moving Average) to attenuate high-frequency noise and mechanical vibrations:
+$$F_{\text{filtered}}[k] = \alpha F_{\text{raw}}[k] + (1 - \alpha) F_{\text{filtered}}[k-1]$$
+where $\alpha \in (0, 1]$ represents the filter smoothing factor. 
+
+\noindent The resulting pre-processed interaction force drives the acceleration and velocity updates of the virtual mass. The filtered position offset is then imposed over the nominal trajectory references before being published as a compliant target.
+
+The output compliant coordinates ($x_c, y_c, z_c$) are continuously published via the \texttt{TrajectorySetpoint} message to the top-level PX4 position cascade.
+
+\section{Haptic Teleoperation Interface}
+\subsection{Coordinate Frame Transformation and Kinematic Mapping}
+The Novint Falcon needed an alignment of coordinate systems to be employed in this architecture. The device operates within its own Cartesian workspace, whereas the ROS 2 control architecture relies on standard conventions (Front-Left-Up, FLU, or East-North-Up, ENU). 
+For this reason, by denoting with $\mathbf{p}_\text{haptic}$ the position of end effector in haptic frame, a rotation matrix $\mathbf{R}_{\text{haptic}}^{\text{flu}}$ is applied directly within the interface node to bring in drone body frame (see figure \ref{fig:haptic_render}):
+\begin{equation*}
+    \mathbf{p}_{\text{flu}} = \mathbf{R}_{\text{haptic}}^{\text{flu}} \mathbf{p}_{\text{haptic}},    
+\end{equation*}
+where
+\begin{equation*}
+     R_{haptic}^{flu}=\begin{bmatrix}
+    -1 & 0 & 0 \\ 0 & -1 & 0 \\ 0 & 0 & -1
+\end{bmatrix}
+\end{equation*}
+This transformation maps the device workspace safely to the operational boundaries of the aerial vehicles, preventing operator from mirrored control responses.
+
+\noindent Furthermore, since the physical workspace of the Novint Falcon is constrained to a limited volume, a kinematic scaling factor is applied.
+
+\noindent The exact mapping strategy strictly depends on the active teleoperation target. When commanding the Inspection Drone, the device acts essentially as a velocity joystick: the scaled haptic displacements are mapped directly into Cartesian velocity setpoints ($\mathbf{v}_{\text{ref}}$) for the top-level trajectory generator. 
+
+\noindent Differently, when controlling the Observer Drone, the NMPC formulation requires maintaining a visual lock on the target. In this mode, the haptic inputs are mapped to dynamically modify the cylindrical references (i.e., radial distance $\rho$, angular phase $\phi$, and relative height $z$) governing the camera's viewpoint. This allows the operator to intuitively orbit or approach the target, while the optimal solver handles the underlying vehicle stabilization and decides for target positioning inside the camera image plane.
+
+\subsection{Force Saturation}
+To protect the mechanical actuators of the Novint Falcon and ensure operator safety, the output force feedback vector $\mathbf{F}_{\text{haptic}}$ dispatched to the device is strictly saturated:
+$$\mathbf{F}_{\text{haptic}} = \text{sat}\left(\mathbf{F}_{\text{computed}}, -\mathbf{F}_{\text{max}}, \mathbf{F}_{\text{max}}\right)$$
+where $\mathbf{F}_{\text{max}}$ represents the maximum safe operational force threshold (typically capped at $\pm 10$ N based on the physical limits of the device). This guarantees a comfortable, bounded, and completely stable haptic experience for the human pilot throughout the mission phases.

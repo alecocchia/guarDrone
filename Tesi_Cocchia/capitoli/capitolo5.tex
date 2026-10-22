@@ -10,28 +10,32 @@ This chapter details the practical implementation of the proposed cooperative ae
 \section{Simulation and Hardware Setup}
 The proposed framework is evaluated in both simulated and real-world environments. To ensure consistency between testing phases, the hardware and software architectures are designed to minimize the transition gap.
 \\In the simulation environment, the robotic team is composed of two identical x500 quadrotor frames. The first vehicle, functioning as the Observer Drone, is equipped with a rigidly mounted virtual camera to stream the exocentric view. The second vehicle, the Inspection Drone, has a rigid link acting as an end-effector, featuring a 1D force sensor at its tip to measure environmental interaction forces during the contact task.
-\begin{figure}[h!]
+\begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.8\linewidth]{Immagini/Capitolo5/two_drone_one_bridge.png}
-    \caption{Drones used in \texttt{SITL} simulation: \texttt{x500\_depth}, \texttt{x500\_interaction} - GazeboSim}
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{Immagini/Capitolo5/x500.DphTqKxq.png}    
+    \end{subfigure}
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{Immagini/Capitolo5/two_drones_one_bridge_2.png}    
+    \end{subfigure}    
+    \caption{Drones used in \texttt{SITL} simulation: x500 quadrotors - GazeboSim}
     \label{fig:placeholder}
 \end{figure}
 For the real-world experiments, the hardware implementation focuses entirely on validating the Observer Drone's optimal visual tracking and the associated haptic shared control. The physical Observer Drone is a custom-built octopter platform in flat configuration (whose model is mathematically equivalent to the quadrotor's one). Low-level attitude stabilization, motor mixing, and state estimation are handled by a Pixhawk flight controller. All high-level computations, including the ROS 2 middleware network, the NMPC solver, and the finite state machine, are executed onboard by a LattePanda companion computer connected to the flight controller via a serial interface.
-\begin{figure}[h!]
+\begin{figure}[htbp]
     \centering
     \begin{subfigure}{0.49\textwidth}
-        \includegraphics[width=\linewidth]{Immagini/Capitolo5/guardrone_up.jpg}
+        \includegraphics[width=\linewidth]{Immagini/Capitolo5/guardrone_up_labels.png}
     \label{fig:placeholder}
     \end{subfigure}
     \centering
     \begin{subfigure}{0.49\textwidth}
-        \includegraphics[width=\linewidth]{Immagini/Capitolo5/guardrone_front.jpg}
+        \includegraphics[width=\linewidth]{Immagini/Capitolo5/guardrone_front_labels.png}
     \label{fig:placeholder}
     \end{subfigure}
-    \caption{Top and front views of real custom octocopter used for Observer UAV}
+    \caption{Top and front views of real custom octocopter named \texttt{Pocho}, used for Observer UAV}
 \end{figure}
-\textcolor{red}{\textit {Aggiungere delle frecce/etichette che indicano la Pixhawk e la LattePanda. ***}}.
-\\Due to technical hardware constraints, the physical Inspection Drone is substituted by a manually piloted DJI quadrotor. This manually driven vehicle acts strictly as a dynamic physical target. This setup effectively tests the robustness of the observer's NMPC tracking capabilities and the human operator's haptic override in a dynamic scenario.
+Due to technical hardware constraints, the physical Inspection Drone is substituted by a manually piloted DJI quadrotor. This manually driven vehicle acts strictly as a dynamic physical target. This setup effectively tests the robustness of the observer's NMPC tracking capabilities and the human operator's haptic override in a dynamic scenario.
 \section{Middleware and Simulation Architecture}
 The high-level control network is developed within the Robot Operating System 2 (ROS 2) environment. ROS 2 provides a modular and distributed node architecture and relies on the Data Distribution Service (DDS) standard, ensuring the low-latency inter-process communication required for real-time control loops.
 \\To interface the high-level ROS 2 network with the low-level hardware, the standard \texttt{PX4} open-source flight stack is utilized. Communication between the onboard LattePanda PC and the \texttt{Pixhawk} flight controller is handled by the \textit{Micro-XRCE-DDS} agent. This bridge directly maps the internal PX4 uORB messaging topics to ROS 2 DDS topics, allowing the control nodes to publish setpoints and read telemetry at high frequencies without custom serial protocols.
@@ -132,12 +136,13 @@ The high-level control network is developed within the Robot Operating System 2 
     \caption{Block diagram of the overall hardware and software architecture, illustrating the integration between the ROS 2 high-level network and the PX4 low-level flight stack via the Micro-XRCE-DDS bridge.}
     \label{fig:architecture_diagram}
 \end{figure}
-\subsection{Software-In-The-Loop (SITL) and Gazebo}
-A major advantage of this middleware integration is the ability to exploit the Software-In-The-Loop (SITL) paradigm. Before deployment on the physical hardware, the entire C++ control architecture was extensively validated using the PX4 SITL framework coupled with the Gazebo simulator. Gazebo simulates the rigid body dynamics, sensor noise, and environmental physics. 
+\subsubsection{Software-In-The-Loop (SITL) and Gazebo}
+A major advantage of this middleware integration is the ability to exploit the Software-In-The-Loop (SITL) paradigm (figure \ref{fig:architecture_diagram}). Before deployment on the physical hardware, the entire C++ control architecture was extensively validated using the PX4 SITL framework coupled with the Gazebo simulator. Gazebo simulates the rigid body dynamics, sensor noise, and environmental physics.
 \\Because the Micro-XRCE-DDS bridge acts transparently, the exact same ROS 2 control nodes deployed on the LattePanda were first executed in simulation. This modularity ensures a minimal sim-to-real gap, isolating hardware-specific issues from high-level algorithmic bugs.
+\\During the SITL validation, all software components- including the Gazebo simulator, the two PX4 SITL instances, and the entire ROS 2 high-level network- are executed on a single host machine. Consequently, node time synchronization and real-time message passing rely entirely on the local system clock, avoiding network-induced clock drift. The host machine utilized for these simulations is equipped with an Intel Core i9-14900HX, 32 GB of RAM, running Ubuntu 24.04 LTS.
 \subsection{State Estimation}
-For the MPC and haptic control loops to function effectively, an accurate 6-DoF state estimation is required. While in Gazebo the state is extracted directly from the simulated ground truth via the \texttt{vehicle\_odometry} topic, the real-world setup relies on an OptiTrack motion capture system. 
-\\Instead of feeding the raw OptiTrack data directly to the ROS 2 control nodes, the external tracking data is fed to the PX4 Extended Kalman Filter (EKF2) via the \texttt{vehicle\_visual\_odometry} topic. The EKF2 fuses the highly accurate external pose with the high-frequency onboard IMU data. This strategy provides a robust and high-frequency state feedback to the control architecture, minimizing delays and preventing potential solver instabilities caused by network jitter.
+For the MPC and haptic control loops to function effectively, an accurate 6-DoF state estimation is required. In the Gazebo SITL environment, the state is not extracted as a perfect ground truth. Instead, Gazebo simulates noisy sensor readings, which are then processed by the PX4 Extended Kalman Filter (EKF2) to generate the state estimate published on the \texttt{vehicle\_odometry} topic.
+\\For the real-world setup, state estimation relies on an OptiTrack motion capture system. Rather than feeding raw OptiTrack data directly to the ROS 2 control nodes, the external tracking data is fed to the PX4 EKF2 via the \texttt{vehicle\_visual\_odometry} topic. The EKF2 fuses the external pose with high-frequency onboard IMU data. This strategy provides robust, high-frequency state feedback to the control architecture, minimizing delays and preventing solver instabilities caused by network jitter.
 \section{Offboard Control Modalities}
 
 To execute autonomous missions and override the flight controller's internal navigation logic, the system adopts the PX4 \textit{Offboard} mode. This operation mode allows a companion computer to take full authority over the vehicle by continuously streaming external setpoints via the Micro-XRCE-DDS bridge. 
@@ -145,125 +150,22 @@ To execute autonomous missions and override the flight controller's internal nav
 
 \subsection{Inspection Drone: Top-Level Trajectory Planning}
 For the simulated inspection drone, the physical interaction task requires tracking compliant spatial coordinates while relying on a stable baseline flight dynamics. For maximizing smoothness, point-to-point trajectories are generated by a custom trajectory generator. This module computes trapezoidal velocity profiles for both the 3D spatial position and the yaw angle, ensuring bounded accelerations.
-\\The resulting smooth kinematic references, which are continuously modified by the admittance filter upon environmental contact, are inserted at the very top of the PX4 control cascade. To enable this, the \texttt{OffboardControlMode} message is configured with the \texttt{position} flag set to true, and the targets are published via the \texttt{TrajectorySetpoint} message:
-
-\begin{lstlisting}[language=Python, basicstyle=\ttfamily\small, keywordstyle=\color{blue}, commentstyle=\color{green!60!black}, frame=single]
-# 1. Define the active control level (Heartbeat)
-mode_msg = OffboardControlMode()
-mode_msg.position = True
-mode_msg.velocity = False
-mode_msg.acceleration = False
-mode_msg.attitude = False
-mode_msg.body_rate = False
-mode_msg.thrust_and_torque = False
-offboard_mode_pub.publish(mode_msg)
-
-# 2. Publish the trapezoidal compliant setpoint
-traj_msg = TrajectorySetpoint()
-traj_msg.position = [x_c, y_c, z_c]
-traj_msg.yaw = yaw_c
-trajectory_setpoint_pub.publish(traj_msg)
-\end{lstlisting}
+\\The resulting smooth kinematic references, which are continuously modified by the admittance filter upon environmental contact, are inserted at the very top of the PX4 control cascade. To enable this, the \texttt{OffboardControlMode} message is configured with the \texttt{position} flag set to true, and the targets are published via the \texttt{TrajectorySetpoint} message.
 
 \subsection{Observer Drone: NMPC and Low-Level Actuation}
 The observer drone utilizes a hybrid approach. The NMPC is formulated to act simultaneously as an optimal trajectory planner and a dynamic controller. However, nonlinear optimal controllers depend, of course, on actual optimization cost variables, e.g. where the other drone is located, its position in the camera frame, and so on. 
 \\Therefore, the observer drone executes its initial vertical takeoff relying on the standard PX4 position controller, utilizing the exact same \texttt{TrajectorySetpoint} modality described for the inspection drone. Once the vehicle reaches the predefined hovering altitude and stabilizes, a safe-switch routine is triggered. The control node dynamically flips the \texttt{OffboardControlMode} flags, disabling the position cascaded loops and enabling direct motor actuation.
 \\During this NMPC active phase, the architecture completely bypasses the autopilot's position, velocity, and attitude controllers. The node computes the optimal normalized body thrust and body torques, injecting them directly at the lowest level via the \texttt{VehicleThrustSetpoint} and \texttt{VehicleTorqueSetpoint} messages. Special care is taken to map the optimal control variables into the autopilot's native internal frame (Front-Right-Down, FRD).
 
-\begin{lstlisting}[language=Python, basicstyle=\ttfamily\small, keywordstyle=\color{blue}, commentstyle=\color{green!60!black}, frame=single]
-# 1. Switch active control level to bypass PID cascade
-mode_msg = OffboardControlMode()
-mode_msg.position = False
-mode_msg.thrust_and_torque = True
-offboard_mode_pub.publish(mode_msg)
+\section{Haptic interface}
+To bridge the human operator with the multi-agent system (figure \ref{fig:haptic_mapping_logic}), the haptic teleoperation logic is implemented as a dedicated ROS 2 C++ node (\texttt{fd\_haptic\_joy\_node}). The use of C++ is preferred to process hardware callbacks and compute the Artificial Potential Field (APF) forces without introducing delays typical of interpreted languages.
+\\The node interacts with the physical Novint Falcon through the Force Dimension SDK, wrapped within a \texttt{ros2\_control} hardware interface. To enable the dual-drone shared control paradigm, the native device driver and the state broadcasters were modified. Instead of exposing a single generic clutch button, the hardware interface reads and broadcasts the binary state of all four physical buttons of the Falcon via the \texttt{/fd/button\_states} topic. This allows the control node to act as a signal multiplexer: pressing the center button routes the joystick commands to dynamically alter the Observer Drone's cylindrical Point of View, while pressing the upper button activates the Cartesian teleoperation of the Inspection Drone.
+\\The node executes its logic through a strict 100 Hz \texttt{wall\_timer}. At each control cycle ($dt = 10\text{ ms}$), the node performs the following pipeline:
+\begin{enumerate}
+    \item \textbf{Kinematic Mapping:} The raw end-effector position of the haptic device is mapped from its native hardware frame to the standard ROS 2 FLU (Forward-Left-Up) coordinate system (for more details see \ref{app:implementation_details}). A non-linear deadband ($0.008\text{ m}$) filters out sensor noise and unintentional hand tremors.
+    \item \textbf{Reference Integration:} Based on the active button state, the filtered displacements are scaled by a kinematic gain and integrated into velocity commands. The node then publishes the updated setpoints to either the \texttt{/NMPC\_haptic\_ref} topic (for the NMPC) or the \texttt{/interaction\_live\_pose} topic (for the admittance planner).
+    \item \textbf{Force Feedback Rendering:} Concurrently, the node calculates the base mechanical impedance (virtual spring-damper) and the APF repulsive forces based on the actual telemetry of the active drone. The total computed wrench is saturated to a hardware limit of $\pm 10\text{ N}$ to protect the mechanical actuators and published directly to the \texttt{ros2\_control} command topic (\texttt{/fd/fd\_controller/commands}).
 
-# 2. Publish Thrust (Mapped to FRD frame, Z is Down)
-thrust_msg = VehicleThrustSetpoint()
-thrust_msg.xyz = [0.0, 0.0, nmpc_thrust_frd]
-thrust_pub.publish(thrust_msg)
-
-# 3. Publish Torques 
-torque_msg = VehicleTorqueSetpoint()
-torque_msg.xyz = [nmpc_tau_x_frd, nmpc_tau_y_frd, nmpc_tau_z_frd]
-torque_pub.publish(torque_msg)
-\end{lstlisting}
-
-\section{Mission Supervisor}
-To ensure a safe and predictable execution of the cooperative task, the overall mission logic is centralized in a dedicated Python node acting as a Finite State Machine (FSM). Rather than computing continuous trajectories, this node operates as a high-level discrete event controller. It manages state transitions, monitors system health, and dispatches system-level instructions to the flight controllers.
-\subsection{Initialization and Safety Checks}
-Before allowing any actuation, the supervisor initializes by subscribing to the telemetry topics of the active drones. A critical safety constraint is the state estimation validity. The node actively monitors the \texttt{EstimatorStatus} uORB message generated by the PX4 Extended Kalman Filter (EKF2). The FSM remains locked in the \textit{Wait EKF} state until the specific flags indicating horizontal position, vertical position, and velocity convergence are all confirmed as valid by the autopilot. This prevents the system from attempting an autonomous takeoff with severely degraded state estimates.
-\subsection{System Commands and Supervised Autonomy}
-When the initialization conditions are met, the FSM progression is governed by a supervised autonomy paradigm. Transitions between major operational phases (e.g., Takeoff, Approach, Interaction, Detachment) are not triggered purely by geometric thresholds, but are guarded by human-in-the-loop confirmations acquired via keyboard callbacks.
-\\Upon receiving confirmation for a phase transition, the supervisor node sends hardware-level instructions using the \texttt{VehicleCommand} message structure. For instance, to initiate the mission, the node sends a \texttt{VEHICLE\_CMD\_DO\_SET\_MODE} command to force the Offboard mode, immediately followed by a \texttt{VEHICLE\_CMD\_\\COMPONENT\_ARM\_DISARM} command to arm the motors. 
-\subsection{Emergency Handling and Hardware deployment}
-A background routine within the supervisor continuously monitors the offboard status and the human operator's inputs. If a manual stop is triggered, or if the system detects an unexpected drop out of the offboard mode, the FSM instantly transitions to an \textit{Emergency} state. In this state, the node overrides any active MPC or admittance reference and publishes a \texttt{VEHICLE\_CMD\_NAV\_LAND} command, forcing the UAVs to descend safely at their current planar coordinates.
-
-\section{Observer Drone: Real-Time NMPC Implementation}
-The active visual tracking task relies on the Non-linear Model Predictive Control (NMPC) scheme formalized in Chapter 4. Solving a continuous optimal control problem online on a flying platform requires a highly efficient and deterministic execution loop. To achieve real-time feasibility both in simulation and on real onboard companion computer, the mathematical modeling and discretization were performed using the CasADi symbolic framework, while the open-source package Acados was utilized to generate optimized and allocation-free C code for the solver. 
-The optimization algorithm runs within a dedicated ROS 2 node governed by a wall-timer, executing at a fixed frequency of 100 Hz (sampling time $T_s = 10$ ms) over a prediction horizon of $N=15$ steps ($T_p = 150\text{ ms}$). Operating an NMPC online introduces significant computational and timing challenges; therefore, specific robustness mechanisms and solver options were implemented.
-
-\subsection{Acados Solver Pipeline: ERK, SQP-RTI and HPIPM}
-To guarantee deterministic execution within the $10\text{ ms}$ control cycle on the onboard companion computer, the optimization problem is solved using the \texttt{acados} package. The solver combines several numerical strategies to ensure fast execution:
-\begin{itemize}
-    \item \textbf{ERK Discretization and Linearization:} The continuous non-linear quadrotor model is discretized over the horizon using an Explicit Runge-Kutta 4th-order (ERK4) integrator. At each step, the dynamic constraints are linearized around the current predicted trajectory, computing the state and input sensitivities via automatic differentiation.
-    \item \textbf{Gauss-Newton Hessian Approximation:} Exploiting the Nonlinear Least Squares (NLS) form of the tracking cost defined in Chapter 4, \texttt{acados} approximates the Hessian of the Lagrangian through the Gauss-Newton method:
-    \begin{equation}
-        \mathbf{H}_k \approx \mathbf{J}_k^\top \mathbf{W} \mathbf{J}_k,
-    \end{equation}
-    where $\mathbf{J}_k$ is the Jacobian of the residual vector. This avoids evaluating computationally expensive second-order model derivatives while guaranteeing a positive semi-definite Hessian.
-    \item \textbf{Real-Time Iteration (SQP-RTI):} Instead of iterating until full numerical convergence, the solver performs a single Sequential Quadratic Programming (SQP) iteration per timestep using the Real-Time Iteration (RTI) scheme. The computation is split into two phases:
-    \begin{enumerate}
-        \item \textit{Preparation Phase:} Executed in the background before the state measurement is available. The system equations are linearized, and the multi-stage Quadratic Program (QP) is prepared and partially condensed.
-        \item \textit{Feedback Phase:} As soon as the updated state estimate is received from odometry, it is used as the initial condition constraint. The QP is solved immediately, and the first optimal control input $\mathbf{u}_0 = [F_z, \boldsymbol{\tau}^\top]^\top$ is published to the PX4 autopilot, minimizing feedback delay.
-    \end{enumerate}
-    \item \textbf{QP Subproblem Solver (HPIPM):} The resulting linearized QP is solved using \texttt{HPIPM} (High-Performance Interior Point Method) over the \texttt{BLASFEO} linear algebra library. A partial condensing approach is applied to balance sparsity and matrix dimensions. The QP solver is configured in \texttt{SPEED} mode with a maximum of 15 interior-point iterations, strictly bounding the worst-case execution time well below $10\text{ ms}$.
-\end{itemize}
-
-\subsection{Online disturbance compensation via MBE}
-A fundamental implementation detail of the control node is the real-time integration of the Momentum-Based Estimator (MBE). The estimator algorithm executes synchronously with the 100 Hz control loop. At each iteration, the currently estimated external force $F_{ext}$ and torque $\tau_{ext}$ are passed dynamically to the CasADi model via the Acados parameter vector (\texttt{model.p}). 
-Basically, instead of expanding the state vector of the optimization problem, which would heavily increase the computational effort, the disturbances are treated as online-updatable model parameters.
-
-\subsection{Warm-Start and Delay Compensation}
-To minimize the computational effort and reduce the number of Sequential Quadratic Programming (SQP) iterations required at each cycle, a warm-starting technique is employed. At the beginning of each 10 ms control loop, the solver is initialized with the optimal state and input trajectories computed during the previous timestep. 
-\\Despite the optimized C code, unexpected CPU loads or operating system scheduling can occasionally cause the solver execution time to exceed the 10 ms threshold. Applying an outdated control input would introduce a dangerous phase lag in the closed-loop system. To mitigate this, the node continuously measures the exact execution time of the Acados solver using high-resolution clocks. If the computation time exceeds $T_s$, the node automatically shifts the extracted optimal control array forward by the corresponding number of discrete steps, ensuring that the applied thrust and torques are strictly aligned with the current real-world time.
-\subsection{Safe-Switch Logic}
-As detailed in Section 5.3, the observer drone performs its initial takeoff relying on the native PX4 position controller, eventually switching to the NMPC direct actuation (thrust and torques). An aggressive switch between two different controllers can result in severe mechanical jerks, potentially destabilizing the drone.
-\\To ensure a smooth transition, a safe-switch logic governs the MPC controller introduction. Upon reaching the hovering altitude, the NMPC solver is activated in the background, computing the optimal commands based on the current state, but without publishing them to the flight controller. Concurrently, the node subscribes to the \texttt{vehicle\_torque\_setpoint} topic to monitor the actuation currently commanded by the PX4 autopilot. 
-The actual switch to Offboard direct actuation is authorized by the node only when both the scalar difference in thrust and the Euclidean norm of the difference in torques between the NMPC-computed commands ($T_{\text{NMPC}}$, $\tau_{\text{NMPC}}$) and the currently active PX4 outputs ($T_{\text{PX4}}$, $\tau_{\text{PX4}}$) fall below their respective predefined safety thresholds:
-$$|T_{\text{NMPC}} - T_{\text{PX4}}| < \epsilon_{T} \quad \text{and} \quad \|\tau_{\text{NMPC}} - \tau_{\text{PX4}}\|_2 < \epsilon_{\tau}$$
-where $\epsilon_{T} > 0$ and $\epsilon_{\tau} > 0$. This guarantees that all control variables are continuous at the exact moment of the handover, completely eliminating transient instability and altitude drops.
-
-\section{Inspection Drone: Admittance Filter Node (Simulation)}
-To enable safe physical interaction and compliance when touching the environment, the simulated Inspection Drone relies on an admittance control architecture.
-\\The admittance filter is implemented as a dedicated Python ROS 2 node operating at a deterministic rate of 100 Hz. Its main purpose is to shape the vehicle's dynamic behavior, translating external contact forces, measured by the tip-mounted 1D force sensor, into compliant motion references. 
-
-\subsection{Discrete-Time Implementation and Low-Pass Force Filtering}
-The continuous second-order mass-damper-spring admittance model, defined in Chapter 3 to govern the virtual interaction dynamics, is discretized using a forward Euler integration scheme. At each control step $k$, the raw force measurements $F_{\text{raw}}[k]$ received from the sensor topic are processed using a discrete-time low-pass filter (EMA-Exponential Moving Average) to attenuate high-frequency noise and mechanical vibrations:
-$$F_{\text{filtered}}[k] = \alpha F_{\text{raw}}[k] + (1 - \alpha) F_{\text{filtered}}[k-1]$$
-where $\alpha \in (0, 1]$ represents the filter smoothing factor. 
-\\The resulting pre-processed interaction force drives the acceleration and velocity updates of the virtual mass. The filtered position offset is then imposed over the nominal trajectory references before being published as a compliant target:
-
-\begin{lstlisting}[language=C++, basicstyle=\ttfamily\small, keywordstyle=\color{blue}, commentstyle=\color{green!60!black}, frame=single]
-// Admittance update loop snippet (C++ node logic)
-double f_filtered = alpha * f_raw + (1.0 - alpha) * f_prev;
-// Discrete-time acceleration update from admittance mass-damper-spring
-double accel = (f_filtered - D_coeff * vel - K_coeff * pos_error) / M_mass;
-vel += accel * dt;
-pos_compliant += vel * dt;
-\end{lstlisting}
-The output compliant coordinates ($x_c, y_c, z_c$) are continuously published via the \texttt{TrajectorySetpoint} message to the top-level PX4 position cascade.
-
-\section{Haptic Teleoperation Interface}
-To provide the human operator with intuitive situational awareness and enable physical telepresence during the interaction phase, an haptic interface is integrated into the control architecture using the Novint Falcon haptic device. 
-\\The haptic interface operates as a dual-role node: it reads the operator's hand position to generate velocity or position references for the cooperative framework, and simultaneously computes and exerts force feedback back onto the user's hand. This feedback is derived using an Artificial Potential Field (APF) approach, reflecting proximity constraints, collision avoidance, and environmental interaction forces.
-\subsection{Coordinate Frame Transformation and Kinematic Mapping}
-First, the Novint Falcon needed an alignment of coordinate systems to be employed in this architecture. The device operates within its own Cartesian workspace, whereas the ROS 2 control architecture relies on standard conventions (Front-Left-Up, FLU, or East-North-Up, ENU). 
-For this reason, a rotation matrix $\mathbf{R}_{\text{haptic}}^{\text{flu}}$ is applied directly within the interface node:
-$$\mathbf{p}_{\text{flu}} = \mathbf{R}_{\text{haptic}}^{\text{flu}} \mathbf{p}_{\text{haptic}}$$
-This transformation maps the device workspace safely to the operational boundaries of the aerial vehicles, preventing unexpected drift or mirrored control responses.
-\\Furthermore, since the physical workspace of the Novint Falcon is constrained to a limited volume, a kinematic scaling factor is applied.
-\\The exact mapping strategy strictly depends on the active teleoperation target. When commanding the Inspection Drone, the device acts essentially as a velocity joystick: the scaled haptic displacements are mapped directly into Cartesian velocity setpoints ($\mathbf{v}_{\text{ref}}$) for the top-level trajectory generator. 
-Differently, when controlling the Observer Drone, the NMPC formulation requires maintaining a visual lock on the target. In this mode, the haptic inputs are mapped to dynamically modify the cylindrical references (i.e., radial distance $\rho$, angular phase $\phi$, and relative height $z$) governing the camera's viewpoint. This allows the operator to intuitively orbit or approach the target, while the optimal solver handles the underlying vehicle stabilization and decides for target positioning inside the camera image plane.
 \begin{figure}[h!]
     \centering
     \resizebox{0.95\textwidth}{!}{
@@ -312,7 +214,128 @@ Differently, when controlling the Observer Drone, the NMPC formulation requires 
     \caption{Logical block diagram of the haptic teleoperation interface, illustrating the asymmetric control mapping: bilateral feedback loop for the Observer Drone versus open-loop Cartesian velocity control for the Inspection Drone.}
     \label{fig:haptic_mapping_logic}
 \end{figure}
-\subsection{Force Saturation}
-To protect the mechanical actuators of the Novint Falcon and ensure operator safety, the output force feedback vector $\mathbf{F}_{\text{haptic}}$ dispatched to the device is strictly saturated:
-$$\mathbf{F}_{\text{haptic}} = \text{sat}\left(\mathbf{F}_{\text{computed}}, -\mathbf{F}_{\text{max}}, \mathbf{F}_{\text{max}}\right)$$
-where $\mathbf{F}_{\text{max}}$ represents the maximum safe operational force threshold (typically capped at $\pm 10$ N based on the physical limits of the device). This guarantees a comfortable, bounded, and completely stable haptic experience for the human pilot throughout the mission phases.
+
+\end{enumerate}
+\section{Mission Supervisor}
+To ensure a safe and predictable execution of the cooperative task, the overall mission logic is centralized in a dedicated Python node acting as a Finite State Machine (FSM). Rather than computing continuous trajectories, this node operates as a high-level discrete event controller. It manages state transitions, monitors system health, and dispatches system-level instructions to the flight controllers. Figure \ref{fig:supervisor_architecture} illustrates the software architecture and discrete-event execution flow of the supervisor node.
+
+\begin{figure}[htbp]
+    \centering
+    \resizebox{\textwidth}{!}{%
+    \begin{tikzpicture}[
+        >=stealth,
+        node distance=1.2cm and 2.0cm,
+        box/.style={rectangle, draw=black, thick, rounded corners, align=center, minimum height=1.15cm, minimum width=3.1cm, font=\small\sffamily},
+        inbox/.style={box, fill=blue!8, draw=blue!80!black},
+        corebox/.style={box, fill=white, draw=purple!80!black, thick},
+        alertbox/.style={box, fill=red!10, draw=red!80!black, thick},
+        outpx4/.style={box, fill=orange!12, draw=orange!80!black},
+        outros/.style={box, fill=blue!12, draw=blue!80!black},
+        groupbox/.style={rectangle, draw=#1, thick, dashed, inner sep=0.45cm, rounded corners},
+        labeltext/.style={font=\scriptsize\sffamily, fill opacity=1, inner sep=2pt, align=center}
+    ]
+
+    % ================= INPUTS (COLONNA SINISTRA) =================
+    \node[inbox] (in_ekf) at (0, 3.2) {PX4 EKF2 Status \\ \scriptsize\texttt{EstimatorStatus}};
+    \node[inbox] (in_telemetry) at (0, 1.5) {Vehicle Telemetry \\ \scriptsize\texttt{local\_position, mode}};
+    \node[inbox] (in_human) at (0, -0.2) {Human Operator \\ \scriptsize\texttt{/keyboard\_input}};
+    \node[inbox] (in_planner) at (0, -1.9) {Controller Feedback \\ \scriptsize\texttt{/actual\_pov, /mpc\_ready}};
+
+    % ================= SUPERVISOR CORE (COLONNA CENTRALE) =================
+    \node[corebox, minimum width=5.8cm] (gate_ekf) at (7.0, 3.2) {
+        \textbf{Pre-Flight Safety Gate} \\
+        \scriptsize Verify EKF2 horizontal, vertical \& vel validity
+    };
+
+    \node[corebox, minimum width=5.8cm, minimum height=1.9cm] (fsm_engine) at (7.0, 0.65) {
+        \textbf{Supervised Transition (10 Hz)} \\
+        \scriptsize \textbf{Dual-Check Guard Condition:} \\
+        \scriptsize $(\text{Autonomous Target Reached}) \;\wedge\; (\text{Operator Key Confirmed})$ \\
+        \scriptsize Phase progression: \texttt{HOVER} $\rightarrow$ \texttt{APPROACH} $\rightarrow$ \texttt{INTERACT} \dots
+    };
+
+    \node[corebox, minimum width=5.8cm] (setpoint_gen) at (7.0, -1.5) {
+        \textbf{Phase Setpoint Coordinator} \\
+        \scriptsize Computes relative PoV $(r, \beta, z_{\text{rel}}, \psi)$ \& Trajectory goals
+    };
+
+    \node[alertbox, minimum width=5.8cm] (watchdog) at (7.0, -3.3) {
+        \textbf{Emergency \& Failsafe Watchdog} \\
+        \scriptsize Heartbeat loss / User Abort $\rightarrow$ Immediate Land
+    };
+
+    % ================= OUTPUTS (COLONNA DESTRA) =================
+    \node[outpx4] (out_px4) at (14.2, 3.2) {
+        PX4 Autopilot (FMU) \\
+        \scriptsize\texttt{VehicleCommand} \\
+        \scriptsize\textit{Arm, Offboard, Land}
+    };
+
+    \node[outros] (out_nmpc) at (14.2, 1.2) {
+        Observer NMPC Node \\
+        \scriptsize\texttt{/mpc\_enabled} \\
+        \scriptsize\texttt{/pov\_target} $[r, \beta, z_{\text{rel}}, \psi]$
+    };
+
+    \node[outros] (out_planner) at (14.2, -0.7) {
+        Inspection Planner \\
+        \scriptsize\texttt{/target\_pose} \\
+        \scriptsize\texttt{/target\_traj\_enabled}
+    };
+
+    \node[outros] (out_gcs) at (14.2, -2.6) {
+        GCS \& Logging \\
+        \scriptsize\texttt{/supervisor/state} \\
+        \scriptsize\texttt{/logging/start}
+    };
+
+    % ================= BACKGROUND BOXES =================
+    \begin{scope}[on background layer]
+        % Box Supervisore
+        \node[groupbox=purple!80!black, fit=(gate_ekf) (fsm_engine) (setpoint_gen) (watchdog), fill=purple!4] (supbox) {};
+        \node[above, font=\sffamily\bfseries\color{purple!80!black}] at (supbox.north) {MISSION SUPERVISOR NODE};
+
+        % Box Inputs
+        \node[groupbox=blue!60!black, fit=(in_ekf) (in_telemetry) (in_human) (in_planner), fill=blue!2] (inpbox) {};
+        \node[above, font=\sffamily\bfseries\color{blue!60!black}] at (inpbox.north) {SUPERVISOR INPUTS};
+
+        % Box Outputs
+        \node[groupbox=orange!80!black, fit=(out_px4) (out_nmpc) (out_planner) (out_gcs), fill=orange!2] (outbox) {};
+        \node[above, font=\sffamily\bfseries\color{orange!80!black}] at (outbox.north) {HIGH-LEVEL INSTRUCTIONS};
+    \end{scope}
+
+    % ================= FRECCE E COLLEGAMENTI =================
+    % Inputs -> Supervisor
+    \draw[-{Stealth[scale=1.1]}, thick] (in_ekf.east) -- node[above, labeltext] {Estimator Flags} (gate_ekf.west);
+    \draw[-{Stealth[scale=1.1]}, thick] (in_telemetry.east) -- node[above, labeltext, pos=0.7,yshift=0.2cm] {Pose \& Mode} (fsm_engine.165);
+    \draw[-{Stealth[scale=1.1]}, thick] (in_human.east) -- node[above, labeltext, pos=0.45,yshift=0.2cm] {User OK} (fsm_engine.190);
+    \draw[-{Stealth[scale=1.1]}, thick] (in_planner.east) -- node[above, labeltext,yshift=0.3cm] {Status \& \\Actual PoV} (setpoint_gen.west);
+
+    % Interni Supervisor
+    \draw[-{Stealth[scale=1.1]}, thick] (gate_ekf.south) -- node[right, labeltext] {EKF Validated} (fsm_engine.north);
+    \draw[-{Stealth[scale=1.1]}, thick] (fsm_engine.south) -- node[right, labeltext] {Phase Trigger} (setpoint_gen.north);
+    \draw[-{Stealth[scale=1.1]}, thick, dashed, red!80!black] (in_human.south) |- ++(1.4, -1.7) |- node[near end, above, labeltext, text=red!80!black] {User Abort} (watchdog.west);
+
+    % Supervisor -> Outputs
+    \draw[-{Stealth[scale=1.1]}, thick] ([yshift=0.15cm]gate_ekf.east) -- node[above, labeltext] {Arm \& Offboard} ([yshift=0.15cm]out_px4.west);
+    \draw[-{Stealth[scale=1.1]}, thick] ([yshift=0.6cm]fsm_engine.east) -- node[above, labeltext] {Enable/Sync} (out_nmpc.west);
+    \draw[-{Stealth[scale=1.1]}, thick] ([yshift=-0.25cm]fsm_engine.east) -| ++(0.7, -0.6) |- node[near start, above, labeltext, xshift=2mm] {PoV Target} ([yshift=-0.2cm]out_nmpc.west);
+    \draw[-{Stealth[scale=1.1]}, thick] (setpoint_gen.east) -| ++(0.9, 0.4) |- node[near end, above, labeltext] {Trapezoidal Goals} (out_planner.west);
+    \draw[-{Stealth[scale=1.1]}, thick] (setpoint_gen.east) -| ++(0.9, -0.7) |- (out_gcs.west);
+    
+    % Failsafe Land arrow
+    \draw[-{Stealth[scale=1.1]}, thick, red!80!black] (watchdog.east) -| ++(1.5, 0) |- node[near end, left, labeltext, text=red!80!black, yshift=-4mm] {Failsafe Land} ([yshift=-0.15cm]out_px4.west);
+
+    \end{tikzpicture}%
+    }
+    \caption{Architecture and execution flow of the Mission Supervisor node. The node centralizes telemetry inputs, EKF2 safety checks, and operator confirmations to handle PX4 flight modes and give phase-dependent targets to the UAVs.}
+    \label{fig:supervisor_architecture}
+\end{figure}
+
+\subsection{Initialization and Safety Checks}
+Before allowing any actuation, the supervisor initializes by subscribing to the telemetry topics of the active drones. A critical safety constraint is the state estimation validity. The node actively monitors the \texttt{EstimatorStatus} uORB message generated by the PX4 Extended Kalman Filter (EKF2). The FSM remains locked in the \textit{Wait EKF} state until the specific flags indicating horizontal position, vertical position, and velocity convergence are all confirmed as valid by the autopilot. This prevents the system from attempting an autonomous takeoff with severely degraded state estimates.
+\subsection{System Commands and Supervised Autonomy}
+When the initialization conditions are met, the FSM progression is governed by a supervised autonomy paradigm. Transitions between major operational phases (e.g., Takeoff, Approach, Interaction, Detachment) are not triggered purely by geometric thresholds, but are guarded by human-in-the-loop confirmations acquired via keyboard callbacks.
+\\Upon receiving confirmation for a phase transition, the supervisor node sends hardware-level instructions using the \texttt{VehicleCommand} message structure. For instance, to initiate the mission, the node sends a \texttt{VEHICLE\_CMD\_DO\_SET\_MODE} command to force the Offboard mode, immediately followed by a \texttt{VEHICLE\_CMD\_\\COMPONENT\_ARM\_DISARM} command to arm the motors. 
+\subsection{Emergency Handling and Hardware deployment}
+A background routine within the supervisor continuously monitors the offboard status and the human operator's inputs. If a manual stop is triggered, or if the system detects an unexpected drop out of the offboard mode, the FSM instantly transitions to an \textit{Emergency} state. In this state, the node overrides any active MPC or admittance reference and publishes a \texttt{VEHICLE\_CMD\_NAV\_LAND} command, forcing the UAVs to descend safely at their current planar coordinates.

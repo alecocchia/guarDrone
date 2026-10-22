@@ -65,7 +65,7 @@ PHASE_STYLE_MAP = {
     'MISSION':             {'color': '#16a34a', 'linestyle': '-',  'label': 'Mission'},
     'DETACHMENT':          {'color': '#9333ea', 'linestyle': '--', 'label': 'Detachment'},
     'RETURN_HOME':         {'color': '#2563eb', 'linestyle': '--', 'label': 'Return Home'},
-    'LANDING':             {'color': '#dc2626', 'linestyle': '--', 'label': 'Landing'},
+    'LANDING':             {'color': '#334155', 'linestyle': '-.', 'label': 'Landing'},
     'EMERGENCY':           {'color': '#b91c1c', 'linestyle': '-.', 'label': 'Emergency'},
     'Mission Start':       {'color': '#2ca02c', 'linestyle': '--', 'label': 'Mission Start'},
     'Mission End':         {'color': '#7f7f7f', 'linestyle': ':',  'label': 'Mission End'},
@@ -141,6 +141,29 @@ def plot_single_quantity(time, item, label, task_start=-1.0, task_end=-1.0, phas
         else:
             ax.plot(time_plot, ref_data[:len(time_plot)], color=c_ref, linestyle='--', label=ref_lbl, linewidth=1.2, alpha=0.85, zorder=2)
 
+    # Linee aggiuntive di soglia/riferimento (es. attivazione APF, limiti rigidi)
+    if 'extra_lines' in item and item['extra_lines']:
+        for el in item['extra_lines']:
+            if 'y' in el:
+                ax.axhline(y=el['y'], color=el.get('color', '#b45309'),
+                           linestyle=el.get('linestyle', ':'),
+                           linewidth=el.get('linewidth', 1.2),
+                           alpha=el.get('alpha', 0.85),
+                           label=el.get('label', None), zorder=2)
+            elif 'x' in el:
+                ax.axvline(x=el['x'], color=el.get('color', '#b45309'),
+                           linestyle=el.get('linestyle', '--'),
+                           linewidth=el.get('linewidth', 1.1),
+                           alpha=el.get('alpha', 0.85),
+                           label=el.get('label', None), zorder=2)
+            elif 'curve' in el:
+                c_data = el['curve']
+                ax.plot(time_plot, c_data[:len(time_plot)], color=el.get('color', '#b45309'),
+                        linestyle=el.get('linestyle', ':'),
+                        linewidth=el.get('linewidth', 1.2),
+                        alpha=el.get('alpha', 0.85),
+                        label=el.get('label', None), zorder=2)
+
     if phases:
         for idx_p, (pt, pname) in enumerate(phases):
             st = PHASE_STYLE_MAP.get(pname, {
@@ -154,9 +177,10 @@ def plot_single_quantity(time, item, label, task_start=-1.0, task_end=-1.0, phas
     elif task_start > 0:
         ax.axvline(x=task_start, color=c_start, linestyle='--', linewidth=1.1, alpha=0.75, label='Mission Start')
         if task_end > 0 and task_end < float(time[-1]):
-            ax.axvline(x=task_end, color='#dc2626', linestyle='--', linewidth=1.1, alpha=0.75, label='Landing')
+            ax.axvline(x=task_end, color='#334155', linestyle='-.', linewidth=1.3, alpha=0.85, label='Landing')
 
-    ax.set_title(label, fontsize=9.5, fontweight='normal', color='#0f172a', pad=3)
+    # Nessun titolo sul grafico: la grandezza va sull'asse y (formula matematica LaTeX con unita')
+    ax.set_ylabel(label, fontsize=9.0, color='#0f172a')
     ax.set_xlabel('Time [s]', fontsize=8.5, color='#334155')
     ax.tick_params(axis='both', which='both', labelsize=8.0, colors='#334155')
     ax.grid(True, linestyle='--', alpha=0.45, color='#94a3b8')
@@ -168,8 +192,13 @@ def plot_single_quantity(time, item, label, task_start=-1.0, task_end=-1.0, phas
     handles, labels_leg = ax.get_legend_handles_labels()
     pri_dict = {}
     valid_priorities = {'Actual', 'Ref', 'Reference', 'Upper Limit', 'Upper limit', 'Limit', 'MPC', 'Haptic'}
+    extra_labels = set()
+    if 'extra_lines' in item and item['extra_lines']:
+        for el in item['extra_lines']:
+            if el.get('label'):
+                extra_labels.add(el['label'])
     for h, l in zip(handles, labels_leg):
-        if (l in valid_priorities or l == item.get('ref_label')) and l not in pri_dict:
+        if (l in valid_priorities or l == item.get('ref_label') or l in extra_labels) and l not in pri_dict:
             pri_dict[l] = h
     if pri_dict:
         ax.legend(list(pri_dict.values()), list(pri_dict.keys()),
@@ -279,6 +308,29 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
             else:
                 ax.plot(time_plot, ref_data[:len(time_plot)], color=c_ref, linestyle='--', label=ref_lbl, linewidth=1.3, alpha=0.85, zorder=2)
 
+        # Linee aggiuntive di soglia/riferimento (es. attivazione APF, limiti rigidi)
+        if 'extra_lines' in data_list[i] and data_list[i]['extra_lines']:
+            for el in data_list[i]['extra_lines']:
+                if 'y' in el:
+                    ax.axhline(y=el['y'], color=el.get('color', '#b45309'),
+                               linestyle=el.get('linestyle', ':'),
+                               linewidth=el.get('linewidth', 1.2),
+                               alpha=el.get('alpha', 0.85),
+                               label=el.get('label', None), zorder=2)
+                elif 'x' in el:
+                    ax.axvline(x=el['x'], color=el.get('color', '#b45309'),
+                               linestyle=el.get('linestyle', '--'),
+                               linewidth=el.get('linewidth', 1.1),
+                               alpha=el.get('alpha', 0.85),
+                               label=el.get('label', None), zorder=2)
+                elif 'curve' in el:
+                    c_data = el['curve']
+                    ax.plot(time_plot, c_data[:len(time_plot)], color=el.get('color', '#b45309'),
+                            linestyle=el.get('linestyle', ':'),
+                            linewidth=el.get('linewidth', 1.2),
+                            alpha=el.get('alpha', 0.85),
+                            label=el.get('label', None), zorder=2)
+
         # Indicatori di transizione delle fasi di missione
         if phases:
             for idx_p, (pt, pname) in enumerate(phases):
@@ -296,9 +348,10 @@ def myPlot(time, data_list, labels, title, ncols=2, use_tex=True, block=False, f
             if task_start > 0:
                 ax.axvline(x=task_start, color=c_start, linestyle='--', linewidth=1.3, alpha=0.75, label='Mission Start')
             if task_end > 0 and task_end < float(time[-1]):
-                ax.axvline(x=task_end, color='#dc2626', linestyle='--', linewidth=1.3, alpha=0.75, label='Landing')
+                ax.axvline(x=task_end, color='#334155', linestyle='-.', linewidth=1.3, alpha=0.85, label='Landing')
         
-        ax.set_title(labels[i], fontsize=10.5, fontweight='normal', color='#0f172a', pad=4)
+        # Nessun titolo sul subplot: la grandezza va sull'asse y (formula matematica LaTeX con unita')
+        ax.set_ylabel(labels[i], fontsize=9.5, color='#0f172a')
         ax.set_xlabel('Time [s]', fontsize=9, color='#334155')
         ax.tick_params(axis='both', which='both', labelsize=8.5, colors='#334155')
         ax.grid(True, linestyle='--', alpha=0.45, color='#94a3b8')
@@ -371,7 +424,7 @@ def main():
     ap.add_argument("--log", type=str, default="/tmp/sim_run.mat")
     ap.add_argument("--tex", action="store_true")
     ap.add_argument("--save", action="store_true")
-    ap.add_argument("--out-dir", type=str, default=".", help="Cartella in cui salvare i plot e i log")
+    ap.add_argument("--out-dir", type=str, default=None, help="Cartella in cui salvare i plot e i log (default: directory del file log)")
     ap.add_argument("--all", action="store_true", help="Show all figures at once (default is sequential)")
     ap.add_argument("--task-start", type=float, default=None,
                     help="[s] Tempo (relativo) inizio task: disegna linea verticale (sovrascrive il log)")
@@ -384,6 +437,9 @@ def main():
                     help="Finestra media mobile traiettoria 3D (default: 21, <=1 per disattivare)")
     ap.add_argument("--no-single", action="store_true", help="Disattiva il salvataggio dei singoli grafici per LaTeX")
     args = ap.parse_args()
+
+    if args.out_dir is None:
+        args.out_dir = os.path.dirname(os.path.abspath(args.log))
 
     try:
         from scipy.io import loadmat
@@ -472,6 +528,52 @@ def main():
     myPlot.default_haptic_intervals = haptic_gd_intervals
     myPlot.haptic_gd_intervals = haptic_gd_intervals
     myPlot.haptic_peg_intervals = haptic_peg_intervals
+
+    # --- Rilevamento istanti di attivazione del potenziale repulsivo (APF Activation) ---
+    apf_activation_events = []
+    if indata('haptic_rep_force'):
+        rep_arr = np.asarray(data['haptic_rep_force'])
+        rep_n = np.linalg.norm(rep_arr, axis=1)
+        t_arr = np.asarray(t)
+        in_rep_act = False
+        t_rep_s = 0.0
+        raw_intervals = []
+        for idx_r, val_r in enumerate(rep_n):
+            if task_start > 0 and t_arr[idx_r] < task_start:
+                continue
+            if task_end > 0 and t_arr[idx_r] > task_end:
+                continue
+            if val_r > 0.08 and not in_rep_act:
+                in_rep_act = True
+                t_rep_s = float(t_arr[idx_r])
+            elif val_r <= 0.08 and in_rep_act:
+                in_rep_act = False
+                raw_intervals.append([t_rep_s, float(t_arr[idx_r])])
+        if in_rep_act:
+            raw_intervals.append([t_rep_s, float(t_arr[-1])])
+
+        # Debounce a 2.0s per evitare linee multiple ravvicinate per la stessa manovra
+        merged_ev = []
+        for s_ev, e_ev in raw_intervals:
+            if not merged_ev:
+                merged_ev.append([s_ev, e_ev])
+            elif s_ev - merged_ev[-1][1] < 2.0:
+                merged_ev[-1][1] = e_ev
+            else:
+                merged_ev.append([s_ev, e_ev])
+        # Filtra intervalli significativi (durata >= 0.25s e forza max >= 0.15N)
+        for s_ev, e_ev in merged_ev:
+            if (e_ev - s_ev) >= 0.25:
+                idx_ev = np.where((t_arr >= s_ev) & (t_arr <= e_ev))[0]
+                if len(idx_ev) > 0 and np.max(rep_n[idx_ev]) >= 0.15:
+                    apf_activation_events.append(s_ev)
+        if apf_activation_events:
+            print(f"[DEBUG] Eventi attivazione APF rilevati ({len(apf_activation_events)}): {[round(x, 2) for x in apf_activation_events]}")
+
+    apf_extra_vlines = [
+        {'x': t_ev, 'color': '#b45309', 'linestyle': '--', 'linewidth': 1.1, 'label': 'APF Activation' if idx_ev == 0 else None}
+        for idx_ev, t_ev in enumerate(apf_activation_events)
+    ]
 
     # --- Mascheramento riferimenti pre-task con NaN ---
     # Prima dello switch/task_start i riferimenti dell'MPC non sono attivi.
@@ -642,10 +744,34 @@ def main():
     beta_diff_wrapped = (data['online_cyl_ref'][:, 1] - data['beta_cyl'] + np.pi) % (2 * np.pi) - np.pi
     beta_ref_aligned = beta_sim_unwrapped + beta_diff_wrapped
 
+    # Linee di soglia APF per r_cyl: r_min (limite duro) e r_act = 2*r_min (attivazione potenziale)
+    # Mostrate solo nei dataset con attività APF (escluse le prove di puro hovering)
+    is_hovering_run = ('hovering' in os.path.basename(os.path.dirname(os.path.abspath(args.log))).lower()) or not (indata('haptic_rep_force') and np.any(np.linalg.norm(data['haptic_rep_force'], axis=1) > 0.05))
+    if indata('r_min'):
+        r_min_val = float(data['r_min'])
+    elif indata('r_min_safety'):
+        r_min_val = float(data['r_min_safety'])
+    else:
+        r_min_val = 1.5
+    r_act_val = 2.0 * r_min_val
+    r_extra_hlines = [
+        {'y': r_act_val, 'color': '#b45309', 'linestyle': ':', 'linewidth': 1.2, 'label': r'$r_{\mathrm{act}}$'},
+        {'y': r_min_val, 'color': '#0f172a', 'linestyle': '-.', 'linewidth': 1.2, 'label': r'$r_{\min}$'},
+    ] if not is_hovering_run else None
+
+    # Coni di visibilità FoV verticale per z_cyl: +/- z_max(t) = r(t) * tan(fov_v / 2)
+    fov_h_val = float(data.get('fov_h', 69.0))
+    fov_v_val = float(data.get('fov_v', 54.5 if fov_h_val < 75.0 else 42.0))
+    z_max_curve = data['r_cyl'] * np.tan(np.radians(fov_v_val / 2.0))
+    z_extra_lines = [
+        {'curve': z_max_curve, 'color': '#b45309', 'linestyle': ':', 'linewidth': 1.2, 'label': r'$\pm z_{\max}$'},
+        {'curve': -z_max_curve, 'color': '#b45309', 'linestyle': ':', 'linewidth': 1.2, 'label': None},
+    ] if not is_hovering_run else None
+
     fig4_data = [
-        {'sim': data['r_cyl'],    'ref': data['online_cyl_ref'][:, 0]},
+        {'sim': data['r_cyl'],      'ref': data['online_cyl_ref'][:, 0], 'extra_lines': r_extra_hlines},
         {'sim': beta_sim_unwrapped, 'ref': beta_ref_aligned},
-        {'sim': data['z_cyl'],'ref': data['online_cyl_ref'][:, 2]},
+        {'sim': data['z_cyl'],      'ref': data['online_cyl_ref'][:, 2], 'extra_lines': z_extra_lines},
     ]
     # Titoli in notazione matematica LaTeX per Coordinate Cilindriche PoV
     myPlot(t, fig4_data,
@@ -710,9 +836,13 @@ def main():
         {'sim': np.linalg.norm(data['jerk'], axis=1), 'ref': None}, 
         {'sim': np.linalg.norm(data['snap'], axis=1), 'ref': None}
     ]
-    myPlot(t, fig7_data, ["Norm Vel Error [m/s]", "Norm Omega Error [rad/s]", "Norm Acc [m/s^2]",
-               "Norm AngAcc [rad/s^2]", "Norm Jerk [m/s^3]", "Norm Snap [m/s^4]"], 
-           "Dynamic States Errors and Feedforward Derivatives", ncols=3, use_tex=args.tex, block=block, fignum=8, task_start=task_start, task_end=task_end)
+    # Etichette in notazione matematica LaTeX pura con unita' di misura
+    myPlot(t, fig7_data,
+           [r"$\|e_v\|\ [\mathrm{m/s}]$", r"$\|e_\omega\|\ [\mathrm{rad/s}]$", r"$\|a\|\ [\mathrm{m/s^2}]$",
+            r"$\|\dot{\omega}\|\ [\mathrm{rad/s^2}]$", r"$\|j\|\ [\mathrm{m/s^3}]$", r"$\|s\|\ [\mathrm{m/s^4}]$"], 
+           "Dynamic States Errors and Feedforward Derivatives", ncols=3, use_tex=args.tex, block=block, fignum=8,
+           task_start=task_start, task_end=task_end,
+           filenames=["norm_vel_error", "norm_omega_error", "norm_acc", "norm_angacc", "norm_jerk", "norm_snap"])
 
     # --- FIGURE 8: Wrench ---
     fig8_data = [
@@ -721,31 +851,38 @@ def main():
         {'sim': data['optimal_wrench'][:, 2], 'ref': data['wrench_target'][:, 2]},
         {'sim': data['optimal_wrench'][:, 3], 'ref': data['wrench_target'][:, 3]}
     ]
-    myPlot(t, fig8_data, ["Force Z (Thrust) [N]", "Torque X [Nm]", "Torque Y [Nm]", "Torque Z [Nm]"], 
-           f"Control Wrench (Hover Force = {mass*g:.2f}N)", ncols=2, use_tex=args.tex, block=block, fignum=9, task_start=task_start, task_end=task_end)
+    myPlot(t, fig8_data,
+           [r"$F_z\ [\mathrm{N}]$", r"$\tau_x\ [\mathrm{N\cdot m}]$", r"$\tau_y\ [\mathrm{N\cdot m}]$", r"$\tau_z\ [\mathrm{N\cdot m}]$"], 
+           f"Control Wrench (Hover Force = {mass*g:.2f}N)", ncols=2, use_tex=args.tex, block=block, fignum=9,
+           task_start=task_start, task_end=task_end,
+           filenames=["force_z", "torque_x", "torque_y", "torque_z"])
 
     # --- FIGURE 9 (fignum=10): Haptic Repulsive Forces / Feedback ---
     if indata('haptic_rep_force'):
         fig9_data = [
-            {'sim': data['haptic_rep_force'][:, 0], 'ref': 0.0},
-            {'sim': data['haptic_rep_force'][:, 1], 'ref': 0.0},
-            {'sim': data['haptic_rep_force'][:, 2], 'ref': 0.0}
+            {'sim': data['haptic_rep_force'][:, 0], 'ref': 0.0, 'extra_lines': apf_extra_vlines},
+            {'sim': data['haptic_rep_force'][:, 1], 'ref': 0.0, 'extra_lines': apf_extra_vlines},
+            {'sim': data['haptic_rep_force'][:, 2], 'ref': 0.0, 'extra_lines': apf_extra_vlines}
         ]
         myPlot(t, fig9_data, 
-               ["Repulsive Force X (Distance limit $r_{min}$) [N]", 
-                "Repulsive Force Y (Horiz. FoV) [N]", 
-                "Repulsive Force Z (Vert. FoV) [N]"], 
+               [r"$F_x^{\mathrm{rep}}\ [\mathrm{N}]$", 
+                r"$F_y^{\mathrm{rep}}\ [\mathrm{N}]$", 
+                r"$F_z^{\mathrm{rep}}\ [\mathrm{N}]$"], 
                "Haptic APF Repulsive Forces (Safety Constraints)", 
                ncols=3, use_tex=args.tex, block=block, fignum=10, 
-               task_start=task_start, task_end=task_end)
+               task_start=task_start, task_end=task_end,
+               filenames=["repulsive_force_x", "repulsive_force_y", "repulsive_force_z"])
     elif indata('haptic_force'):
         fig9_data = [
             {'sim': data['haptic_force'][:, 0], 'ref': 0.0},
             {'sim': data['haptic_force'][:, 1], 'ref': 0.0},
             {'sim': data['haptic_force'][:, 2], 'ref': 0.0}
         ]
-        myPlot(t, fig9_data, ["Force X (Zoom) [N]", "Force Y (Pan) [N]", "Force Z (Altitude) [N]"], 
-               "Haptic Feedback Forces Transmitted to haptic device", ncols=3, use_tex=args.tex, block=block, fignum=10, task_start=task_start, task_end=task_end)
+        myPlot(t, fig9_data,
+               [r"$F_x\ [\mathrm{N}]$", r"$F_y\ [\mathrm{N}]$", r"$F_z\ [\mathrm{N}]$"], 
+               "Haptic Feedback Forces Transmitted to haptic device", ncols=3, use_tex=args.tex, block=block, fignum=10,
+               task_start=task_start, task_end=task_end,
+               filenames=["force_x", "force_y", "force_z"])
 
     # --- FIGURE 10: Individual Linear and Angular Accelerations ---
     fig10_data = [
@@ -757,9 +894,11 @@ def main():
         {'sim': data['ang_acc'][:, 2], 'ref': 0.0}
     ]
     myPlot(t, fig10_data, 
-           ["Linear Acc X [m/s^2]", "Linear Acc Y [m/s^2]", "Linear Acc Z [m/s^2]", 
-            "Angular Acc X [rad/s^2]", "Angular Acc Y [rad/s^2]", "Angular Acc Z [rad/s^2]"], 
-           "Drone Linear and Angular Accelerations", ncols=3, use_tex=args.tex, block=block, fignum=11, task_start=task_start, task_end=task_end)
+           [r"$a_x\ [\mathrm{m/s^2}]$", r"$a_y\ [\mathrm{m/s^2}]$", r"$a_z\ [\mathrm{m/s^2}]$", 
+            r"$\dot{\omega}_x\ [\mathrm{rad/s^2}]$", r"$\dot{\omega}_y\ [\mathrm{rad/s^2}]$", r"$\dot{\omega}_z\ [\mathrm{rad/s^2}]$"], 
+           "Drone Linear and Angular Accelerations", ncols=3, use_tex=args.tex, block=block, fignum=11,
+           task_start=task_start, task_end=task_end,
+           filenames=["linear_acc_x", "linear_acc_y", "linear_acc_z", "angular_acc_x", "angular_acc_y", "angular_acc_z"])
 
     # --- FIGURE 11: Peg External Forces ---
     if indata('peg_ext_force'):
@@ -771,8 +910,10 @@ def main():
             {'sim': f_disp[:, 2], 'ref': 0.0}
         ]
         myPlot(t, fig11_data, 
-               ["Force X (Sensor) [N]", "Force Y (Sensor) [N]", "Force Z (Sensor) [N]"], 
-               "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=12, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
+               [r"$F_{s, x}\ [\mathrm{N}]$", r"$F_{s, y}\ [\mathrm{N}]$", r"$F_{s, z}\ [\mathrm{N}]$"], 
+               "Peg External Contact Forces (FT Sensor)", ncols=3, use_tex=args.tex, block=block, fignum=12,
+               task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals,
+               filenames=["force_x", "force_y", "force_z"])
 
     # --- FIGURE 122: Admittance delta_p (spostamento di ammettenza in ENU) ---
     if indata('delta_p'):
@@ -785,10 +926,12 @@ def main():
             {'sim': dp_norm,  'ref': 0.0}
         ]
         myPlot(t, fig12_data,
-               [r"$\Delta p_x$ [m] (ENU)", r"$\Delta p_y$ [m] (ENU)", r"$\Delta p_z$ [m] (ENU)",
-                r"$\|\Delta p\|$ [m]"],
+               [r"$\Delta p_x\ [\mathrm{m}]$", r"$\Delta p_y\ [\mathrm{m}]$", r"$\Delta p_z\ [\mathrm{m}]$",
+                r"$\|\Delta p\|\ [\mathrm{m}]$"],
                "Admittance Displacement $\\Delta p$ (ENU frame)",
-               ncols=2, use_tex=args.tex, block=block, fignum=122, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
+               ncols=2, use_tex=args.tex, block=block, fignum=122,
+               task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals,
+               filenames=["p_x", "p_y", "p_z", "p"])
 
     # --- FIGURE 12b: delta_p in terna SENSORE ---
     if indata('delta_p_sensor'):
@@ -801,10 +944,12 @@ def main():
             {'sim': dps_norm,  'ref': 0.0}
         ]
         myPlot(t, fig12b_data,
-               [r"$\Delta p_{sx}$ [m] (Sensor X)", r"$\Delta p_{sy}$ [m] (Sensor Y)",
-                r"$\Delta p_{sz}$ [m] (Sensor Z)", r"$\|\Delta p_s\|$ [m]"],
+               [r"$\Delta p_{s, x}\ [\mathrm{m}]$", r"$\Delta p_{s, y}\ [\mathrm{m}]$",
+                r"$\Delta p_{s, z}\ [\mathrm{m}]$", r"$\|\Delta p_s\|\ [\mathrm{m}]$"],
                "Admittance Displacement in Sensor Frame",
-               ncols=2, use_tex=args.tex, block=block, fignum=131, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
+               ncols=2, use_tex=args.tex, block=block, fignum=131,
+               task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals,
+               filenames=["p__sx", "p__sy", "p__sz", "p_s"])
 
     # --- FIGURE 13: Confronto ||delta_p|| vs ||F_ext|| ---
     if indata('delta_p') and indata('peg_ext_force'):
@@ -821,22 +966,20 @@ def main():
                 t_h_s, t_h_e = item[0], item[1]
                 ax13[0].axvspan(t_h_s, t_h_e, color='#a855f7', alpha=0.15, label='Haptic Interaction' if idx_h == 0 else None, zorder=0)
                 ax13[1].axvspan(t_h_s, t_h_e, color='#a855f7', alpha=0.15, label='Haptic Interaction' if idx_h == 0 else None, zorder=0)
-        ax13[0].plot(t, fext_norm, 'r-', linewidth=1.5, label=r'$\|F_{ext}\|$ [N]')
-        ax13[0].set_ylabel(r'$\|F_{ext}\|$ [N]')
+        ax13[0].plot(t, fext_norm, 'r-', linewidth=1.5, label=r'$\|F_{\mathrm{ext}}\|\ [\mathrm{N}]$')
+        ax13[0].set_ylabel(r'$\|F_{\mathrm{ext}}\|\ [\mathrm{N}]$')
         # Limita y per visualizzare chiaramente la forza di contatto (max ~5N) senza che il picco di arresto a 800N schiacci tutto
         f_p99 = np.percentile(fext_norm, 99.0) if len(fext_norm) > 0 else 5.0
         ax13[0].set_ylim(-0.2, max(6.0, min(20.0, f_p99 * 1.5)))
         ax13[0].legend(loc='upper right')
         ax13[0].grid(True, alpha=0.3)
-        ax13[0].set_title("Contact Force Norm")
-        ax13[1].plot(t, dp_norm, 'b-', linewidth=1.5, label=r'$\|\Delta p\|$ [m]')
+        ax13[1].plot(t, dp_norm, 'b-', linewidth=1.5, label=r'$\|\Delta p\|\ [\mathrm{m}]$')
         ax13[1].set_xlabel('Time [s]')
-        ax13[1].set_ylabel(r'$\|\Delta p\|$ [m]')
+        ax13[1].set_ylabel(r'$\|\Delta p\|\ [\mathrm{m}]$')
         dp_p99 = np.percentile(dp_norm, 99.0) if len(dp_norm) > 0 else 0.1
         ax13[1].set_ylim(-0.02, max(0.15, min(0.5, dp_p99 * 1.5)))
         ax13[1].legend(loc='upper right')
         ax13[1].grid(True, alpha=0.3)
-        ax13[1].set_title("Admittance Displacement Norm")
         plt.tight_layout(rect=[0, 0.02, 1, 0.98])
         if block:
             plt.show()
@@ -857,16 +1000,19 @@ def main():
         if has_peg_yaw:
             peg_ref_yaw = data['peg_ref_yaw'] if indata('peg_ref_yaw') else None
             fig14_data.append({'sim': data['peg_actual_yaw'], 'ref': peg_ref_yaw})
-        myPlot(t, fig14_data,
-               ["Peg X [m]", "Peg Y [m]", "Peg Z [m]"] + (["Peg Yaw [rad]"] if has_peg_yaw else []),
+        labels14 = [r"$p_{\mathrm{int}, x}\ [\mathrm{m}]$", r"$p_{\mathrm{int}, y}\ [\mathrm{m}]$", r"$p_{\mathrm{int}, z}\ [\mathrm{m}]$"] + ([r"$\psi_{\mathrm{int}}\ [\mathrm{rad}]$"] if has_peg_yaw else [])
+        fn14 = ["peg_x", "peg_y", "peg_z"] + (["peg_yaw"] if has_peg_yaw else [])
+        myPlot(t, fig14_data, labels14,
                "Interaction Drone Position ENU (Actual vs Planner Reference)",
-               ncols=2, use_tex=args.tex, block=block, fignum=14, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
+               ncols=2, use_tex=args.tex, block=block, fignum=14,
+               task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals,
+               filenames=fn14)
 
     # --- FIGURE 15: Interaction Drone Velocities (ENU) + Omega Z ---
     has_peg_vel     = indata('peg_actual_vel')
     has_peg_omega_z = indata('peg_actual_omega_z') or indata('peg_actual_yaw_rate')
     if has_peg_vel or has_peg_omega_z:
-        fig15_data, labels15 = [], []
+        fig15_data, labels15, fn15 = [], [], []
         peg_ref_vel     = data['peg_ref_vel']     if indata('peg_ref_vel')     else None
         peg_ref_omega_z = data['peg_ref_omega_z'] if indata('peg_ref_omega_z') else (data['peg_ref_yaw_rate'] if indata('peg_ref_yaw_rate') else None)
         if has_peg_vel:
@@ -876,14 +1022,18 @@ def main():
                 {'sim': peg_vel[:, 1], 'ref': peg_ref_vel[:, 1] if peg_ref_vel is not None else None},
                 {'sim': peg_vel[:, 2], 'ref': peg_ref_vel[:, 2] if peg_ref_vel is not None else None},
             ]
-            labels15 += ["Vel X [m/s]", "Vel Y [m/s]", "Vel Z [m/s]"]
+            labels15 += [r"$v_{\mathrm{int}, x}\ [\mathrm{m/s}]$", r"$v_{\mathrm{int}, y}\ [\mathrm{m/s}]$", r"$v_{\mathrm{int}, z}\ [\mathrm{m/s}]$"]
+            fn15 += ["vel_x", "vel_y", "vel_z"]
         if has_peg_omega_z:
             actual_omega_z = data['peg_actual_omega_z'] if indata('peg_actual_omega_z') else data['peg_actual_yaw_rate']
             fig15_data.append({'sim': actual_omega_z, 'ref': peg_ref_omega_z})
-            labels15.append("Omega Z [rad/s]")
+            labels15.append(r"$\omega_{\mathrm{int}, z}\ [\mathrm{rad/s}]$")
+            fn15.append("omega_z")
         myPlot(t, fig15_data, labels15,
                "Interaction Drone Velocities (ENU) and Angular Velocity Omega Z",
-               ncols=2, use_tex=args.tex, block=block, fignum=15, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
+               ncols=2, use_tex=args.tex, block=block, fignum=15,
+               task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals,
+               filenames=fn15)
 
     # --- FIGURE 16: Estimated Wrench (Momentum Based Estimator) ---
     if indata('estimated_wrench'):
@@ -896,17 +1046,20 @@ def main():
             {'sim': data['estimated_wrench'][:, 5], 'ref': 0.0}
         ]
         myPlot(t, fig16_data, 
-               ["Force X [N]", "Force Y [N]", "Force Z [N]", 
-                "Torque X [Nm]", "Torque Y [Nm]", "Torque Z [Nm]"], 
-                "Estimated Wrench (Momentum-Based Estimator)", ncols=3, use_tex=args.tex, block=block, fignum=16, task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals)
+               [r"$\hat{F}_x\ [\mathrm{N}]$", r"$\hat{F}_y\ [\mathrm{N}]$", r"$\hat{F}_z\ [\mathrm{N}]$", 
+                r"$\hat{\tau}_x\ [\mathrm{N\cdot m}]$", r"$\hat{\tau}_y\ [\mathrm{N\cdot m}]$", r"$\hat{\tau}_z\ [\mathrm{N\cdot m}]$"], 
+               "Estimated Wrench (Momentum-Based Estimator)", ncols=3, use_tex=args.tex, block=block, fignum=16,
+               task_start=task_start, task_end=task_end, haptic_intervals=haptic_peg_intervals,
+               filenames=["force_x", "force_y", "force_z", "torque_x", "torque_y", "torque_z"])
 
     # --- FIGURE 17: Violazioni dei vincoli di sicurezza (Distanza Minima e FoV Camera) ---
     if indata('r_cyl'):
         if indata('r_min'):
             r_min = float(data['r_min'])
+        elif indata('r_min_safety'):
+            r_min = float(data['r_min_safety'])
         else:
-            # Fallback dinamico: in simulazione r_min_safety è 1.5 m (fov_v > 45 deg), in hardware è 1.0 m
-            r_min = 1.5 if (indata('fov_v') and float(data['fov_v']) > 45.0) else 1.0
+            r_min = 1.5
 
         if indata('s_r'):
             s_r = np.asarray(data['s_r']).flatten()
@@ -952,14 +1105,14 @@ def main():
             s_fov_v[mask_post] = 0.0
 
         fig17_data = [
-            {'sim': s_r,     'ref': 0.0, 'ref_label': 'Upper Limit'},
-            {'sim': s_fov_h, 'ref': 0.0, 'ref_label': 'Upper Limit'},
-            {'sim': s_fov_v, 'ref': 0.0, 'ref_label': 'Upper Limit'},
+            {'sim': s_r,     'ref': 0.0, 'ref_label': 'Upper Limit', 'extra_lines': apf_extra_vlines},
+            {'sim': s_fov_h, 'ref': 0.0, 'ref_label': 'Upper Limit', 'extra_lines': apf_extra_vlines},
+            {'sim': s_fov_v, 'ref': 0.0, 'ref_label': 'Upper Limit', 'extra_lines': apf_extra_vlines},
         ]
         labels17 = [
-            f"Distance Violation $s_r$ [m] ($r_{{min}}$={r_min:.1f} m)",
-            f"Horiz. FoV Violation $s_{{fov,h}}$ [deg] (half-FoV={fov_h_half_deg:.0f}°)",
-            f"Vert. FoV Violation $s_{{fov,v}}$ [deg] (half-FoV={fov_v_half_deg:.0f}°)"
+            r"$s_r\ [\mathrm{m}]$",
+            r"$s_{\mathrm{fov}, h}\ [\mathrm{deg}]$",
+            r"$s_{\mathrm{fov}, v}\ [\mathrm{deg}]$"
         ]
         myPlot(t, fig17_data, labels17,
                "Safety Distance and Camera FoV Constraint Violations",
@@ -1040,14 +1193,27 @@ def main():
                 {'sim': st_raw, 'ref': ts_ms, 'ref_label': 'Upper Limit'}
             ]
             myPlot(t, fig19_data,
-                   [f"Solve Time [ms] (Mean: {mean_st:.2f} ms, Max: {max_st:.2f} ms, Ts limit: {ts_ms:.0f} ms)"],
-                   "MPC Solver Execution Time & Timing Jitter", ncols=1, use_tex=args.tex, block=block, fignum=19, task_start=task_start, task_end=task_end)
+                   [r"$t_{\mathrm{solve}}\ [\mathrm{ms}]$"],
+                   "MPC Solver Execution Time & Timing Jitter", ncols=1, use_tex=args.tex, block=block, fignum=19,
+                   task_start=task_start, task_end=task_end, filenames=["solve_time"])
 
     # 2b. HAPTIC TELEOPERATION NETWORK LATENCY & JITTER (RTT / 2)
     if indata('haptic_latency_ms'):
         lat_raw = np.asarray(data['haptic_latency_ms']).squeeze()
-        # Filtra solo i campioni validi (> 0, registrati quando il falcon invia comandi)
-        lat_valid = lat_raw[lat_raw > 0.0]
+        # Rileva se è presente un segnale di haptic attivo per isolare le sole fasi di effettiva teleoperazione
+        h_active_mask = None
+        for k in ['haptic_guardrone_active', 'haptic_active', 'haptic_peg_active']:
+            if indata(k):
+                arr_act = (np.asarray(data[k]).flatten() > 0.5)
+                h_active_mask = arr_act if h_active_mask is None else (h_active_mask | arr_act)
+
+        # Filtra solo i campioni validi (> 0 e registrati durante l'effettivo utilizzo dell'haptic device)
+        if h_active_mask is not None and np.any(h_active_mask & (lat_raw > 0.0)):
+            lat_mask = (lat_raw > 0.0) & h_active_mask
+        else:
+            lat_mask = (lat_raw > 0.0)
+
+        lat_valid = lat_raw[lat_mask]
 
         if len(lat_valid) > 0:
             mean_lat = float(np.mean(lat_valid))
@@ -1070,13 +1236,14 @@ def main():
             report_lines.append(f"Percentile 99%             : {p99_lat:.2f} ms")
 
             # --- FIGURE 20: Haptic Teleoperation Network Latency ---
-            lat_plot = np.where(lat_raw > 0.0, lat_raw, np.nan)
+            lat_plot = np.where(lat_mask, lat_raw, np.nan)
             fig20_data = [
                 {'sim': lat_plot, 'ref': mean_lat, 'ref_label': 'Mean Latency'}
             ]
             myPlot(t, fig20_data,
-                   [f"One-Way Network Latency [ms] (Mean: {mean_lat:.1f} ms, Median: {float(np.median(lat_valid)):.1f} ms)"],
-                   "Haptic Teleoperation Network Latency & Jitter", ncols=1, use_tex=args.tex, block=block, fignum=20, task_start=task_start, task_end=task_end, filenames=["latency"])
+                   [r"$T_{\mathrm{lat}}\ [\mathrm{ms}]$"],
+                   "Haptic Teleoperation Network Latency & Jitter", ncols=1, use_tex=args.tex, block=block, fignum=20,
+                   task_start=task_start, task_end=task_end, filenames=["latency"])
 
     # 3. TRACKING PERFORMANCE (in Missione)
     if indata('r_cyl') and indata('online_cyl_ref'):
@@ -1141,9 +1308,9 @@ def main():
         except Exception as e:
             print(f"Errore nel salvataggio di metrics_report.txt: {e}")
 
-        # Opzioni di salvataggio per formato vettoriale (pdf/eps): dpi alto, niente trasparenza
+        # Opzioni di salvataggio per formato vettoriale (pdf/eps) e raster (png): dpi alto, niente trasparenza
         fmt_opts = {
-            "png": {"dpi": 150},
+            "png": {"dpi": 150, "bbox_inches": "tight"},
             "pdf": {"dpi": 300, "bbox_inches": "tight"},
             "eps": {"dpi": 300, "bbox_inches": "tight", "format": "eps"},
         }
@@ -1225,8 +1392,12 @@ def main():
             phase_handles.append(Line2D([0], [0], color='#2ca02c', linestyle='--', linewidth=1.3, label='Mission Start'))
             phase_labels.append('Mission Start')
             if task_end > 0:
-                phase_handles.append(Line2D([0], [0], color='#dc2626', linestyle='--', linewidth=1.3, label='Landing'))
+                phase_handles.append(Line2D([0], [0], color='#334155', linestyle='-.', linewidth=1.3, label='Landing'))
                 phase_labels.append('Landing')
+
+        if apf_activation_events:
+            phase_handles.append(Line2D([0], [0], color='#b45309', linestyle='--', linewidth=1.1, label='APF Activation'))
+            phase_labels.append('APF Activation')
 
         common_handles = [
             Line2D([0], [0], color='#1f77b4', linewidth=1.6, label='Actual'),

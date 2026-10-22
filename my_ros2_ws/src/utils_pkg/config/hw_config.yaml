@@ -10,12 +10,14 @@ camera:
   cam_roll: 0.0       # Rotazione roll [rad]
   cam_pitch: 0.0      # Rotazione pitch [rad]
   cam_yaw: 0.0        # Rotazione yaw [rad]
-  fov_h_deg: 69.4     # FOV orizzontale [deg] (RGB)
+  fov_h_deg: 69.4     # FOV orizzontale [deg] (RGB) # sbagliato, 54.7
   fov_v_deg: 42.5     # FOV verticale [deg] (RGB)
 
 # Parametri End-Effector / Peg
 peg:
-  peg_z_offset: 0.0  # Offset Z della punta dell'end-effector dal CoM del drone di interazione [m]
+  offset_x: 0.0      # Offset X punta end-effector dal CoM nel body frame FLU [m]
+  offset_y: 0.0      # Offset Y punta end-effector dal CoM nel body frame FLU [m]
+  offset_z: 0.0      # Offset Z punta end-effector dal CoM nel body frame FLU [m]
 
   # Spostamento relativo del peg durante APPROACH [m] (rispetto alla posa di hovering)
   approach:

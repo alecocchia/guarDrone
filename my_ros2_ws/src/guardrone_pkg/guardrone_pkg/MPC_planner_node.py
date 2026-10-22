@@ -63,6 +63,9 @@ class MpcPlannerNode(Node):
         self.declare_parameter('peg_x', 0.0)
         self.declare_parameter('peg_y', 0.0)
         self.declare_parameter('peg_z', 0.0)
+        self.declare_parameter('peg_offset_x', 0.0)
+        self.declare_parameter('peg_offset_y', 0.0)
+        self.declare_parameter('peg_offset_z', 0.0)
         self.declare_parameter('cam_x',0.0)
         self.declare_parameter('cam_y',0.0)
         self.declare_parameter('cam_z',0.0)
@@ -105,7 +108,11 @@ class MpcPlannerNode(Node):
             self.get_parameter('peg_y').value,
             self.get_parameter('peg_z').value
         ])
-        self.peg_offset = np.array([0.455, 0.0, 0.22])  # Offset punta end-effector nel body frame FLU [m]
+        self.peg_offset = np.array([
+            self.get_parameter('peg_offset_x').value,
+            self.get_parameter('peg_offset_y').value,
+            self.get_parameter('peg_offset_z').value
+        ])  # Offset punta end-effector nel body frame FLU [m]
         self.fov_h = self.get_parameter('fov_h').value
         self.fov_v = self.get_parameter('fov_v').value
         cam_x = self.get_parameter('cam_x').value

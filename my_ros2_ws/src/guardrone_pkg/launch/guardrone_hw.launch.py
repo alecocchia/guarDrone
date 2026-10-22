@@ -69,6 +69,9 @@ def launch_setup(context, *args, **kwargs):
     peg_x     = LaunchConfiguration('peg_x')
     peg_y     = LaunchConfiguration('peg_y')
     peg_z     = LaunchConfiguration('peg_z')
+    peg_offset_x = LaunchConfiguration('peg_offset_x')
+    peg_offset_y = LaunchConfiguration('peg_offset_y')
+    peg_offset_z = LaunchConfiguration('peg_offset_z')
     cf         = LaunchConfiguration('cf')
     ct         = LaunchConfiguration('ct')
     controller = LaunchConfiguration('controller')
@@ -93,6 +96,7 @@ def launch_setup(context, *args, **kwargs):
             'start_x': drone_x, 'start_y': drone_y, 'start_z': drone_z,
             'start_yaw': drone_yaw,
             'peg_x': peg_x, 'peg_y': peg_y, 'peg_z': peg_z,
+            'peg_offset_x': peg_offset_x, 'peg_offset_y': peg_offset_y, 'peg_offset_z': peg_offset_z,
             'w_min': w_min, 'w_max': w_max,
             'arm_l_x': arm_l_x, 'arm_l_y': arm_l_y, 'moment_const': moment_const,
             'use_mbe': True,
@@ -131,6 +135,7 @@ def generate_launch_description():
     cam_cfg = cfg['camera']
     phys_cfg = cfg['guardrone_physics']
     pose_cfg = cfg['initial_poses']
+    peg_cfg = cfg.get('peg', {})
 
     return LaunchDescription([
         # === Parametri fisici del drone (misurati sul drone reale) ===
@@ -169,6 +174,14 @@ def generate_launch_description():
         DeclareLaunchArgument('peg_x', default_value=str(pose_cfg['peg_x'])),
         DeclareLaunchArgument('peg_y', default_value=str(pose_cfg['peg_y'])),
         DeclareLaunchArgument('peg_z', default_value=str(pose_cfg['peg_z'])),
+
+        # Offset punta peg nel frame body FLU [m]
+        DeclareLaunchArgument('peg_offset_x', default_value=str(peg_cfg.get('offset_x', 0.0)),
+                              description='Offset X peg nel body frame FLU [m]'),
+        DeclareLaunchArgument('peg_offset_y', default_value=str(peg_cfg.get('offset_y', 0.0)),
+                              description='Offset Y peg nel body frame FLU [m]'),
+        DeclareLaunchArgument('peg_offset_z', default_value=str(peg_cfg.get('offset_z', 0.0)),
+                              description='Offset Z peg nel body frame FLU [m]'),
 
         # Parametri motore
         DeclareLaunchArgument('cf', default_value=str(phys_cfg['cf'])),

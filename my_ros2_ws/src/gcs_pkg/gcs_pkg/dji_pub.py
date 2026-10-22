@@ -394,8 +394,8 @@ class DJIPublisherNode(Node):
             self.publish_pov_target(r_act, beta_act, 0.0, 0.0)
         elif phase_name == 'INTERACTION':
             r_target = r_act
-            h_frac = 0.70
-            v_frac = 0.70
+            h_frac = 0.60
+            v_frac = 0.60
             yaw_off, z_off = self.compute_decentered_pov(r_target, h_frac, v_frac)
             self.publish_pov_target(r_target, beta_act, z_off, yaw_off)
         elif phase_name == 'DETACHMENT':

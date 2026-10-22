@@ -1,0 +1,55 @@
+======================================================================
+             EXPERIMENT METRICS & BENCHMARK REPORT
+======================================================================
+File log          : /home/aleco/guarDrone/my_ros2_ws/HardwareScripts/bag_files/exp_20261015_1701-HAPTIC/hw_run.mat
+Campioni totali   : 4459
+Durata totale     : 186.09 s
+Tempo missione    : 138.60 s (da t=44.64s a t=183.24s)
+
+----------------------------------------------------------------------
+ 1. SAMPLING PERIOD & REAL-TIME CLOCK JITTER (delta_t)
+----------------------------------------------------------------------
+Frequenza media nominale : 24.62 Hz
+Delta_t medio            : 40.62 ms
+Jitter Campionamento (Std): 39.92 ms
+Delta_t Min / Max        : 20.00 ms / 343.09 ms
+
+----------------------------------------------------------------------
+ 2. MPC SOLVER PERFORMANCE & TIMING JITTER
+----------------------------------------------------------------------
+Campioni solve analizzati: 3415
+Periodo nominale (Ts)    : 10.0 ms (100 Hz)
+Tempo Medio Solve        : 2.29 ms  (Carico medio CPU: 22.9%)
+Deviazione Standard (Jit): 1.04 ms
+Minimo / Massimo         : 1.49 ms / 14.62 ms
+Step-to-Step Jitter      : 0.85 ms (variazione media passo-passo)
+Percentile 95%           : 4.48 ms
+Percentile 99%           : 5.88 ms
+Overrun (> 10 ms)         : 3 / 3415 (0.09%)
+
+----------------------------------------------------------------------
+ 2b. HAPTIC TELEOPERATION NETWORK LATENCY & JITTER (RTT / 2)
+----------------------------------------------------------------------
+Campioni latenza analizzati: 2257
+Latenza Media Unidirezionale: 32.77 ms
+Jitter di Rete (Std Dev)   : 34.63 ms
+Minimo / Massimo           : 1.30 ms / 227.45 ms
+Step-to-Step Jitter        : 12.43 ms
+Percentile 95%             : 107.04 ms
+Percentile 99%             : 137.11 ms
+
+----------------------------------------------------------------------
+ 3. TRACKING PERFORMANCE SUMMARY (in Missione)
+----------------------------------------------------------------------
+Errore Raggio (r_cyl)    : RMS = 0.2230 m | Max = 0.6843 m
+Errore Azimut (beta)     : RMS = 0.1824 rad (10.45 deg) | Max = 0.6796 rad
+Errore Quota (z_cyl)     : RMS = 0.0619 m | Max = 0.3978 m
+Errore Yaw               : RMS = 0.0713 rad (4.08 deg) | Max = 0.2661 rad
+
+----------------------------------------------------------------------
+ 4. CONSTRAINT VIOLATIONS SUMMARY (in Mission)
+----------------------------------------------------------------------
+Violazione Distanza Minima (r_min=1.5m)  : Max = 0.0000 m (NESSUNA)
+Violazione FoV Orizzontale (lim=35°) : Max = 0.00 deg (NESSUNA)
+Violazione FoV Verticale   (lim=21°) : Max = 0.00 deg (NESSUNA)
+======================================================================
